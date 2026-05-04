@@ -1,0 +1,47 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: plants-care-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-plants_care}
+      POSTGRES_USER: ${POSTGRES_USER:-plants_care}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-plants_care}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-plants_care} -d ${POSTGRES_DB:-plants_care}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  app:
+    # Сервис app запускается только с профилем "full":
+    #   docker compose --profile full up -d
+    # Для локальной разработки без контейнера приложения:
+    #   docker compose up -d  (поднимет только postgres)
+    profiles: ["full"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: plants-care-app
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-prod}
+      DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-plants_care}
+      DB_USERNAME: ${POSTGRES_USER:-plants_care}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-plants_care}
+      SERVER_PORT: 8080
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_BOT_USERNAME: ${TELEGRAM_BOT_USERNAME:-}
+      TELEGRAM_BOT_ENABLED: ${TELEGRAM_BOT_ENABLED:-false}
+    ports:
+      - "${APP_PORT:-8080}:8080"
+
+volumes:
+  postgres_data:
