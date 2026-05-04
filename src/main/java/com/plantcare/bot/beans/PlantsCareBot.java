@@ -1,7 +1,10 @@
 package com.plantcare.bot.beans;
 
-import com.plantcare.bot.command.container.CommandContainer;
+import com.plantcare.bot.command.CommandContainer;
+import com.plantcare.bot.domain.User;
+import com.plantcare.bot.domain.enums.ConversationState;
 import com.plantcare.bot.service.UserService;
+import com.plantcare.bot.state.StateResolver;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -14,32 +17,39 @@ import org.telegram.telegrambots.meta.generics.TelegramClient;
 @Component
 public class PlantsCareBot implements LongPollingSingleThreadUpdateConsumer {
 
+    private static final String UNKNOWN = "UNKNOWN";
+
     private final TelegramClient telegramClient;
     private final CommandContainer commandContainer;
     private final UserService userService;
+    private final StateResolver stateResolver;
 
     public PlantsCareBot(@Value("${telegram.bot.token}") String botToken,
-                         CommandContainer commandContainer, UserService userService) {
+                         CommandContainer commandContainer, UserService userService, StateResolver stateResolver) {
         this.telegramClient = new OkHttpTelegramClient(botToken);
         this.commandContainer = commandContainer;
         this.userService = userService;
+        this.stateResolver = stateResolver;
     }
 
     @Override
     public void consume(Update update) {
-        if (update.hasMessage() && update.getMessage().hasText()) {
-            String messageText = update.getMessage().getText();
-            long chatId = update.getMessage().getChatId();
-            String username = update.getMessage().getFrom().getUserName();
+        Long chatId = update.getMessage().getChatId();
+        String text = update.getMessage().getText();
+        User user = userService.findOrCreate(chatId, update.getMessage().getFrom().getUserName());
 
-            log.info("Received message from {}: {}", chatId, messageText);
-
-            userService.findOrCreate(chatId, username);
-
-            String commandIdentifier = messageText.split(" ")[0].toLowerCase();
-
-            commandContainer.retrieveCommand(commandIdentifier)
+        if (user.getConversationState() == ConversationState.IDLE) {
+            commandContainer.retrieveCommand(getCommandName(text))
                     .execute(update, telegramClient);
+        } else {
+            stateResolver.resolve(user, update, telegramClient);
         }
+    }
+
+    private String getCommandName(String text) {
+        if (text == null || text.isBlank()) {
+            return UNKNOWN;
+        }
+        return text.trim().split("\\s+")[0].toLowerCase();
     }
 }
