@@ -1,0 +1,13 @@
+spring:
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+
+  flyway:
+    enabled: true
+
+logging:
+  level:
+    org.hibernate.SQL: WARN
+    com.plantcare.bot: DEBUG
