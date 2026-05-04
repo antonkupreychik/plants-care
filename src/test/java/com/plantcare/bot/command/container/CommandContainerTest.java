@@ -1,5 +1,6 @@
 package com.plantcare.bot.command.container;
 
+import com.plantcare.bot.command.CommandContainer;
 import com.plantcare.bot.command.impl.UnknownCommand;
 import com.plantcare.bot.command.interfaces.BotCommand;
 import org.junit.jupiter.api.BeforeEach;
