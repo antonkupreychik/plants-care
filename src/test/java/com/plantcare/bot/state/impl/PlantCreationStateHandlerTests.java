@@ -135,7 +135,7 @@ class PlantCreationStateHandlerTests {
     void testNameHandler_ValidName() throws TelegramApiException {
         // Arrange
         AwaitingPlantNameStateHandler handler = new AwaitingPlantNameStateHandler(
-                userService, plantService);
+                userService);
 
         Update update = createTextMessageUpdate("Монстера в гостиной");
 
@@ -173,7 +173,7 @@ class PlantCreationStateHandlerTests {
     void testNameHandler_TooLongName() throws TelegramApiException {
         // Arrange
         AwaitingPlantNameStateHandler handler = new AwaitingPlantNameStateHandler(
-                userService, plantService);
+                userService);
 
         String tooLong = "a".repeat(101);
         Update update = createTextMessageUpdate(tooLong);
