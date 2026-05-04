@@ -1,0 +1,19 @@
+# Railway deployment config
+# https://docs.railway.com/reference/config-as-code
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+# Healthcheck — Railway не перекатит на новую версию, пока эндпоинт не вернёт 200
+healthcheckPath = "/actuator/health"
+healthcheckTimeout = 100
+
+# При падении — рестарт. Максимум 10 попыток подряд, потом деплой считается failed.
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
+
+# Spring Boot prod-профиль
+[deploy.envVars]
+SPRING_PROFILES_ACTIVE = "prod"
