@@ -60,6 +60,12 @@
             <artifactId>telegrambots-client</artifactId>
             <version>9.5.0</version>
         </dependency>
+        <dependency>
+            <groupId>net.iakovlev</groupId>
+            <artifactId>timeshape</artifactId>
+            <version>2025b.28</version>
+            <scope>compile</scope>
+        </dependency>
 
         <!-- Database -->
         <dependency>
