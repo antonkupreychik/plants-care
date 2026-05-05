@@ -5,7 +5,6 @@ import com.plantcare.bot.domain.User;
 import com.plantcare.bot.domain.enums.ConversationState;
 import com.plantcare.bot.service.UserService;
 import lombok.RequiredArgsConstructor;
-import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
@@ -24,6 +23,7 @@ import java.util.List;
 public class StartCommand implements BotCommand {
 
     private final UserService userService;
+    private final MenuCommand menuCommand;
 
     @Override
     public String getCommandName() {
@@ -35,34 +35,22 @@ public class StartCommand implements BotCommand {
         Long chatId = update.getMessage().getChatId();
         User user = userService.findByChatId(chatId)
                 .orElseThrow(() -> new IllegalStateException("User not found"));
-        SendMessage message = SendMessage.builder()
-                .chatId(chatId.toString())
-                .text("Привет! Я бот проекта Plants-care. Я помогу тебе ухаживать за твоими растениями.")
-                .build();
+
         if ("UTC".equals(user.getTimezone())) {
+            // Новый юзер — приветствие + онбординг
+            SendMessage greeting = SendMessage.builder()
+                    .chatId(chatId.toString())
+                    .text("Привет! Я бот проекта Plants-care. Я помогу тебе ухаживать за твоими растениями.")
+                    .build();
+            try {
+                client.execute(greeting);
+            } catch (TelegramApiException e) {
+                log.error("Ошибка при отправке приветствия в /start: ", e);
+            }
             startOnboarding(chatId, user, client);
         } else {
-            showMainMenu(chatId, client);
-        }
-        try {
-            client.execute(message);
-        } catch (TelegramApiException e) {
-            log.error("Ошибка при отправке сообщения в /start: ", e);
-        }
-    }
-
-    private void showMainMenu(Long chatId, TelegramClient client) {
-        SendMessage message = SendMessage.builder()
-                .chatId(chatId.toString())
-                .text("С возвращением! Главное меню скоро будет доступно здесь (задача #12). " +
-                        "Пока что я готовлю для тебя лучшие инструменты по уходу за растениями!")
-                .build();
-
-        try {
-            client.execute(message);
-            log.info("Shown main menu stub to existing user: {}", chatId);
-        } catch (TelegramApiException e) {
-            log.error("Failed to show main menu stub", e);
+            // Существующий юзер — показываем главное меню
+            menuCommand.execute(update, client);
         }
     }
 
