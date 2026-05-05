@@ -94,7 +94,7 @@ public class NotificationSchedulerService {
             userZone = ZoneId.of("UTC");
         }
 
-        ZonedDateTime userNow = now.atZone(ZoneId.of("UTC")).withZoneSameInstant(userZone);
+        ZonedDateTime userNow = now.atZone(ZoneId.systemDefault()).withZoneSameInstant(userZone);
         LocalTime userTime = userNow.toLocalTime();
 
         LocalTime start = user.getQuietHoursStart();

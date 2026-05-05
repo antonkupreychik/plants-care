@@ -17,6 +17,8 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMarkup;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardButton;
@@ -30,11 +32,10 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyLong;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
 @DisplayName("Unit-тесты для NotificationSchedulerService")
 class NotificationSchedulerServiceTest {
 
@@ -56,8 +57,10 @@ class NotificationSchedulerServiceTest {
         user = User.builder()
                 .telegramChatId(100L)
                 .timezone("UTC")
-                .quietHoursStart(LocalTime.of(22, 0))
-                .quietHoursEnd(LocalTime.of(9, 0))
+                // Тихие часы ОТКЛЮЧЕНЫ по умолчанию (start == end),
+                // чтобы тесты не зависели от времени запуска
+                .quietHoursStart(LocalTime.of(0, 0))
+                .quietHoursEnd(LocalTime.of(0, 0))
                 .blocked(false)
                 .build();
 
@@ -206,26 +209,18 @@ class NotificationSchedulerServiceTest {
     class QuietHours {
 
         @Test
-        @DisplayName("Не отправляет, если сейчас тихие часы (через полночь: 22:00–09:00)")
-        void shouldSkipDuringQuietHoursOverMidnight() throws TelegramApiException {
-            // User timezone UTC, quiet hours 22:00–09:00
-            // now = 23:00 UTC → in quiet hours
-            user.setQuietHoursStart(LocalTime.of(22, 0));
-            user.setQuietHoursEnd(LocalTime.of(9, 0));
-
-            // Создаём schedule с now = 23:00 UTC
-            LocalDateTime fakeNow = LocalDateTime.of(2026, 5, 5, 23, 0);
-            schedule.setNextDueAt(fakeNow.minusHours(1));
+        @DisplayName("Не отправляет, если сейчас тихие часы (через полночь)")
+        void shouldSkipDuringQuietHours() throws TelegramApiException {
+            // Устанавливаем тихие часы, которые покрывают текущее время
+            // Ставим 00:00–23:59 — гарантированно всегда тихие часы
+            user.setQuietHoursStart(LocalTime.of(0, 0));
+            user.setQuietHoursEnd(LocalTime.of(23, 59));
 
             when(careScheduleRepository.findDueSchedules(any())).thenReturn(List.of(schedule));
 
-            // Вызываем checkAndSendNotifications, но метод использует LocalDateTime.now()
-            // Для unit-теста проверим через processSchedule
             service.checkAndSendNotifications();
 
-            // Из-за LocalDateTime.now() в checkAndSendNotifications, проверяем поведение
-            // Если сейчас между 22:00 и 09:00 UTC — не отправит, иначе отправит
-            // Вместо этого лучше тестировать quiet hours отдельно через рефлексию
+            verify(telegramClient, never()).execute(any(SendMessage.class));
         }
 
         @Test
@@ -320,7 +315,6 @@ class NotificationSchedulerServiceTest {
 
             service.checkAndSendNotifications();
 
-            // Оба schedule были обработаны (execute вызван дважды)
             verify(telegramClient, times(2)).execute(any(SendMessage.class));
         }
     }

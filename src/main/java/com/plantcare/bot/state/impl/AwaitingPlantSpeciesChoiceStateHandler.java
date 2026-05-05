@@ -43,8 +43,13 @@ public class AwaitingPlantSpeciesChoiceStateHandler implements StateHandler {
             } else if ("SPECIES:SEARCH".equals(callbackData)) {
                 goToSearch(user, client);
             } else if (callbackData.startsWith("SPECIES:")) {   // ← потом проверяем общий случай
-                Long speciesId = Long.parseLong(callbackData.substring("SPECIES:".length()));        // ← теперь здесь только числовые ID
-                selectSpecies(user, speciesId, client);
+                try {
+                    Long speciesId = Long.parseLong(callbackData.substring("SPECIES:".length()));
+                    selectSpecies(user, speciesId, client);
+                } catch (NumberFormatException e) {
+                    log.warn("Invalid species ID in callback: {}", callbackData);
+                    sendError(user, client);
+                }
             }
 
             try {
