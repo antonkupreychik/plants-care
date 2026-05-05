@@ -1,7 +1,6 @@
 spring:
   application:
     name: plants-care
-
   datasource:
     # Локально читается DB_URL/DB_USERNAME/DB_PASSWORD.
     # На Railway автоматически проставляются PGHOST/PGPORT/PGDATABASE/PGUSER/PGPASSWORD,
@@ -12,6 +11,10 @@ spring:
     hikari:
       maximum-pool-size: 10
       minimum-idle: 2
+
+      plantcare:
+        species:
+          search-limit: 5
 
   jpa:
     open-in-view: false

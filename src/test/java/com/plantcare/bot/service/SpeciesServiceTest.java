@@ -14,6 +14,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class SpeciesServiceTest extends IntegrationTestBase {
 
+    private static final int DEFAULT_SEARCH_LIMIT = 5;
+
     @Autowired
     private SpeciesService speciesService;
 
@@ -33,16 +35,23 @@ class SpeciesServiceTest extends IntegrationTestBase {
     }
 
     @Test
+    void getTopPopularRespectsLimit() {
+        List<Species> top = speciesService.getTopPopular(3);
+
+        assertThat(top).hasSize(3);
+    }
+
+    @Test
     void getTopPopularReturnsEmptyListWhenLimitIsZeroOrNegative() {
         assertThat(speciesService.getTopPopular(0)).isEmpty();
         assertThat(speciesService.getTopPopular(-1)).isEmpty();
     }
 
     @Test
-    void searchReturnsTopFiveResults() {
+    void searchReturnsTopResultsAccordingToConfiguredLimit() {
         List<Species> results = speciesService.search("фикус");
 
-        assertThat(results).hasSizeLessThanOrEqualTo(5);
+        assertThat(results).hasSizeLessThanOrEqualTo(DEFAULT_SEARCH_LIMIT);
     }
 
     @Test
@@ -57,6 +66,15 @@ class SpeciesServiceTest extends IntegrationTestBase {
     @Test
     void searchFindsOrchidByEnglishTag() {
         List<Species> results = speciesService.search("orchid");
+
+        assertThat(results)
+                .extracting(Species::getName)
+                .contains("Орхидея фаленопсис");
+    }
+
+    @Test
+    void searchTrimsQueryBeforeSearch() {
+        List<Species> results = speciesService.search("   фаленопс   ");
 
         assertThat(results)
                 .extracting(Species::getName)
