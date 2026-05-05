@@ -18,26 +18,20 @@ import org.telegram.telegrambots.meta.api.objects.replykeyboard.ReplyKeyboardMar
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 import org.telegram.telegrambots.meta.generics.TelegramClient;
 
-import java.util.List;
 import java.util.Optional;
 
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
+@DisplayName("Unit-тесты для StartCommand (/start)")
 class StartCommandTest {
 
-    @Mock
-    private TelegramClient telegramClient;
-
-    @Mock
-    private Update update;
-
-    @Mock
-    private Message message;
-
-    @Mock
-    private UserService userService;
+    @Mock private TelegramClient telegramClient;
+    @Mock private Update update;
+    @Mock private Message message;
+    @Mock private UserService userService;
+    @Mock private MenuCommand menuCommand;
 
     @InjectMocks
     private StartCommand startCommand;
@@ -47,58 +41,65 @@ class StartCommandTest {
 
     @BeforeEach
     void setUp() {
-        testUser = new User();
-        testUser.setTelegramChatId(chatId);
+        testUser = User.builder()
+                .telegramChatId(chatId)
+                .build();
 
         when(update.getMessage()).thenReturn(message);
         when(message.getChatId()).thenReturn(chatId);
     }
 
     @Test
-    @DisplayName("Новый пользователь: должен начаться онбординг (запрос таймзоны)")
-    void shouldStartOnboardingForNewUser() throws TelegramApiException {
-        // GIVEN: Пользователь с дефолтной таймзоной
-        testUser.setTimezone("UTC");
-        when(userService.findByChatId(chatId)).thenReturn(Optional.of(testUser));
-
-        // WHEN
-        startCommand.execute(update, telegramClient);
-
-        // THEN
-        // Проверяем смену состояния (Критерий 5 задачи #7)
-        verify(userService).updateState(testUser, ConversationState.AWAITING_TIMEZONE);
-
-        // Проверяем отправку сообщений (приветствие + вопрос про таймзону)
-        ArgumentCaptor<SendMessage> captor = ArgumentCaptor.forClass(SendMessage.class);
-        verify(telegramClient, times(2)).execute(captor.capture());
-
-        List<SendMessage> sentMessages = captor.getAllValues();
-
-        // Второе сообщение должно содержать клавиатуру с кнопкой локации (Критерий 2)
-        SendMessage onboardingMsg = sentMessages.get(0);
-        assertTrue(onboardingMsg.getText().contains("установить часовой пояс"));
-        assertTrue(onboardingMsg.getReplyMarkup() instanceof ReplyKeyboardMarkup);
+    @DisplayName("Команда зарегистрирована как /start")
+    void shouldHaveCorrectCommandName() {
+        assertThat(startCommand.getCommandName()).isEqualTo("/start");
     }
 
     @Test
-    @DisplayName("Существующий пользователь: должна показаться заглушка меню")
-    void shouldShowMainMenuForExistingUser() throws TelegramApiException {
-        // GIVEN: Пользователь с уже установленной таймзоной
-        testUser.setTimezone("Europe/Riga");
+    @DisplayName("Новый пользователь (UTC): приветствие + онбординг")
+    void shouldStartOnboardingForNewUser() throws TelegramApiException {
+        testUser.setTimezone("UTC");
         when(userService.findByChatId(chatId)).thenReturn(Optional.of(testUser));
 
-        // WHEN
         startCommand.execute(update, telegramClient);
 
-        // THEN
-        // Состояние не должно меняться на AWAITING_TIMEZONE
-        verify(userService, never()).updateState(any(), any());
+        // Смена состояния на онбординг
+        verify(userService).updateState(testUser, ConversationState.AWAITING_TIMEZONE);
 
+        // Приветствие + онбординг = 2 сообщения
         ArgumentCaptor<SendMessage> captor = ArgumentCaptor.forClass(SendMessage.class);
         verify(telegramClient, times(2)).execute(captor.capture());
 
-        // Проверяем текст заглушки (Критерий 6 задачи #7)
-        SendMessage lastMsg = captor.getAllValues().get(0);
-        assertTrue(lastMsg.getText().contains("С возвращением! Главное меню скоро будет"));
+        // Первое — приветствие
+        assertThat(captor.getAllValues().get(0).getText()).contains("Привет");
+
+        // Второе — онбординг с клавиатурой
+        SendMessage onboarding = captor.getAllValues().get(1);
+        assertThat(onboarding.getText()).contains("часовой пояс");
+        assertThat(onboarding.getReplyMarkup()).isInstanceOf(ReplyKeyboardMarkup.class);
+    }
+
+    @Test
+    @DisplayName("Существующий пользователь: делегирует в MenuCommand")
+    void shouldDelegateToMenuForExistingUser() throws TelegramApiException {
+        testUser.setTimezone("Europe/Riga");
+        when(userService.findByChatId(chatId)).thenReturn(Optional.of(testUser));
+
+        startCommand.execute(update, telegramClient);
+
+        verify(menuCommand).execute(update, telegramClient);
+        verify(userService, never()).updateState(any(), any());
+    }
+
+    @Test
+    @DisplayName("Существующий пользователь: не отправляет приветствие напрямую")
+    void shouldNotSendGreetingForExistingUser() throws TelegramApiException {
+        testUser.setTimezone("Europe/Moscow");
+        when(userService.findByChatId(chatId)).thenReturn(Optional.of(testUser));
+
+        startCommand.execute(update, telegramClient);
+
+        verify(telegramClient, never()).execute(any(SendMessage.class));
+        verify(menuCommand).execute(update, telegramClient);
     }
 }

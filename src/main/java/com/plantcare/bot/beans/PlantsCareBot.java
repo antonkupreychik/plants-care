@@ -4,6 +4,9 @@ import com.plantcare.bot.command.CommandContainer;
 import com.plantcare.bot.command.impl.CancelCommand;
 import com.plantcare.bot.domain.User;
 import com.plantcare.bot.domain.enums.ConversationState;
+import com.plantcare.bot.service.MenuCallbackService;
+import com.plantcare.bot.service.NotificationCallbackService;
+import com.plantcare.bot.service.TelegramClientProvider;
 import com.plantcare.bot.service.UserService;
 import com.plantcare.bot.state.StateResolver;
 import lombok.extern.slf4j.Slf4j;
@@ -16,29 +19,58 @@ import org.telegram.telegrambots.meta.generics.TelegramClient;
 
 @Slf4j
 @Component
-public class PlantsCareBot implements LongPollingSingleThreadUpdateConsumer {
+public class PlantsCareBot implements LongPollingSingleThreadUpdateConsumer, TelegramClientProvider {
 
     private static final String UNKNOWN = "UNKNOWN";
+    private static final String NOTIFICATION_CALLBACK_PREFIX = "v1:";
+    private static final String MENU_CALLBACK_PREFIX = "MENU:";
 
     private final TelegramClient telegramClient;
     private final CommandContainer commandContainer;
     private final UserService userService;
     private final StateResolver stateResolver;
     private final CancelCommand cancelCommand;
+    private final NotificationCallbackService notificationCallbackService;
+    private final MenuCallbackService menuCallbackService;
 
     public PlantsCareBot(@Value("${telegram.bot.token}") String botToken,
-                         CommandContainer commandContainer, UserService userService, StateResolver stateResolver, CancelCommand cancelCommand) {
+                         CommandContainer commandContainer, UserService userService,
+                         StateResolver stateResolver, CancelCommand cancelCommand,
+                         NotificationCallbackService notificationCallbackService,
+                         MenuCallbackService menuCallbackService) {
         this.telegramClient = new OkHttpTelegramClient(botToken);
         this.commandContainer = commandContainer;
         this.userService = userService;
         this.stateResolver = stateResolver;
         this.cancelCommand = cancelCommand;
+        this.notificationCallbackService = notificationCallbackService;
+        this.menuCallbackService = menuCallbackService;
+    }
+
+    @Override
+    public TelegramClient getTelegramClient() {
+        return telegramClient;
     }
 
     @Override
     public void consume(Update update) {
         Long chatId = getChatId(update);
         if (chatId == null) return;
+
+        // Обработка callback'ов от уведомлений (v1:done:42, v1:snooze:42, v1:skip:42)
+        if (update.hasCallbackQuery()) {
+            String data = update.getCallbackQuery().getData();
+            if (data != null && data.startsWith(NOTIFICATION_CALLBACK_PREFIX)) {
+                notificationCallbackService.handleCallback(update.getCallbackQuery(), telegramClient);
+                return;
+            }
+            if (data != null && data.startsWith(MENU_CALLBACK_PREFIX)) {
+                String userName = getUserName(update);
+                User user = userService.findOrCreate(chatId, userName);
+                menuCallbackService.handleCallback(update.getCallbackQuery(), telegramClient, user);
+                return;
+            }
+        }
 
         String userName = getUserName(update);
         User user = userService.findOrCreate(chatId, userName);
