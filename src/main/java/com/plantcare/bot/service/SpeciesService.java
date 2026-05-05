@@ -1,5 +1,6 @@
 package com.plantcare.bot.service;
 
+import com.plantcare.bot.config.SpeciesProperties;
 import com.plantcare.bot.domain.Species;
 import com.plantcare.bot.repository.SpeciesRepository;
 import jakarta.persistence.EntityNotFoundException;
@@ -16,9 +17,9 @@ import java.util.List;
 @RequiredArgsConstructor
 public class SpeciesService {
 
-    private static final int SEARCH_LIMIT = 5;
 
     private final SpeciesRepository speciesRepository;
+    private final SpeciesProperties speciesProperties;
 
     @Transactional(readOnly = true)
     public List<Species> getTopPopular(int limit) {
@@ -45,9 +46,9 @@ public class SpeciesService {
 
         String trimmedQuery = query.trim();
 
-        log.debug("Searching species. query='{}', limit={}", trimmedQuery, SEARCH_LIMIT);
+        log.debug("Searching species. query='{}', limit={}", trimmedQuery, speciesProperties.getSearchLimit());
 
-        List<Species> species = speciesRepository.searchByQuery(trimmedQuery, SEARCH_LIMIT);
+        List<Species> species = speciesRepository.searchByQuery(trimmedQuery, speciesProperties.getSearchLimit());
 
         log.info("Species search completed. query='{}', found={}", trimmedQuery, species.size());
 

@@ -12,9 +12,9 @@ spring:
       maximum-pool-size: 10
       minimum-idle: 2
 
-      plantcare:
-        species:
-          search-limit: 5
+app:
+  species:
+    search-limit: 5
 
   jpa:
     open-in-view: false
