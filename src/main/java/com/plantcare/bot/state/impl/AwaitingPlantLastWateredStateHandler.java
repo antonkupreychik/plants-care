@@ -15,6 +15,7 @@ import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 import org.telegram.telegrambots.meta.generics.TelegramClient;
 
 import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.Map;
 
 @Slf4j
@@ -89,7 +90,7 @@ public class AwaitingPlantLastWateredStateHandler implements StateHandler {
             }
 
             // Рассчитываем next_due_at
-            LocalDateTime now = LocalDateTime.now();
+            LocalDateTime now = LocalDateTime.now().truncatedTo(ChronoUnit.MICROS);
             LocalDateTime nextDueAt = calculateNextDueAt(now, lastWateredChoice, intervalDays);
 
             log.info("Creating plant: name={}, speciesId={}, interval={}, nextDueAt={}",

@@ -17,6 +17,7 @@ import lombok.Setter;
 import org.hibernate.annotations.UpdateTimestamp;
 
 import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -66,7 +67,7 @@ public class Plant extends BaseEntity {
     }
 
     public void archive() {
-        this.archivedAt = LocalDateTime.now();
+        this.archivedAt = LocalDateTime.now().truncatedTo(ChronoUnit.MICROS);
     }
 
     public void addSchedule(CareSchedule schedule) {

@@ -17,6 +17,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 
 import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -56,7 +57,7 @@ class PlantServiceTest extends IntegrationTestBase {
     @Test
     @DisplayName("Создание растения с шаблоном: Plant + CareSchedule(WATERING) сохраняются")
     void createWithTemplate_savesPlantAndSchedule() {
-        LocalDateTime nextDue = LocalDateTime.now().plusDays(7);
+        LocalDateTime nextDue = LocalDateTime.now().truncatedTo(ChronoUnit.MICROS).plusDays(7);
 
         Plant plant = plantService.createPlantWithWateringSchedule(
                 testUser, monstera.getId(), "Монстера в гостиной", 7, nextDue);
@@ -81,7 +82,7 @@ class PlantServiceTest extends IntegrationTestBase {
     @Test
     @DisplayName("Создание растения без шаблона: species_id = NULL, интервал пользовательский")
     void createWithoutTemplate_speciesIsNull() {
-        LocalDateTime nextDue = LocalDateTime.now().plusDays(10);
+        LocalDateTime nextDue = LocalDateTime.now().truncatedTo(ChronoUnit.MICROS).plusDays(10);
 
         Plant plant = plantService.createPlantWithWateringSchedule(
                 testUser, null, "Моё собственное растение", 10, nextDue);
@@ -100,7 +101,7 @@ class PlantServiceTest extends IntegrationTestBase {
     @DisplayName("Создаётся ровно одна запись CareSchedule типа WATERING")
     void createPlant_onlyOneWateringSchedule() {
         Plant plant = plantService.createPlantWithWateringSchedule(
-                testUser, monstera.getId(), "Test", 7, LocalDateTime.now().plusDays(7));
+                testUser, monstera.getId(), "Test", 7, LocalDateTime.now().truncatedTo(ChronoUnit.MICROS).plusDays(7));
 
         List<CareSchedule> schedules = scheduleRepository.findAllByPlantId(plant.getId());
 
@@ -112,9 +113,9 @@ class PlantServiceTest extends IntegrationTestBase {
     @DisplayName("Несколько растений у одного пользователя — каждое со своим расписанием")
     void multiplePlantsForSameUser() {
         plantService.createPlantWithWateringSchedule(
-                testUser, monstera.getId(), "Монстера 1", 7, LocalDateTime.now().plusDays(7));
+                testUser, monstera.getId(), "Монстера 1", 7, LocalDateTime.now().truncatedTo(ChronoUnit.MICROS).plusDays(7));
         plantService.createPlantWithWateringSchedule(
-                testUser, monstera.getId(), "Монстера 2", 5, LocalDateTime.now().plusDays(5));
+                testUser, monstera.getId(), "Монстера 2", 5, LocalDateTime.now().truncatedTo(ChronoUnit.MICROS).plusDays(5));
 
         List<Plant> plants = plantRepository
                 .findAllByUserIdAndArchivedAtIsNullOrderByNameAsc(testUser.getId());
@@ -128,9 +129,9 @@ class PlantServiceTest extends IntegrationTestBase {
     @DisplayName("Граничные интервалы: 1 и 365 дней — сохраняются без ошибок")
     void boundaryIntervals_saveSuccessfully() {
         Plant daily = plantService.createPlantWithWateringSchedule(
-                testUser, null, "Ежедневный полив", 1, LocalDateTime.now().plusDays(1));
+                testUser, null, "Ежедневный полив", 1, LocalDateTime.now().truncatedTo(ChronoUnit.MICROS).plusDays(1));
         Plant yearly = plantService.createPlantWithWateringSchedule(
-                testUser, null, "Раз в год", 365, LocalDateTime.now().plusDays(365));
+                testUser, null, "Раз в год", 365, LocalDateTime.now().truncatedTo(ChronoUnit.MICROS).plusDays(365));
 
         assertThat(scheduleRepository.findByPlantIdAndTaskType(daily.getId(), TaskType.WATERING))
                 .map(CareSchedule::getIntervalDays).contains(1);
@@ -144,7 +145,7 @@ class PlantServiceTest extends IntegrationTestBase {
         String specialName = "🌿 Монстера (№1) [гостиная]";
 
         Plant plant = plantService.createPlantWithWateringSchedule(
-                testUser, monstera.getId(), specialName, 7, LocalDateTime.now().plusDays(7));
+                testUser, monstera.getId(), specialName, 7, LocalDateTime.now().truncatedTo(ChronoUnit.MICROS).plusDays(7));
 
         Plant reloaded = plantRepository.findById(plant.getId()).orElseThrow();
         assertThat(reloaded.getName()).isEqualTo(specialName);
