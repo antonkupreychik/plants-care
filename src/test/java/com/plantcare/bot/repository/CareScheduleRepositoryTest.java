@@ -13,6 +13,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -38,7 +39,7 @@ class CareScheduleRepositoryTest extends IntegrationTestBase {
         User user = saveUser(200L, false);
         Plant plant = savePlant(user, "Монстера", false);
 
-        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime now = LocalDateTime.now().truncatedTo(ChronoUnit.MICROS).truncatedTo(ChronoUnit.MICROS);
 
         // Просрочена — должна попасть
         CareSchedule overdue = saveSchedule(plant, TaskType.WATERING, now.minusHours(1), true);
@@ -56,9 +57,9 @@ class CareScheduleRepositoryTest extends IntegrationTestBase {
     void findDueSchedulesIgnoresArchivedPlants() {
         User user = saveUser(201L, false);
         Plant archived = savePlant(user, "Мёртвая монстера", true);
-        saveSchedule(archived, TaskType.WATERING, LocalDateTime.now().minusHours(1), true);
+        saveSchedule(archived, TaskType.WATERING, LocalDateTime.now().truncatedTo(ChronoUnit.MICROS).truncatedTo(ChronoUnit.MICROS).minusHours(1), true);
 
-        List<CareSchedule> due = scheduleRepository.findDueSchedules(LocalDateTime.now());
+        List<CareSchedule> due = scheduleRepository.findDueSchedules(LocalDateTime.now().truncatedTo(ChronoUnit.MICROS));
 
         assertThat(due).isEmpty();
     }
@@ -67,9 +68,9 @@ class CareScheduleRepositoryTest extends IntegrationTestBase {
     void findDueSchedulesIgnoresBlockedUsers() {
         User blocked = saveUser(202L, true);
         Plant plant = savePlant(blocked, "Монстера", false);
-        saveSchedule(plant, TaskType.WATERING, LocalDateTime.now().minusHours(1), true);
+        saveSchedule(plant, TaskType.WATERING, LocalDateTime.now().truncatedTo(ChronoUnit.MICROS).minusHours(1), true);
 
-        List<CareSchedule> due = scheduleRepository.findDueSchedules(LocalDateTime.now());
+        List<CareSchedule> due = scheduleRepository.findDueSchedules(LocalDateTime.now().truncatedTo(ChronoUnit.MICROS));
 
         assertThat(due).isEmpty();
     }
@@ -83,12 +84,12 @@ class CareScheduleRepositoryTest extends IntegrationTestBase {
         User user = saveUser(203L, false);
         for (int i = 0; i < 5; i++) {
             Plant plant = savePlant(user, "Plant " + i, false);
-            saveSchedule(plant, TaskType.WATERING, LocalDateTime.now().minusHours(1), true);
+            saveSchedule(plant, TaskType.WATERING, LocalDateTime.now().truncatedTo(ChronoUnit.MICROS).minusHours(1), true);
         }
 
         em.clear(); // Сбрасываем кеш, чтобы реально проверить количество SQL
 
-        List<CareSchedule> due = scheduleRepository.findDueSchedules(LocalDateTime.now());
+        List<CareSchedule> due = scheduleRepository.findDueSchedules(LocalDateTime.now().truncatedTo(ChronoUnit.MICROS));
         assertThat(due).hasSize(5);
 
         // Доступ к plant.user не должен инициировать дополнительные запросы.
@@ -104,8 +105,8 @@ class CareScheduleRepositoryTest extends IntegrationTestBase {
         User user = saveUser(204L, false);
         Plant plant = savePlant(user, "Монстера", false);
 
-        CareSchedule watering = saveSchedule(plant, TaskType.WATERING, LocalDateTime.now(), true);
-        saveSchedule(plant, TaskType.MISTING, LocalDateTime.now(), true);
+        CareSchedule watering = saveSchedule(plant, TaskType.WATERING, LocalDateTime.now().truncatedTo(ChronoUnit.MICROS), true);
+        saveSchedule(plant, TaskType.MISTING, LocalDateTime.now().truncatedTo(ChronoUnit.MICROS), true);
 
         assertThat(scheduleRepository.findByPlantIdAndTaskType(plant.getId(), TaskType.WATERING))
                 .map(CareSchedule::getId)
@@ -119,9 +120,9 @@ class CareScheduleRepositoryTest extends IntegrationTestBase {
         Plant plant1 = savePlant(user1, "User1's Plant", false);
         Plant plant2 = savePlant(user2, "User2's Plant", false);
 
-        LocalDateTime soon = LocalDateTime.now().plusHours(1);
-        saveSchedule(plant1, TaskType.WATERING, LocalDateTime.now(), true);
-        saveSchedule(plant2, TaskType.WATERING, LocalDateTime.now(), true);
+        LocalDateTime soon = LocalDateTime.now().truncatedTo(ChronoUnit.MICROS).plusHours(1);
+        saveSchedule(plant1, TaskType.WATERING, LocalDateTime.now().truncatedTo(ChronoUnit.MICROS), true);
+        saveSchedule(plant2, TaskType.WATERING, LocalDateTime.now().truncatedTo(ChronoUnit.MICROS), true);
 
         List<CareSchedule> u1 = scheduleRepository.findUserSchedulesDueBefore(user1.getId(), soon);
 
@@ -132,7 +133,7 @@ class CareScheduleRepositoryTest extends IntegrationTestBase {
     void rescheduleFromUpdatesNextDueAt() {
         User user = saveUser(207L, false);
         Plant plant = savePlant(user, "Монстера", false);
-        CareSchedule schedule = saveSchedule(plant, TaskType.WATERING, LocalDateTime.now(), true);
+        CareSchedule schedule = saveSchedule(plant, TaskType.WATERING, LocalDateTime.now().truncatedTo(ChronoUnit.MICROS), true);
         schedule.setIntervalDays(7);
 
         LocalDateTime watered = LocalDateTime.of(2026, 5, 1, 10, 0);
