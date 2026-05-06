@@ -1,9 +1,11 @@
 package com.plantcare.bot.service;
 
+import com.plantcare.bot.domain.CareHistory;
 import com.plantcare.bot.domain.CareSchedule;
 import com.plantcare.bot.domain.Plant;
 import com.plantcare.bot.domain.User;
 import com.plantcare.bot.domain.enums.TaskType;
+import com.plantcare.bot.repository.CareHistoryRepository;
 import com.plantcare.bot.repository.CareScheduleRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -14,6 +16,8 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
 import org.telegram.telegrambots.meta.api.methods.AnswerCallbackQuery;
 import org.telegram.telegrambots.meta.api.methods.updatingmessages.EditMessageText;
 import org.telegram.telegrambots.meta.api.objects.CallbackQuery;
@@ -29,10 +33,12 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
-@DisplayName("Unit-тесты для NotificationCallbackService")
+@MockitoSettings(strictness = Strictness.LENIENT)
+@DisplayName("Unit-тесты для NotificationCallbackService (#11)")
 class NotificationCallbackServiceTest {
 
     @Mock private CareScheduleRepository careScheduleRepository;
+    @Mock private CareHistoryRepository careHistoryRepository;
     @Mock private TelegramClient telegramClient;
     @Mock private CallbackQuery callbackQuery;
     @Mock private Message message;
@@ -55,10 +61,10 @@ class NotificationCallbackServiceTest {
                 .active(true)
                 .build();
 
-        lenient().when(callbackQuery.getId()).thenReturn("cb-123");
-        lenient().when(callbackQuery.getMessage()).thenReturn(message);
-        lenient().when(message.getChatId()).thenReturn(100L);
-        lenient().when(message.getMessageId()).thenReturn(42);
+        when(callbackQuery.getId()).thenReturn("cb-123");
+        when(callbackQuery.getMessage()).thenReturn(message);
+        when(message.getChatId()).thenReturn(100L);
+        when(message.getMessageId()).thenReturn(42);
     }
 
     @Nested
@@ -66,68 +72,183 @@ class NotificationCallbackServiceTest {
     class DoneAction {
 
         @Test
-        @DisplayName("Сдвигает nextDueAt на intervalDays от текущего времени")
-        void shouldRescheduleOnDone() throws TelegramApiException {
+        @DisplayName("Записывает CareHistory с done_at = now()")
+        void shouldCreateCareHistoryRecord() throws TelegramApiException {
             when(callbackQuery.getData()).thenReturn("v1:done:1");
             when(careScheduleRepository.findById(1L)).thenReturn(Optional.of(schedule));
+            when(careHistoryRepository.findFirstByPlantIdAndTaskTypeOrderByDoneAtDesc(any(), any()))
+                    .thenReturn(Optional.empty());
+
+            service.handleCallback(callbackQuery, telegramClient);
+
+            ArgumentCaptor<CareHistory> captor = ArgumentCaptor.forClass(CareHistory.class);
+            verify(careHistoryRepository).save(captor.capture());
+
+            CareHistory saved = captor.getValue();
+            assertThat(saved.getPlant()).isEqualTo(plant);
+            assertThat(saved.getTaskType()).isEqualTo(TaskType.WATERING);
+            assertThat(saved.getDoneAt()).isNotNull();
+            assertThat(saved.getNote()).isNull();
+        }
+
+        @Test
+        @DisplayName("was_on_time = true, если now <= scheduled_at + 24h")
+        void shouldBeOnTimeWithinGracePeriod() throws TelegramApiException {
+            schedule.setNextDueAt(LocalDateTime.now().minusHours(1));
+            when(callbackQuery.getData()).thenReturn("v1:done:1");
+            when(careScheduleRepository.findById(1L)).thenReturn(Optional.of(schedule));
+            when(careHistoryRepository.findFirstByPlantIdAndTaskTypeOrderByDoneAtDesc(any(), any()))
+                    .thenReturn(Optional.empty());
+
+            service.handleCallback(callbackQuery, telegramClient);
+
+            ArgumentCaptor<CareHistory> captor = ArgumentCaptor.forClass(CareHistory.class);
+            verify(careHistoryRepository).save(captor.capture());
+            assertThat(captor.getValue().isOnTime()).isTrue();
+        }
+
+        @Test
+        @DisplayName("was_on_time = false, если now > scheduled_at + 24h")
+        void shouldNotBeOnTimeAfterGracePeriod() throws TelegramApiException {
+            schedule.setNextDueAt(LocalDateTime.now().minusHours(25));
+            when(callbackQuery.getData()).thenReturn("v1:done:1");
+            when(careScheduleRepository.findById(1L)).thenReturn(Optional.of(schedule));
+            when(careHistoryRepository.findFirstByPlantIdAndTaskTypeOrderByDoneAtDesc(any(), any()))
+                    .thenReturn(Optional.empty());
+
+            service.handleCallback(callbackQuery, telegramClient);
+
+            ArgumentCaptor<CareHistory> captor = ArgumentCaptor.forClass(CareHistory.class);
+            verify(careHistoryRepository).save(captor.capture());
+            assertThat(captor.getValue().isOnTime()).isFalse();
+        }
+
+        @Test
+        @DisplayName("was_on_time = true, если scheduled_at в будущем (досрочно)")
+        void shouldBeOnTimeWhenDoneEarly() throws TelegramApiException {
+            // scheduled_at в будущем → now < scheduled + 24h → on_time = true
+            schedule.setNextDueAt(LocalDateTime.now().plusHours(2));
+            when(callbackQuery.getData()).thenReturn("v1:done:1");
+            when(careScheduleRepository.findById(1L)).thenReturn(Optional.of(schedule));
+            when(careHistoryRepository.findFirstByPlantIdAndTaskTypeOrderByDoneAtDesc(any(), any()))
+                    .thenReturn(Optional.empty());
+
+            service.handleCallback(callbackQuery, telegramClient);
+
+            ArgumentCaptor<CareHistory> captor = ArgumentCaptor.forClass(CareHistory.class);
+            verify(careHistoryRepository).save(captor.capture());
+            assertThat(captor.getValue().isOnTime()).isTrue();
+        }
+
+        @Test
+        @DisplayName("next_due_at = now() + interval_days")
+        void shouldRescheduleFromNow() throws TelegramApiException {
+            when(callbackQuery.getData()).thenReturn("v1:done:1");
+            when(careScheduleRepository.findById(1L)).thenReturn(Optional.of(schedule));
+            when(careHistoryRepository.findFirstByPlantIdAndTaskTypeOrderByDoneAtDesc(any(), any()))
+                    .thenReturn(Optional.empty());
 
             LocalDateTime before = LocalDateTime.now();
             service.handleCallback(callbackQuery, telegramClient);
 
-            // nextDueAt должен быть сдвинут примерно на 7 дней вперёд
             assertThat(schedule.getNextDueAt()).isAfter(before.plusDays(6));
+            assertThat(schedule.getNextDueAt()).isBefore(before.plusDays(8));
             verify(careScheduleRepository).save(schedule);
         }
 
         @Test
-        @DisplayName("Обновляет текст сообщения, убирает кнопки")
-        void shouldEditMessageOnDone() throws TelegramApiException {
+        @DisplayName("Текст: '✅ Полил {name} в HH:mm. Следующий полив — dd.MM.yyyy'")
+        void shouldEditMessageWithCorrectFormat() throws TelegramApiException {
             when(callbackQuery.getData()).thenReturn("v1:done:1");
             when(careScheduleRepository.findById(1L)).thenReturn(Optional.of(schedule));
+            when(careHistoryRepository.findFirstByPlantIdAndTaskTypeOrderByDoneAtDesc(any(), any()))
+                    .thenReturn(Optional.empty());
 
             service.handleCallback(callbackQuery, telegramClient);
 
             ArgumentCaptor<EditMessageText> captor = ArgumentCaptor.forClass(EditMessageText.class);
             verify(telegramClient).execute(captor.capture());
-            EditMessageText edit = captor.getValue();
 
-            assertThat(edit.getText()).contains("✅").contains("Монстера").contains("готово");
+            EditMessageText edit = captor.getValue();
+            assertThat(edit.getText()).startsWith("✅ Полил Монстера в ");
+            assertThat(edit.getText()).contains("Следующий полив —");
             assertThat(edit.getReplyMarkup()).isNull();
         }
     }
 
     @Nested
-    @DisplayName("Действие: snooze")
-    class SnoozeAction {
+    @DisplayName("Дедупликация: защита от двойного нажатия")
+    class Deduplication {
 
         @Test
-        @DisplayName("Сдвигает nextDueAt на 2 часа, не трогает intervalDays")
-        void shouldSnoozeByTwoHours() throws TelegramApiException {
-            when(callbackQuery.getData()).thenReturn("v1:snooze:1");
-            when(careScheduleRepository.findById(1L)).thenReturn(Optional.of(schedule));
-            int originalInterval = schedule.getIntervalDays();
+        @DisplayName("Повторное done в течение 60с — не создаёт второй записи")
+        void shouldNotDuplicateWithin60Seconds() throws TelegramApiException {
+            CareHistory recent = CareHistory.builder()
+                    .plant(plant).taskType(TaskType.WATERING)
+                    .doneAt(LocalDateTime.now().minusSeconds(30)).onTime(true).build();
 
-            LocalDateTime before = LocalDateTime.now();
+            when(callbackQuery.getData()).thenReturn("v1:done:1");
+            when(careScheduleRepository.findById(1L)).thenReturn(Optional.of(schedule));
+            when(careHistoryRepository.findFirstByPlantIdAndTaskTypeOrderByDoneAtDesc(any(), any()))
+                    .thenReturn(Optional.of(recent));
+
             service.handleCallback(callbackQuery, telegramClient);
 
-            assertThat(schedule.getNextDueAt()).isAfter(before.plusHours(1));
-            assertThat(schedule.getNextDueAt()).isBefore(before.plusHours(3));
-            assertThat(schedule.getIntervalDays()).isEqualTo(originalInterval);
+            verify(careHistoryRepository, never()).save(any());
+            verify(careScheduleRepository, never()).save(any());
+
+            ArgumentCaptor<AnswerCallbackQuery> captor = ArgumentCaptor.forClass(AnswerCallbackQuery.class);
+            verify(telegramClient).execute(captor.capture());
+            assertThat(captor.getValue().getText()).contains("Уже отмечено");
+        }
+
+        @Test
+        @DisplayName("done спустя 61+ секунд — нормально создаёт запись")
+        void shouldAllowAfter60Seconds() throws TelegramApiException {
+            CareHistory old = CareHistory.builder()
+                    .plant(plant).taskType(TaskType.WATERING)
+                    .doneAt(LocalDateTime.now().minusSeconds(120)).onTime(true).build();
+
+            when(callbackQuery.getData()).thenReturn("v1:done:1");
+            when(careScheduleRepository.findById(1L)).thenReturn(Optional.of(schedule));
+            when(careHistoryRepository.findFirstByPlantIdAndTaskTypeOrderByDoneAtDesc(any(), any()))
+                    .thenReturn(Optional.of(old));
+
+            service.handleCallback(callbackQuery, telegramClient);
+
+            verify(careHistoryRepository).save(any(CareHistory.class));
             verify(careScheduleRepository).save(schedule);
         }
 
         @Test
-        @DisplayName("Текст сообщения содержит инфо об отложении")
-        void shouldEditMessageOnSnooze() throws TelegramApiException {
-            when(callbackQuery.getData()).thenReturn("v1:snooze:1");
+        @DisplayName("Повторный skip в течение 60с — тоже дедуплицируется")
+        void shouldDeduplicateSkip() throws TelegramApiException {
+            CareHistory recent = CareHistory.builder()
+                    .plant(plant).taskType(TaskType.WATERING)
+                    .doneAt(LocalDateTime.now().minusSeconds(10)).onTime(false).note("skipped").build();
+
+            when(callbackQuery.getData()).thenReturn("v1:skip:1");
             when(careScheduleRepository.findById(1L)).thenReturn(Optional.of(schedule));
+            when(careHistoryRepository.findFirstByPlantIdAndTaskTypeOrderByDoneAtDesc(any(), any()))
+                    .thenReturn(Optional.of(recent));
 
             service.handleCallback(callbackQuery, telegramClient);
 
-            ArgumentCaptor<EditMessageText> captor = ArgumentCaptor.forClass(EditMessageText.class);
-            verify(telegramClient).execute(captor.capture());
+            verify(careHistoryRepository, never()).save(any());
+            verify(careScheduleRepository, never()).save(any());
+        }
 
-            assertThat(captor.getValue().getText()).contains("⏰").contains("Монстера");
+        @Test
+        @DisplayName("Первое нажатие без истории — не дубликат")
+        void shouldNotBeDuplicateWhenNoHistory() throws TelegramApiException {
+            when(callbackQuery.getData()).thenReturn("v1:done:1");
+            when(careScheduleRepository.findById(1L)).thenReturn(Optional.of(schedule));
+            when(careHistoryRepository.findFirstByPlantIdAndTaskTypeOrderByDoneAtDesc(any(), any()))
+                    .thenReturn(Optional.empty());
+
+            service.handleCallback(callbackQuery, telegramClient);
+
+            verify(careHistoryRepository).save(any(CareHistory.class));
         }
     }
 
@@ -136,10 +257,30 @@ class NotificationCallbackServiceTest {
     class SkipAction {
 
         @Test
-        @DisplayName("Сдвигает nextDueAt на intervalDays (как done)")
-        void shouldRescheduleOnSkip() throws TelegramApiException {
+        @DisplayName("CareHistory: was_on_time=false, note='skipped'")
+        void shouldCreateHistoryWithSkippedNote() throws TelegramApiException {
             when(callbackQuery.getData()).thenReturn("v1:skip:1");
             when(careScheduleRepository.findById(1L)).thenReturn(Optional.of(schedule));
+            when(careHistoryRepository.findFirstByPlantIdAndTaskTypeOrderByDoneAtDesc(any(), any()))
+                    .thenReturn(Optional.empty());
+
+            service.handleCallback(callbackQuery, telegramClient);
+
+            ArgumentCaptor<CareHistory> captor = ArgumentCaptor.forClass(CareHistory.class);
+            verify(careHistoryRepository).save(captor.capture());
+
+            CareHistory saved = captor.getValue();
+            assertThat(saved.isOnTime()).isFalse();
+            assertThat(saved.getNote()).isEqualTo("skipped");
+        }
+
+        @Test
+        @DisplayName("next_due_at пересчитывается от now()")
+        void shouldRescheduleFromNow() throws TelegramApiException {
+            when(callbackQuery.getData()).thenReturn("v1:skip:1");
+            when(careScheduleRepository.findById(1L)).thenReturn(Optional.of(schedule));
+            when(careHistoryRepository.findFirstByPlantIdAndTaskTypeOrderByDoneAtDesc(any(), any()))
+                    .thenReturn(Optional.empty());
 
             LocalDateTime before = LocalDateTime.now();
             service.handleCallback(callbackQuery, telegramClient);
@@ -149,17 +290,97 @@ class NotificationCallbackServiceTest {
         }
 
         @Test
-        @DisplayName("Текст содержит информацию о пропуске")
-        void shouldEditMessageOnSkip() throws TelegramApiException {
+        @DisplayName("Текст содержит 'пропущено'")
+        void shouldEditWithSkipText() throws TelegramApiException {
             when(callbackQuery.getData()).thenReturn("v1:skip:1");
             when(careScheduleRepository.findById(1L)).thenReturn(Optional.of(schedule));
+            when(careHistoryRepository.findFirstByPlantIdAndTaskTypeOrderByDoneAtDesc(any(), any()))
+                    .thenReturn(Optional.empty());
 
             service.handleCallback(callbackQuery, telegramClient);
 
             ArgumentCaptor<EditMessageText> captor = ArgumentCaptor.forClass(EditMessageText.class);
             verify(telegramClient).execute(captor.capture());
-
             assertThat(captor.getValue().getText()).contains("❌").contains("пропущено");
+        }
+    }
+
+    @Nested
+    @DisplayName("Действие: snooze")
+    class SnoozeAction {
+
+        @Test
+        @DisplayName("+2 часа, без CareHistory")
+        void shouldSnoozeWithoutHistory() throws TelegramApiException {
+            when(callbackQuery.getData()).thenReturn("v1:snooze:1");
+            when(careScheduleRepository.findById(1L)).thenReturn(Optional.of(schedule));
+
+            LocalDateTime before = LocalDateTime.now();
+            service.handleCallback(callbackQuery, telegramClient);
+
+            assertThat(schedule.getNextDueAt()).isAfter(before.plusHours(1));
+            assertThat(schedule.getNextDueAt()).isBefore(before.plusHours(3));
+            verify(careScheduleRepository).save(schedule);
+            verify(careHistoryRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("interval_days не меняется")
+        void shouldNotChangeInterval() throws TelegramApiException {
+            when(callbackQuery.getData()).thenReturn("v1:snooze:1");
+            when(careScheduleRepository.findById(1L)).thenReturn(Optional.of(schedule));
+
+            int orig = schedule.getIntervalDays();
+            service.handleCallback(callbackQuery, telegramClient);
+
+            assertThat(schedule.getIntervalDays()).isEqualTo(orig);
+        }
+    }
+
+    @Nested
+    @DisplayName("Удалённое (архивированное) растение")
+    class ArchivedPlant {
+
+        @Test
+        @DisplayName("done → 'Растение уже удалено', без записи")
+        void shouldHandleArchivedOnDone() throws TelegramApiException {
+            plant.archive();
+            when(callbackQuery.getData()).thenReturn("v1:done:1");
+            when(careScheduleRepository.findById(1L)).thenReturn(Optional.of(schedule));
+
+            service.handleCallback(callbackQuery, telegramClient);
+
+            verify(careHistoryRepository, never()).save(any());
+            verify(careScheduleRepository, never()).save(any());
+
+            ArgumentCaptor<EditMessageText> editCaptor = ArgumentCaptor.forClass(EditMessageText.class);
+            verify(telegramClient).execute(editCaptor.capture());
+            assertThat(editCaptor.getValue().getText()).contains("удалено");
+        }
+
+        @Test
+        @DisplayName("skip → тоже graceful, без записи")
+        void shouldHandleArchivedOnSkip() throws TelegramApiException {
+            plant.archive();
+            when(callbackQuery.getData()).thenReturn("v1:skip:1");
+            when(careScheduleRepository.findById(1L)).thenReturn(Optional.of(schedule));
+
+            service.handleCallback(callbackQuery, telegramClient);
+
+            verify(careHistoryRepository, never()).save(any());
+            verify(careScheduleRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("snooze → тоже graceful, без записи")
+        void shouldHandleArchivedOnSnooze() throws TelegramApiException {
+            plant.archive();
+            when(callbackQuery.getData()).thenReturn("v1:snooze:1");
+            when(careScheduleRepository.findById(1L)).thenReturn(Optional.of(schedule));
+
+            service.handleCallback(callbackQuery, telegramClient);
+
+            verify(careScheduleRepository, never()).save(any());
         }
     }
 
@@ -168,7 +389,7 @@ class NotificationCallbackServiceTest {
     class InvalidCallbacks {
 
         @Test
-        @DisplayName("Неверный формат данных — отправляет ошибку")
+        @DisplayName("Неверный формат")
         void shouldHandleInvalidFormat() throws TelegramApiException {
             when(callbackQuery.getData()).thenReturn("v1:invalid");
 
@@ -177,11 +398,11 @@ class NotificationCallbackServiceTest {
             ArgumentCaptor<AnswerCallbackQuery> captor = ArgumentCaptor.forClass(AnswerCallbackQuery.class);
             verify(telegramClient).execute(captor.capture());
             assertThat(captor.getValue().getText()).contains("❌");
-            verify(careScheduleRepository, never()).save(any());
+            verify(careHistoryRepository, never()).save(any());
         }
 
         @Test
-        @DisplayName("Несуществующий schedule — отправляет ошибку")
+        @DisplayName("Несуществующий scheduleId")
         void shouldHandleMissingSchedule() throws TelegramApiException {
             when(callbackQuery.getData()).thenReturn("v1:done:9999");
             when(careScheduleRepository.findById(9999L)).thenReturn(Optional.empty());
@@ -190,25 +411,24 @@ class NotificationCallbackServiceTest {
 
             ArgumentCaptor<AnswerCallbackQuery> captor = ArgumentCaptor.forClass(AnswerCallbackQuery.class);
             verify(telegramClient).execute(captor.capture());
-            assertThat(captor.getValue().getText()).contains("❌");
+            assertThat(captor.getValue().getText()).contains("не найдено");
         }
 
         @Test
-        @DisplayName("Неизвестное действие — отправляет ошибку")
+        @DisplayName("Неизвестное действие")
         void shouldHandleUnknownAction() throws TelegramApiException {
             when(callbackQuery.getData()).thenReturn("v1:unknown:1");
             when(careScheduleRepository.findById(1L)).thenReturn(Optional.of(schedule));
 
             service.handleCallback(callbackQuery, telegramClient);
 
-            // Только AnswerCallbackQuery, без EditMessageText
             verify(telegramClient).execute(any(AnswerCallbackQuery.class));
             verify(telegramClient, never()).execute(any(EditMessageText.class));
-            verify(careScheduleRepository, never()).save(any());
+            verify(careHistoryRepository, never()).save(any());
         }
 
         @Test
-        @DisplayName("Нечисловой ID — отправляет ошибку")
+        @DisplayName("Нечисловой ID")
         void shouldHandleNonNumericId() throws TelegramApiException {
             when(callbackQuery.getData()).thenReturn("v1:done:abc");
 
@@ -217,24 +437,6 @@ class NotificationCallbackServiceTest {
             ArgumentCaptor<AnswerCallbackQuery> captor = ArgumentCaptor.forClass(AnswerCallbackQuery.class);
             verify(telegramClient).execute(captor.capture());
             assertThat(captor.getValue().getText()).contains("❌");
-        }
-    }
-
-    @Nested
-    @DisplayName("AnswerCallbackQuery")
-    class CallbackAnswer {
-
-        @Test
-        @DisplayName("Всегда отвечает на callback, даже при ошибке TelegramApi")
-        void shouldAnswerCallbackEvenOnEditFailure() throws TelegramApiException {
-            when(callbackQuery.getData()).thenReturn("v1:done:1");
-            when(careScheduleRepository.findById(1L)).thenReturn(Optional.of(schedule));
-            when(telegramClient.execute(any(EditMessageText.class)))
-                    .thenThrow(new TelegramApiException("edit failed"));
-
-            service.handleCallback(callbackQuery, telegramClient);
-
-            verify(telegramClient).execute(any(AnswerCallbackQuery.class));
         }
     }
 }

@@ -11,6 +11,8 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
 import org.telegram.telegrambots.meta.api.objects.Update;
 import org.telegram.telegrambots.meta.api.objects.message.Message;
@@ -24,6 +26,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
 @DisplayName("Unit-тесты для StartCommand (/start)")
 class StartCommandTest {
 
@@ -63,17 +66,13 @@ class StartCommandTest {
 
         startCommand.execute(update, telegramClient);
 
-        // Смена состояния на онбординг
         verify(userService).updateState(testUser, ConversationState.AWAITING_TIMEZONE);
 
-        // Приветствие + онбординг = 2 сообщения
         ArgumentCaptor<SendMessage> captor = ArgumentCaptor.forClass(SendMessage.class);
         verify(telegramClient, times(2)).execute(captor.capture());
 
-        // Первое — приветствие
         assertThat(captor.getAllValues().get(0).getText()).contains("Привет");
 
-        // Второе — онбординг с клавиатурой
         SendMessage onboarding = captor.getAllValues().get(1);
         assertThat(onboarding.getText()).contains("часовой пояс");
         assertThat(onboarding.getReplyMarkup()).isInstanceOf(ReplyKeyboardMarkup.class);

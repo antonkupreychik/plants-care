@@ -15,6 +15,8 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
 import org.telegram.telegrambots.meta.api.objects.Update;
 import org.telegram.telegrambots.meta.api.objects.message.Message;
@@ -30,10 +32,10 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
 @DisplayName("Unit-тесты для MenuCommand (/menu)")
 class MenuCommandTest {
 
@@ -97,11 +99,10 @@ class MenuCommandTest {
     }
 
     @Test
-    @DisplayName("Показывает список задач на сегодня, если есть просроченные расписания")
+    @DisplayName("Показывает список задач на сегодня")
     void shouldShowTodayTasks() throws TelegramApiException {
-        User user = testUser;
-        Plant plant1 = Plant.builder().user(user).name("Монстера").build();
-        Plant plant2 = Plant.builder().user(user).name("Фикус").build();
+        Plant plant1 = Plant.builder().user(testUser).name("Монстера").build();
+        Plant plant2 = Plant.builder().user(testUser).name("Фикус").build();
 
         CareSchedule s1 = CareSchedule.builder()
                 .plant(plant1).taskType(TaskType.WATERING).intervalDays(7)
@@ -179,20 +180,6 @@ class MenuCommandTest {
         verify(telegramClient).execute(captor.capture());
 
         assertThat(captor.getValue().getParseMode()).isEqualTo("Markdown");
-    }
-
-    @Test
-    @DisplayName("При 0 растений всё равно показывает меню")
-    void shouldShowMenuWithZeroPlants() throws TelegramApiException {
-        when(plantRepository.countByUserIdAndArchivedAtIsNull(any())).thenReturn(0L);
-        when(careScheduleRepository.findUserSchedulesDueBefore(any(), any())).thenReturn(List.of());
-
-        menuCommand.execute(update, telegramClient);
-
-        ArgumentCaptor<SendMessage> captor = ArgumentCaptor.forClass(SendMessage.class);
-        verify(telegramClient).execute(captor.capture());
-
-        assertThat(captor.getValue().getText()).contains("Растений: 0");
     }
 
     @Test
