@@ -10,6 +10,7 @@ import com.plantcare.bot.repository.PlantRepository;
 import com.plantcare.bot.repository.SpeciesRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Limit;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -25,19 +26,20 @@ public class PlantService {
     private final PlantRepository plantRepository;
     private final CareScheduleRepository careScheduleRepository;
     private final SpeciesRepository speciesRepository;
+    private final LocationService locationService;
 
     /**
-     * Получить топ популярных видов для отображения на первом экране
+     * Получить топ популярных видов для отображения на первом экране.
      */
     @Transactional(readOnly = true)
     public List<Species> getPopularSpecies(int limit) {
         return speciesRepository.findAllByOrderByPopularityDesc(
-                org.springframework.data.domain.Limit.of(limit)
+                Limit.of(limit)
         );
     }
 
     /**
-     * Поиск видов по названию или тегам
+     * Поиск видов по названию или тегам.
      */
     @Transactional(readOnly = true)
     public List<Species> searchSpecies(String query, int limit) {
@@ -45,7 +47,7 @@ public class PlantService {
     }
 
     /**
-     * Получить вид по ID
+     * Получить вид по ID.
      */
     @Transactional(readOnly = true)
     public Optional<Species> getSpeciesById(Long speciesId) {
@@ -53,13 +55,16 @@ public class PlantService {
     }
 
     /**
-     * Создать новое растение с расписанием полива
+     * Создать новое растение с расписанием полива.
      *
-     * @param user юзер-владелец
-     * @param speciesId ID вида (может быть null для "своего" растения)
-     * @param name имя растения ("Монстера в гостиной")
+     * Если локация не выбрана явно, растение попадает в дефолтную локацию пользователя:
+     * "Мои растения".
+     *
+     * @param user         юзер-владелец
+     * @param speciesId    ID вида, может быть null для своего растения
+     * @param name         имя растения
      * @param intervalDays интервал полива в днях
-     * @param nextDueAt когда следующий полив (рассчитано на фронте)
+     * @param nextDueAt    когда следующий полив
      * @return сохранённое растение с расписанием
      */
     @Transactional
@@ -70,18 +75,27 @@ public class PlantService {
             Integer intervalDays,
             LocalDateTime nextDueAt
     ) {
-        // Создаём растение
+        Species species = speciesId != null
+                ? speciesRepository.findById(speciesId).orElse(null)
+                : null;
+
         Plant plant = Plant.builder()
                 .user(user)
-                .species(speciesId != null ? speciesRepository.findById(speciesId).orElse(null) : null)
+                .species(species)
                 .name(name)
-                .room(null)  // На MVP room_id = NULL
+                .location(locationService.getOrCreateDefaultLocation(user))
                 .build();
 
         plant = plantRepository.save(plant);
-        log.info("Created plant '{}' (id={}) for user {}", name, plant.getId(), user.getTelegramChatId());
 
-        // Создаём расписание полива
+        log.info(
+                "Created plant '{}' (id={}) for user {} in location {}",
+                name,
+                plant.getId(),
+                user.getTelegramChatId(),
+                plant.getLocation().getId()
+        );
+
         CareSchedule wateringSchedule = CareSchedule.builder()
                 .plant(plant)
                 .taskType(TaskType.WATERING)
@@ -91,9 +105,73 @@ public class PlantService {
                 .build();
 
         careScheduleRepository.save(wateringSchedule);
-        log.info("Created watering schedule for plant {} (nextDueAt={})", plant.getId(), nextDueAt);
+
+        log.info(
+                "Created watering schedule for plant {} (nextDueAt={})",
+                plant.getId(),
+                nextDueAt
+        );
 
         plant.addSchedule(wateringSchedule);
+
+        return plant;
+    }
+
+    /**
+     * Создать новое растение с расписанием полива и конкретной локацией.
+     *
+     * Этот метод пригодится позже, когда в Telegram-flow добавишь выбор комнаты.
+     */
+    @Transactional
+    public Plant createPlantWithWateringSchedule(
+            User user,
+            Long speciesId,
+            String name,
+            Integer intervalDays,
+            LocalDateTime nextDueAt,
+            Long locationId
+    ) {
+        Species species = speciesId != null
+                ? speciesRepository.findById(speciesId).orElse(null)
+                : null;
+
+        Plant plant = Plant.builder()
+                .user(user)
+                .species(species)
+                .name(name)
+                .location(locationId != null
+                        ? locationService.getLocation(user.getId(), locationId)
+                        : locationService.getOrCreateDefaultLocation(user))
+                .build();
+
+        plant = plantRepository.save(plant);
+
+        log.info(
+                "Created plant '{}' (id={}) for user {} in location {}",
+                name,
+                plant.getId(),
+                user.getTelegramChatId(),
+                plant.getLocation().getId()
+        );
+
+        CareSchedule wateringSchedule = CareSchedule.builder()
+                .plant(plant)
+                .taskType(TaskType.WATERING)
+                .intervalDays(intervalDays)
+                .nextDueAt(nextDueAt)
+                .active(true)
+                .build();
+
+        careScheduleRepository.save(wateringSchedule);
+
+        log.info(
+                "Created watering schedule for plant {} (nextDueAt={})",
+                plant.getId(),
+                nextDueAt
+        );
+
+        plant.addSchedule(wateringSchedule);
+
         return plant;
     }
 
@@ -169,16 +247,28 @@ public class PlantService {
     }
 
     /**
-     * Валидация имени растения
+     * Переместить растение в другую локацию.
+     */
+    @Transactional
+    public Plant movePlantToLocation(Long userId, Long plantId, Long locationId) {
+        return locationService.movePlant(userId, plantId, locationId);
+    }
+
+    /**
+     * Валидация имени растения.
      */
     public static boolean isValidPlantName(String name) {
-        if (name == null) return false;
+        if (name == null) {
+            return false;
+        }
+
         String trimmed = name.trim();
+
         return !trimmed.isEmpty() && trimmed.length() <= 100;
     }
 
     /**
-     * Валидация интервала полива
+     * Валидация интервала полива.
      */
     public static boolean isValidInterval(int days) {
         return days >= 1 && days <= 365;

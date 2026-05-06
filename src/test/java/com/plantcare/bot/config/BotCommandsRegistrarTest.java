@@ -1,6 +1,6 @@
 package com.plantcare.bot.config;
 
-import com.plantcare.bot.service.TelegramClientProvider;
+import com.plantcare.bot.client.TelegramClientProvider;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;

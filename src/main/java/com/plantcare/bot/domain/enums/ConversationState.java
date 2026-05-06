@@ -18,8 +18,13 @@ public enum ConversationState {
     AWAITING_PLANT_FERTILIZING_SETUP,  // Настройка удобрения (после опрыскивания)
 
     // Работа с комнатами
+    AWAITING_LOCATION_RENAME,
+    AWAITING_LOCATION_CHANGE_EMOJI,
     AWAITING_ROOM_NAME,
-
+    AWAITING_LOCATION_NAME,
+    AWAITING_LOCATION_EMOJI,
+    AWAITING_PLANT_LOCATION_NAME,
+    AWAITING_PLANT_LOCATION_EMOJI,
     // Заметки
     AWAITING_PLANT_NOTE,
 

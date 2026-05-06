@@ -1,7 +1,6 @@
 package com.plantcare.bot.domain;
 
 import com.plantcare.bot.domain.base.BaseEntity;
-import jakarta.persistence.CascadeType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.FetchType;
@@ -14,10 +13,8 @@ import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
-import org.hibernate.annotations.UpdateTimestamp;
 
 import java.time.LocalDateTime;
-import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -34,6 +31,10 @@ public class Plant extends BaseEntity {
     @JoinColumn(name = "user_id", nullable = false)
     private User user;
 
+    /**
+     * Старое поле. Пока можно оставить, потому что в БД ещё есть room_id.
+     * Позже его можно будет удалить отдельной миграцией.
+     */
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "room_id")
     private Room room;
@@ -42,23 +43,23 @@ public class Plant extends BaseEntity {
     @JoinColumn(name = "species_id")
     private Species species;
 
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "location_id", nullable = false)
+    private Location location;
+
     @Column(nullable = false, length = 100)
     private String name;
 
-    @Column(columnDefinition = "TEXT")
+    @Column(columnDefinition = "text")
     private String notes;
 
-    @Column(name = "photo_file_id", length = 255)
+    @Column(name = "photo_file_id")
     private String photoFileId;
 
     @Column(name = "archived_at")
     private LocalDateTime archivedAt;
 
-    @UpdateTimestamp
-    @Column(name = "updated_at", nullable = false)
-    private LocalDateTime updatedAt;
-
-    @OneToMany(mappedBy = "plant", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
+    @OneToMany(mappedBy = "plant")
     @Builder.Default
     private List<CareSchedule> schedules = new ArrayList<>();
 
@@ -67,16 +68,15 @@ public class Plant extends BaseEntity {
     }
 
     public void archive() {
-        this.archivedAt = LocalDateTime.now().truncatedTo(ChronoUnit.MICROS);
+        this.archivedAt = LocalDateTime.now();
     }
 
     public void addSchedule(CareSchedule schedule) {
+        if (schedules == null) {
+            schedules = new ArrayList<>();
+        }
+
         schedules.add(schedule);
         schedule.setPlant(this);
-    }
-
-    public void removeSchedule(CareSchedule schedule) {
-        schedules.remove(schedule);
-        schedule.setPlant(null);
     }
 }

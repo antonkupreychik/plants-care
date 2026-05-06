@@ -1,9 +1,13 @@
 package com.plantcare.bot.state.impl;
 
+import com.plantcare.bot.domain.Location;
 import com.plantcare.bot.domain.Plant;
 import com.plantcare.bot.domain.Species;
 import com.plantcare.bot.domain.User;
 import com.plantcare.bot.domain.enums.ConversationState;
+import com.plantcare.bot.domain.enums.TaskType;
+import com.plantcare.bot.repository.PlantRepository;
+import com.plantcare.bot.service.LocationService;
 import com.plantcare.bot.service.PlantService;
 import com.plantcare.bot.service.UserService;
 import org.junit.jupiter.api.BeforeEach;
@@ -16,13 +20,13 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
+import org.telegram.telegrambots.meta.api.objects.CallbackQuery;
 import org.telegram.telegrambots.meta.api.objects.Update;
 import org.telegram.telegrambots.meta.api.objects.chat.Chat;
 import org.telegram.telegrambots.meta.api.objects.message.Message;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 import org.telegram.telegrambots.meta.generics.TelegramClient;
 
-import java.time.temporal.ChronoUnit;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Optional;
@@ -44,15 +48,20 @@ class PlantCreationStateHandlerTests {
     private PlantService plantService;
 
     @Mock
+    private LocationService locationService;
+
+    @Mock
     private TelegramClient telegramClient;
 
     private User testUser;
     private Species testSpecies;
     private Plant testPlant;
+    private Location defaultLocation;
 
     @BeforeEach
     void setUp() {
         testUser = User.builder()
+                .id(1L)
                 .telegramChatId(123L)
                 .username("testuser")
                 .timezone("UTC")
@@ -60,15 +69,29 @@ class PlantCreationStateHandlerTests {
                 .build();
 
         testSpecies = Species.builder()
+                .id(1L)
                 .name("Монстера")
                 .wateringDays(7)
                 .popularity(100)
                 .build();
 
+        defaultLocation = Location.builder()
+                .id(1L)
+                .user(testUser)
+                .name("Мои растения")
+                .emoji("🪴")
+                .defaultLocation(true)
+                .build();
+
         testPlant = Plant.builder()
+                .id(42L)
                 .user(testUser)
                 .name("Test Plant")
+                .location(defaultLocation)
                 .build();
+
+        when(locationService.getUserLocations(testUser.getId()))
+                .thenReturn(List.of(defaultLocation));
     }
 
     // ==================== AwaitingPlantSpeciesChoiceStateHandler Tests ====================
@@ -76,8 +99,8 @@ class PlantCreationStateHandlerTests {
     @DisplayName("Should handle SPECIES:ID callback and show preview")
     @Test
     void testSpeciesChoiceHandler_SelectSpecies() throws TelegramApiException {
-        AwaitingPlantSpeciesChoiceStateHandler handler = new AwaitingPlantSpeciesChoiceStateHandler(
-                userService, plantService);
+        AwaitingPlantSpeciesChoiceStateHandler handler =
+                new AwaitingPlantSpeciesChoiceStateHandler(userService, plantService);
 
         Update update = createCallbackUpdate("SPECIES:1");
         when(plantService.getSpeciesById(1L)).thenReturn(Optional.of(testSpecies));
@@ -92,8 +115,8 @@ class PlantCreationStateHandlerTests {
     @DisplayName("Should handle SPECIES:CUSTOM and transition to interval input")
     @Test
     void testSpeciesChoiceHandler_SelectCustom() throws TelegramApiException {
-        AwaitingPlantSpeciesChoiceStateHandler handler = new AwaitingPlantSpeciesChoiceStateHandler(
-                userService, plantService);
+        AwaitingPlantSpeciesChoiceStateHandler handler =
+                new AwaitingPlantSpeciesChoiceStateHandler(userService, plantService);
 
         Update update = createCallbackUpdate("SPECIES:CUSTOM");
 
@@ -107,8 +130,8 @@ class PlantCreationStateHandlerTests {
     @DisplayName("Should handle SPECIES:SEARCH and transition to search state")
     @Test
     void testSpeciesChoiceHandler_SelectSearch() throws TelegramApiException {
-        AwaitingPlantSpeciesChoiceStateHandler handler = new AwaitingPlantSpeciesChoiceStateHandler(
-                userService, plantService);
+        AwaitingPlantSpeciesChoiceStateHandler handler =
+                new AwaitingPlantSpeciesChoiceStateHandler(userService, plantService);
 
         Update update = createCallbackUpdate("SPECIES:SEARCH");
 
@@ -118,25 +141,22 @@ class PlantCreationStateHandlerTests {
         verify(telegramClient).execute(any(SendMessage.class));
     }
 
-    @DisplayName("Should handle invalid SPECIES:ID gracefully (NumberFormatException)")
+    @DisplayName("Should handle invalid SPECIES:ID gracefully")
     @Test
     void testSpeciesChoiceHandler_InvalidSpeciesId() {
-        AwaitingPlantSpeciesChoiceStateHandler handler = new AwaitingPlantSpeciesChoiceStateHandler(
-                userService, plantService);
+        AwaitingPlantSpeciesChoiceStateHandler handler =
+                new AwaitingPlantSpeciesChoiceStateHandler(userService, plantService);
 
         Update update = createCallbackUpdate("SPECIES:INVALID");
 
-        // Long.parseLong("INVALID") выбросит NumberFormatException,
-        // но handler ловит все исключения — не должен упасть
         assertDoesNotThrow(() -> handler.handle(testUser, update, telegramClient));
 
-        // Не должны были ни сохранить state, ни перейти в другое состояние
         verify(userService, never()).setStateData(eq(testUser), eq("species_id"), anyString());
     }
 
     // ==================== AwaitingPlantNameStateHandler Tests ====================
 
-    @DisplayName("Should accept valid plant name (1-100 chars)")
+    @DisplayName("Should accept valid plant name")
     @Test
     void testNameHandler_ValidName() throws TelegramApiException {
         AwaitingPlantNameStateHandler handler = new AwaitingPlantNameStateHandler(userService);
@@ -159,17 +179,15 @@ class PlantCreationStateHandlerTests {
 
         handler.handle(testUser, update, telegramClient);
 
-        // Имя не должно быть сохранено
         verify(userService, never()).setStateData(eq(testUser), eq("plant_name"), anyString());
         verify(userService, never()).updateState(any(), any());
 
-        // Должно быть отправлено сообщение с ошибкой валидации
         ArgumentCaptor<SendMessage> captor = ArgumentCaptor.forClass(SendMessage.class);
         verify(telegramClient).execute(captor.capture());
         assertThat(captor.getValue().getText()).contains("от 1 до 100");
     }
 
-    @DisplayName("Should reject too long plant name (>100 chars)")
+    @DisplayName("Should reject too long plant name")
     @Test
     void testNameHandler_TooLongName() throws TelegramApiException {
         AwaitingPlantNameStateHandler handler = new AwaitingPlantNameStateHandler(userService);
@@ -185,11 +203,11 @@ class PlantCreationStateHandlerTests {
 
     // ==================== AwaitingPlantWateringIntervalStateHandler Tests ====================
 
-    @DisplayName("Should accept valid watering interval (1-365)")
+    @DisplayName("Should accept valid watering interval")
     @Test
     void testIntervalHandler_ValidInterval() throws TelegramApiException {
-        AwaitingPlantWateringIntervalStateHandler handler = new AwaitingPlantWateringIntervalStateHandler(
-                userService, plantService);
+        AwaitingPlantWateringIntervalStateHandler handler =
+                new AwaitingPlantWateringIntervalStateHandler(userService, plantService);
 
         Update update = createTextMessageUpdate("7");
 
@@ -203,17 +221,15 @@ class PlantCreationStateHandlerTests {
     @DisplayName("Should reject interval > 365")
     @Test
     void testIntervalHandler_OutOfRangeInterval() throws TelegramApiException {
-        AwaitingPlantWateringIntervalStateHandler handler = new AwaitingPlantWateringIntervalStateHandler(
-                userService, plantService);
+        AwaitingPlantWateringIntervalStateHandler handler =
+                new AwaitingPlantWateringIntervalStateHandler(userService, plantService);
 
         Update update = createTextMessageUpdate("366");
 
         handler.handle(testUser, update, telegramClient);
 
-        // Интервал не должен быть сохранён
         verify(userService, never()).setStateData(eq(testUser), eq("interval_days"), anyString());
 
-        // Должно быть отправлено сообщение об ошибке
         ArgumentCaptor<SendMessage> captor = ArgumentCaptor.forClass(SendMessage.class);
         verify(telegramClient).execute(captor.capture());
         assertThat(captor.getValue().getText()).contains("от 1 до 365");
@@ -222,8 +238,8 @@ class PlantCreationStateHandlerTests {
     @DisplayName("Should reject interval < 1")
     @Test
     void testIntervalHandler_ZeroInterval() throws TelegramApiException {
-        AwaitingPlantWateringIntervalStateHandler handler = new AwaitingPlantWateringIntervalStateHandler(
-                userService, plantService);
+        AwaitingPlantWateringIntervalStateHandler handler =
+                new AwaitingPlantWateringIntervalStateHandler(userService, plantService);
 
         Update update = createTextMessageUpdate("0");
 
@@ -239,8 +255,8 @@ class PlantCreationStateHandlerTests {
     @DisplayName("Should reject non-numeric interval")
     @Test
     void testIntervalHandler_NonNumericInterval() throws TelegramApiException {
-        AwaitingPlantWateringIntervalStateHandler handler = new AwaitingPlantWateringIntervalStateHandler(
-                userService, plantService);
+        AwaitingPlantWateringIntervalStateHandler handler =
+                new AwaitingPlantWateringIntervalStateHandler(userService, plantService);
 
         Update update = createTextMessageUpdate("abc");
 
@@ -252,93 +268,95 @@ class PlantCreationStateHandlerTests {
 
     // ==================== AwaitingPlantLastWateredStateHandler Tests ====================
 
-    @DisplayName("Should handle TODAY callback correctly")
+    @DisplayName("LAST_WATERED:TODAY should save watering data and ask location")
     @Test
     void testLastWateredHandler_Today() throws TelegramApiException {
         testUser.getStateData().put("species_id", "1");
         testUser.getStateData().put("interval_days", "7");
         testUser.getStateData().put("plant_name", "Test Plant");
 
-        AwaitingPlantLastWateredStateHandler handler = new AwaitingPlantLastWateredStateHandler(
-                userService, plantService);
+        AwaitingPlantLastWateredStateHandler handler =
+                new AwaitingPlantLastWateredStateHandler(userService, plantService, locationService);
 
         Update update = createCallbackUpdate("LAST_WATERED:TODAY");
 
-        when(plantService.createPlantWithWateringSchedule(any(), any(), any(), anyInt(), any()))
-                .thenReturn(testPlant);
-
         handler.handle(testUser, update, telegramClient);
 
-        verify(plantService).createPlantWithWateringSchedule(
-                eq(testUser),
-                eq(1L),
-                eq("Test Plant"),
-                eq(7),
-                argThat(date -> date.isAfter(java.time.LocalDateTime.now().truncatedTo(ChronoUnit.MICROS)))
+        verify(userService).setStateData(testUser, "interval_days", "7");
+        verify(userService).setStateData(eq(testUser), eq("next_due_at"), anyString());
+        verify(userService).updateState(testUser, ConversationState.AWAITING_PLANT_ROOM);
+
+        verify(plantService, never()).createPlantWithWateringSchedule(
+                any(User.class),
+                any(),
+                anyString(),
+                any(Integer.class),
+                any()
         );
-        // Больше не resetToIdle — переходим к настройке опрыскивания
-        verify(userService).updateState(testUser, ConversationState.AWAITING_PLANT_MISTING_SETUP);
+
         verify(userService, never()).resetToIdle(testUser);
         verify(telegramClient, atLeastOnce()).execute(any(SendMessage.class));
     }
 
-    @DisplayName("Should handle YESTERDAY callback correctly")
+    @DisplayName("LAST_WATERED:YESTERDAY should save watering data and ask location")
     @Test
     void testLastWateredHandler_Yesterday() throws TelegramApiException {
         testUser.getStateData().put("species_id", "1");
         testUser.getStateData().put("interval_days", "7");
         testUser.getStateData().put("plant_name", "Test Plant");
 
-        AwaitingPlantLastWateredStateHandler handler = new AwaitingPlantLastWateredStateHandler(
-                userService, plantService);
+        AwaitingPlantLastWateredStateHandler handler =
+                new AwaitingPlantLastWateredStateHandler(userService, plantService, locationService);
 
         Update update = createCallbackUpdate("LAST_WATERED:YESTERDAY");
 
-        when(plantService.createPlantWithWateringSchedule(any(), any(), any(), anyInt(), any()))
-                .thenReturn(testPlant);
-
         handler.handle(testUser, update, telegramClient);
 
-        verify(plantService).createPlantWithWateringSchedule(
-                eq(testUser),
-                eq(1L),
-                eq("Test Plant"),
-                eq(7),
+        verify(userService).setStateData(testUser, "interval_days", "7");
+        verify(userService).setStateData(eq(testUser), eq("next_due_at"), anyString());
+        verify(userService).updateState(testUser, ConversationState.AWAITING_PLANT_ROOM);
+
+        verify(plantService, never()).createPlantWithWateringSchedule(
+                any(User.class),
+                any(),
+                anyString(),
+                any(Integer.class),
                 any()
         );
-        verify(userService).updateState(testUser, ConversationState.AWAITING_PLANT_MISTING_SETUP);
+
         verify(userService, never()).resetToIdle(testUser);
     }
 
-    @DisplayName("Should handle FORGOTTEN callback correctly")
+    @DisplayName("LAST_WATERED:FORGOTTEN should save watering data and ask location")
     @Test
     void testLastWateredHandler_Forgotten() throws TelegramApiException {
         testUser.getStateData().put("species_id", "null");
         testUser.getStateData().put("interval_days", "7");
         testUser.getStateData().put("plant_name", "Test Plant");
 
-        AwaitingPlantLastWateredStateHandler handler = new AwaitingPlantLastWateredStateHandler(
-                userService, plantService);
+        AwaitingPlantLastWateredStateHandler handler =
+                new AwaitingPlantLastWateredStateHandler(userService, plantService, locationService);
 
         Update update = createCallbackUpdate("LAST_WATERED:FORGOTTEN");
 
-        when(plantService.createPlantWithWateringSchedule(any(), any(), any(), anyInt(), any()))
-                .thenReturn(testPlant);
-
         handler.handle(testUser, update, telegramClient);
 
-        verify(plantService).createPlantWithWateringSchedule(
-                eq(testUser),
-                isNull(),
-                eq("Test Plant"),
-                eq(7),
-                argThat(date -> date.isBefore(java.time.LocalDateTime.now().truncatedTo(ChronoUnit.MICROS).plusSeconds(1)))
+        verify(userService).setStateData(testUser, "interval_days", "7");
+        verify(userService).setStateData(eq(testUser), eq("next_due_at"), anyString());
+        verify(userService).updateState(testUser, ConversationState.AWAITING_PLANT_ROOM);
+
+        verify(plantService, never()).createPlantWithWateringSchedule(
+                any(User.class),
+                any(),
+                anyString(),
+                any(Integer.class),
+                any()
         );
-        verify(userService).updateState(testUser, ConversationState.AWAITING_PLANT_MISTING_SETUP);
+
         verify(userService, never()).resetToIdle(testUser);
     }
 
-    @DisplayName("Should use default interval (7) if interval_days is null")
+    @DisplayName("Should use species default interval if interval_days is null")
     @Test
     void testLastWateredHandler_DefaultInterval() throws TelegramApiException {
         testUser.getStateData().put("species_id", "1");
@@ -347,24 +365,25 @@ class PlantCreationStateHandlerTests {
 
         when(plantService.getSpeciesById(1L)).thenReturn(Optional.of(testSpecies));
 
-        AwaitingPlantLastWateredStateHandler handler = new AwaitingPlantLastWateredStateHandler(
-                userService, plantService);
+        AwaitingPlantLastWateredStateHandler handler =
+                new AwaitingPlantLastWateredStateHandler(userService, plantService, locationService);
 
         Update update = createCallbackUpdate("LAST_WATERED:TODAY");
 
-        when(plantService.createPlantWithWateringSchedule(any(), any(), any(), anyInt(), any()))
-                .thenReturn(testPlant);
-
         handler.handle(testUser, update, telegramClient);
 
-        verify(plantService).createPlantWithWateringSchedule(
-                eq(testUser),
-                eq(1L),
-                eq("Test Plant"),
-                eq(7),
+        verify(userService).setStateData(testUser, "interval_days", "7");
+        verify(userService).setStateData(eq(testUser), eq("next_due_at"), anyString());
+        verify(userService).updateState(testUser, ConversationState.AWAITING_PLANT_ROOM);
+
+        verify(plantService, never()).createPlantWithWateringSchedule(
+                any(User.class),
+                any(),
+                anyString(),
+                any(Integer.class),
                 any()
         );
-        verify(userService).updateState(testUser, ConversationState.AWAITING_PLANT_MISTING_SETUP);
+
         verify(userService, never()).resetToIdle(testUser);
     }
 
@@ -373,11 +392,12 @@ class PlantCreationStateHandlerTests {
     @DisplayName("Should search species by query")
     @Test
     void testSearchHandler_FindSpecies() throws TelegramApiException {
-        AwaitingPlantSpeciesSearchStateHandler handler = new AwaitingPlantSpeciesSearchStateHandler(
-                userService, plantService);
+        AwaitingPlantSpeciesSearchStateHandler handler =
+                new AwaitingPlantSpeciesSearchStateHandler(userService, plantService);
 
         Update update = createTextMessageUpdate("монстера");
         List<Species> searchResults = List.of(testSpecies);
+
         when(plantService.searchSpecies("монстера", 10)).thenReturn(searchResults);
 
         handler.handle(testUser, update, telegramClient);
@@ -386,14 +406,16 @@ class PlantCreationStateHandlerTests {
         verify(telegramClient).execute(any(SendMessage.class));
     }
 
-    @DisplayName("Should handle empty search results with 'Ничего не найдено'")
+    @DisplayName("Should handle empty search results")
     @Test
     void testSearchHandler_NoResults() throws TelegramApiException {
-        AwaitingPlantSpeciesSearchStateHandler handler = new AwaitingPlantSpeciesSearchStateHandler(
-                userService, plantService);
+        AwaitingPlantSpeciesSearchStateHandler handler =
+                new AwaitingPlantSpeciesSearchStateHandler(userService, plantService);
 
         Update update = createTextMessageUpdate("неизвестное растение xyz");
-        when(plantService.searchSpecies("неизвестное растение xyz", 10)).thenReturn(List.of());
+
+        when(plantService.searchSpecies("неизвестное растение xyz", 10))
+                .thenReturn(List.of());
 
         handler.handle(testUser, update, telegramClient);
 
@@ -405,8 +427,8 @@ class PlantCreationStateHandlerTests {
     @DisplayName("Should handle BACK_TO_SPECIES from search")
     @Test
     void testSearchHandler_BackToSpecies() throws TelegramApiException {
-        AwaitingPlantSpeciesSearchStateHandler handler = new AwaitingPlantSpeciesSearchStateHandler(
-                userService, plantService);
+        AwaitingPlantSpeciesSearchStateHandler handler =
+                new AwaitingPlantSpeciesSearchStateHandler(userService, plantService);
 
         Update update = createCallbackUpdate("BACK_TO_SPECIES");
 
@@ -419,8 +441,8 @@ class PlantCreationStateHandlerTests {
     @DisplayName("Should handle CONFIRM_TEMPLATE from search results")
     @Test
     void testSearchHandler_ConfirmFromSearch() throws TelegramApiException {
-        AwaitingPlantSpeciesSearchStateHandler handler = new AwaitingPlantSpeciesSearchStateHandler(
-                userService, plantService);
+        AwaitingPlantSpeciesSearchStateHandler handler =
+                new AwaitingPlantSpeciesSearchStateHandler(userService, plantService);
 
         Update update = createCallbackUpdate("CONFIRM_TEMPLATE");
 
@@ -432,62 +454,67 @@ class PlantCreationStateHandlerTests {
 
     // ==================== AwaitingPlantMistingSetupStateHandler Tests ====================
 
-    @DisplayName("MISTING:DEFAULT → создаёт расписание 3 дня, переходит к удобрению")
+    @DisplayName("MISTING:DEFAULT should create schedule and go to fertilizing")
     @Test
     void testMistingHandler_Default() throws TelegramApiException {
         testUser.getStateData().put("plant_id", "42");
 
-        com.plantcare.bot.repository.PlantRepository plantRepository =
-                mock(com.plantcare.bot.repository.PlantRepository.class);
-        when(plantRepository.findById(42L)).thenReturn(Optional.of(testPlant));
+        PlantRepository plantRepository = mock(PlantRepository.class);
+
+        when(plantRepository.findByUserIdAndIdAndArchivedAtIsNull(1L, 42L))
+                .thenReturn(Optional.of(testPlant));
 
         AwaitingPlantMistingSetupStateHandler handler =
                 new AwaitingPlantMistingSetupStateHandler(userService, plantService, plantRepository);
 
         Update update = createCallbackUpdate("MISTING:DEFAULT");
+
         handler.handle(testUser, update, telegramClient);
 
         verify(plantService).addCareSchedule(
                 eq(testPlant),
-                eq(com.plantcare.bot.domain.enums.TaskType.MISTING),
+                eq(TaskType.MISTING),
                 eq(3),
                 any()
         );
+
         verify(userService).updateState(testUser, ConversationState.AWAITING_PLANT_FERTILIZING_SETUP);
         verify(telegramClient, atLeastOnce()).execute(any(SendMessage.class));
     }
 
-    @DisplayName("MISTING:SKIP → не создаёт расписание, переходит к удобрению")
+    @DisplayName("MISTING:SKIP should not create schedule and go to fertilizing")
     @Test
     void testMistingHandler_Skip() throws TelegramApiException {
         testUser.getStateData().put("plant_id", "42");
 
-        com.plantcare.bot.repository.PlantRepository plantRepository =
-                mock(com.plantcare.bot.repository.PlantRepository.class);
-        when(plantRepository.findById(42L)).thenReturn(Optional.of(testPlant));
+        PlantRepository plantRepository = mock(PlantRepository.class);
+
+        when(plantRepository.findByUserIdAndIdAndArchivedAtIsNull(1L, 42L))
+                .thenReturn(Optional.of(testPlant));
 
         AwaitingPlantMistingSetupStateHandler handler =
                 new AwaitingPlantMistingSetupStateHandler(userService, plantService, plantRepository);
 
         Update update = createCallbackUpdate("MISTING:SKIP");
+
         handler.handle(testUser, update, telegramClient);
 
         verify(plantService, never()).addCareSchedule(any(), any(), anyInt(), any());
         verify(userService).updateState(testUser, ConversationState.AWAITING_PLANT_FERTILIZING_SETUP);
     }
 
-    @DisplayName("MISTING:CUSTOM → просит ввести число, не переходит дальше")
+    @DisplayName("MISTING:CUSTOM should ask for interval")
     @Test
     void testMistingHandler_CustomAsksForInput() throws TelegramApiException {
         testUser.getStateData().put("plant_id", "42");
 
-        com.plantcare.bot.repository.PlantRepository plantRepository =
-                mock(com.plantcare.bot.repository.PlantRepository.class);
+        PlantRepository plantRepository = mock(PlantRepository.class);
 
         AwaitingPlantMistingSetupStateHandler handler =
                 new AwaitingPlantMistingSetupStateHandler(userService, plantService, plantRepository);
 
         Update update = createCallbackUpdate("MISTING:CUSTOM");
+
         handler.handle(testUser, update, telegramClient);
 
         verify(userService).setStateData(testUser, "misting_awaiting_input", "true");
@@ -495,118 +522,139 @@ class PlantCreationStateHandlerTests {
         verify(telegramClient).execute(any(SendMessage.class));
     }
 
-    @DisplayName("MISTING: кастомный ввод числа → создаёт расписание, переходит к удобрению")
+    @DisplayName("MISTING custom interval should create schedule and go to fertilizing")
     @Test
     void testMistingHandler_CustomIntervalInput() throws TelegramApiException {
         testUser.getStateData().put("plant_id", "42");
         testUser.getStateData().put("misting_awaiting_input", "true");
 
-        com.plantcare.bot.repository.PlantRepository plantRepository =
-                mock(com.plantcare.bot.repository.PlantRepository.class);
-        when(plantRepository.findById(42L)).thenReturn(Optional.of(testPlant));
+        PlantRepository plantRepository = mock(PlantRepository.class);
+
+        when(plantRepository.findByUserIdAndIdAndArchivedAtIsNull(1L, 42L))
+                .thenReturn(Optional.of(testPlant));
 
         AwaitingPlantMistingSetupStateHandler handler =
                 new AwaitingPlantMistingSetupStateHandler(userService, plantService, plantRepository);
 
         Update update = createTextMessageUpdate("5");
+
         handler.handle(testUser, update, telegramClient);
+
+        verify(userService).removeStateData(testUser, "misting_awaiting_input");
 
         verify(plantService).addCareSchedule(
                 eq(testPlant),
-                eq(com.plantcare.bot.domain.enums.TaskType.MISTING),
+                eq(TaskType.MISTING),
                 eq(5),
                 any()
         );
+
         verify(userService).updateState(testUser, ConversationState.AWAITING_PLANT_FERTILIZING_SETUP);
     }
 
     // ==================== AwaitingPlantFertilizingSetupStateHandler Tests ====================
 
-    @DisplayName("FERTILIZING:DEFAULT → создаёт расписание 14 дней, завершает создание")
+    @DisplayName("FERTILIZING:DEFAULT should create schedule and finish")
     @Test
     void testFertilizingHandler_Default() throws TelegramApiException {
         testUser.getStateData().put("plant_id", "42");
 
-        com.plantcare.bot.repository.PlantRepository plantRepository =
-                mock(com.plantcare.bot.repository.PlantRepository.class);
-        when(plantRepository.findById(42L)).thenReturn(Optional.of(testPlant));
-        when(plantService.getActiveSchedules(42L)).thenReturn(List.of());
+        PlantRepository plantRepository = mock(PlantRepository.class);
+
+        when(plantRepository.findByUserIdAndIdAndArchivedAtIsNull(1L, 42L))
+                .thenReturn(Optional.of(testPlant));
+
+        when(plantService.getActiveSchedules(42L))
+                .thenReturn(List.of());
 
         AwaitingPlantFertilizingSetupStateHandler handler =
                 new AwaitingPlantFertilizingSetupStateHandler(userService, plantService, plantRepository);
 
         Update update = createCallbackUpdate("FERTILIZING:DEFAULT");
+
         handler.handle(testUser, update, telegramClient);
 
         verify(plantService).addCareSchedule(
                 eq(testPlant),
-                eq(com.plantcare.bot.domain.enums.TaskType.FERTILIZING),
+                eq(TaskType.FERTILIZING),
                 eq(14),
                 any()
         );
+
         verify(userService).resetToIdle(testUser);
         verify(telegramClient, atLeastOnce()).execute(any(SendMessage.class));
     }
 
-    @DisplayName("FERTILIZING:SKIP → не создаёт расписание, завершает создание")
+    @DisplayName("FERTILIZING:SKIP should not create schedule and finish")
     @Test
     void testFertilizingHandler_Skip() throws TelegramApiException {
         testUser.getStateData().put("plant_id", "42");
 
-        com.plantcare.bot.repository.PlantRepository plantRepository =
-                mock(com.plantcare.bot.repository.PlantRepository.class);
-        when(plantRepository.findById(42L)).thenReturn(Optional.of(testPlant));
-        when(plantService.getActiveSchedules(42L)).thenReturn(List.of());
+        PlantRepository plantRepository = mock(PlantRepository.class);
+
+        when(plantRepository.findByUserIdAndIdAndArchivedAtIsNull(1L, 42L))
+                .thenReturn(Optional.of(testPlant));
+
+        when(plantService.getActiveSchedules(42L))
+                .thenReturn(List.of());
 
         AwaitingPlantFertilizingSetupStateHandler handler =
                 new AwaitingPlantFertilizingSetupStateHandler(userService, plantService, plantRepository);
 
         Update update = createCallbackUpdate("FERTILIZING:SKIP");
+
         handler.handle(testUser, update, telegramClient);
 
         verify(plantService, never()).addCareSchedule(any(), any(), anyInt(), any());
         verify(userService).resetToIdle(testUser);
     }
 
-    @DisplayName("FERTILIZING: кастомный ввод числа → создаёт расписание, завершает создание")
+    @DisplayName("FERTILIZING custom interval should create schedule and finish")
     @Test
     void testFertilizingHandler_CustomIntervalInput() throws TelegramApiException {
         testUser.getStateData().put("plant_id", "42");
         testUser.getStateData().put("fertilizing_awaiting_input", "true");
 
-        com.plantcare.bot.repository.PlantRepository plantRepository =
-                mock(com.plantcare.bot.repository.PlantRepository.class);
-        when(plantRepository.findById(42L)).thenReturn(Optional.of(testPlant));
-        when(plantService.getActiveSchedules(42L)).thenReturn(List.of());
+        PlantRepository plantRepository = mock(PlantRepository.class);
+
+        when(plantRepository.findByUserIdAndIdAndArchivedAtIsNull(1L, 42L))
+                .thenReturn(Optional.of(testPlant));
+
+        when(plantService.getActiveSchedules(42L))
+                .thenReturn(List.of());
 
         AwaitingPlantFertilizingSetupStateHandler handler =
                 new AwaitingPlantFertilizingSetupStateHandler(userService, plantService, plantRepository);
 
         Update update = createTextMessageUpdate("21");
+
         handler.handle(testUser, update, telegramClient);
+
+        verify(userService).removeStateData(testUser, "fertilizing_awaiting_input");
 
         verify(plantService).addCareSchedule(
                 eq(testPlant),
-                eq(com.plantcare.bot.domain.enums.TaskType.FERTILIZING),
+                eq(TaskType.FERTILIZING),
                 eq(21),
                 any()
         );
+
         verify(userService).resetToIdle(testUser);
     }
 
-    @DisplayName("FERTILIZING: невалидный ввод → отправляет ошибку, не переходит дальше")
+    @DisplayName("FERTILIZING invalid input should send error and stay in state")
     @Test
     void testFertilizingHandler_InvalidInput() throws TelegramApiException {
         testUser.getStateData().put("plant_id", "42");
         testUser.getStateData().put("fertilizing_awaiting_input", "true");
 
-        com.plantcare.bot.repository.PlantRepository plantRepository =
-                mock(com.plantcare.bot.repository.PlantRepository.class);
+        PlantRepository plantRepository = mock(PlantRepository.class);
 
         AwaitingPlantFertilizingSetupStateHandler handler =
                 new AwaitingPlantFertilizingSetupStateHandler(userService, plantService, plantRepository);
 
         Update update = createTextMessageUpdate("abc");
+
         handler.handle(testUser, update, telegramClient);
 
         verify(plantService, never()).addCareSchedule(any(), any(), anyInt(), any());
@@ -620,23 +668,23 @@ class PlantCreationStateHandlerTests {
         Update update = new Update();
         update.setUpdateId(1);
 
-        org.telegram.telegrambots.meta.api.objects.CallbackQuery callbackQuery =
-                new org.telegram.telegrambots.meta.api.objects.CallbackQuery();
+        CallbackQuery callbackQuery = new CallbackQuery();
         callbackQuery.setId("callback_123");
         callbackQuery.setData(callbackData);
         callbackQuery.setFrom(createTelegramUser());
 
         Chat chat = new org.telegram.telegrambots.meta.api.objects.chat.ChatFullInfo().builder()
                 .id(123L)
-                .type("type")
+                .type("private")
                 .build();
 
         Message message = new Message();
         message.setChat(chat);
         message.setMessageId(1);
-        callbackQuery.setMessage(message);
 
+        callbackQuery.setMessage(message);
         update.setCallbackQuery(callbackQuery);
+
         return update;
     }
 
@@ -651,15 +699,16 @@ class PlantCreationStateHandlerTests {
 
         Chat chat = new org.telegram.telegrambots.meta.api.objects.chat.ChatFullInfo().builder()
                 .id(123L)
-                .type("type")
+                .type("private")
                 .build();
-        message.setChat(chat);
 
+        message.setChat(chat);
         update.setMessage(message);
+
         return update;
     }
 
     private org.telegram.telegrambots.meta.api.objects.User createTelegramUser() {
-        return new org.telegram.telegrambots.meta.api.objects.User(123L, "hello", false);
+        return new org.telegram.telegrambots.meta.api.objects.User(123L, "testuser", false);
     }
 }
