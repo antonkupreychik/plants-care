@@ -1,4 +1,4 @@
-package com.plantcare.bot.command.container;
+package com.plantcare.bot.command;
 
 import com.plantcare.bot.command.impl.UnknownCommand;
 import com.plantcare.bot.command.interfaces.BotCommand;

@@ -1,6 +1,11 @@
 package com.plantcare.bot.beans;
 
-import com.plantcare.bot.command.container.CommandContainer;
+import com.plantcare.bot.command.CommandContainer;
+import com.plantcare.bot.command.impl.CancelCommand;
+import com.plantcare.bot.domain.User;
+import com.plantcare.bot.domain.enums.ConversationState;
+import com.plantcare.bot.service.UserService;
+import com.plantcare.bot.state.StateResolver;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -13,27 +18,61 @@ import org.telegram.telegrambots.meta.generics.TelegramClient;
 @Component
 public class PlantsCareBot implements LongPollingSingleThreadUpdateConsumer {
 
+    private static final String UNKNOWN = "UNKNOWN";
+
     private final TelegramClient telegramClient;
     private final CommandContainer commandContainer;
+    private final UserService userService;
+    private final StateResolver stateResolver;
+    private final CancelCommand cancelCommand;
 
     public PlantsCareBot(@Value("${telegram.bot.token}") String botToken,
-                         CommandContainer commandContainer) {
+                         CommandContainer commandContainer, UserService userService, StateResolver stateResolver, CancelCommand cancelCommand) {
         this.telegramClient = new OkHttpTelegramClient(botToken);
         this.commandContainer = commandContainer;
+        this.userService = userService;
+        this.stateResolver = stateResolver;
+        this.cancelCommand = cancelCommand;
     }
 
     @Override
     public void consume(Update update) {
-        if (update.hasMessage() && update.getMessage().hasText()) {
-            String messageText = update.getMessage().getText();
-            long chatId = update.getMessage().getChatId();
+        Long chatId = getChatId(update);
+        if (chatId == null) return;
 
-            log.info("Received message from {}: {}", chatId, messageText);
+        String userName = getUserName(update);
+        User user = userService.findOrCreate(chatId, userName);
 
-            String commandIdentifier = messageText.split(" ")[0].toLowerCase();
-
-            commandContainer.retrieveCommand(commandIdentifier)
-                    .execute(update, telegramClient);
+        // Обработка /cancel (только если это текстовое сообщение)
+        if (update.hasMessage() && "/cancel".equalsIgnoreCase(update.getMessage().getText())) {
+            cancelCommand.execute(update, telegramClient);
+            return;
         }
+
+        if (user.getConversationState() == ConversationState.IDLE) {
+            String command = update.hasMessage() ? getCommandName(update.getMessage().getText()) : "UNKNOWN";
+            commandContainer.retrieveCommand(command).execute(update, telegramClient);
+        } else {
+            stateResolver.resolve(user, update, telegramClient);
+        }
+    }
+
+    private Long getChatId(Update update) {
+        if (update.hasMessage()) return update.getMessage().getChatId();
+        if (update.hasCallbackQuery()) return update.getCallbackQuery().getMessage().getChatId();
+        return null;
+    }
+
+    private String getUserName(Update update) {
+        if (update.hasMessage()) return update.getMessage().getFrom().getUserName();
+        if (update.hasCallbackQuery()) return update.getCallbackQuery().getFrom().getUserName();
+        return "unknown";
+    }
+
+    private String getCommandName(String text) {
+        if (text == null || text.isBlank()) {
+            return UNKNOWN;
+        }
+        return text.trim().split("\\s+")[0].toLowerCase();
     }
 }
