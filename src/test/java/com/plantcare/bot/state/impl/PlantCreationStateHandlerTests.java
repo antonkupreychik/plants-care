@@ -276,7 +276,9 @@ class PlantCreationStateHandlerTests {
                 eq(7),
                 argThat(date -> date.isAfter(java.time.LocalDateTime.now().truncatedTo(ChronoUnit.MICROS)))
         );
-        verify(userService).resetToIdle(testUser);
+        // Больше не resetToIdle — переходим к настройке опрыскивания
+        verify(userService).updateState(testUser, ConversationState.AWAITING_PLANT_MISTING_SETUP);
+        verify(userService, never()).resetToIdle(testUser);
         verify(telegramClient, atLeastOnce()).execute(any(SendMessage.class));
     }
 
@@ -304,7 +306,8 @@ class PlantCreationStateHandlerTests {
                 eq(7),
                 any()
         );
-        verify(userService).resetToIdle(testUser);
+        verify(userService).updateState(testUser, ConversationState.AWAITING_PLANT_MISTING_SETUP);
+        verify(userService, never()).resetToIdle(testUser);
     }
 
     @DisplayName("Should handle FORGOTTEN callback correctly")
@@ -331,7 +334,8 @@ class PlantCreationStateHandlerTests {
                 eq(7),
                 argThat(date -> date.isBefore(java.time.LocalDateTime.now().truncatedTo(ChronoUnit.MICROS).plusSeconds(1)))
         );
-        verify(userService).resetToIdle(testUser);
+        verify(userService).updateState(testUser, ConversationState.AWAITING_PLANT_MISTING_SETUP);
+        verify(userService, never()).resetToIdle(testUser);
     }
 
     @DisplayName("Should use default interval (7) if interval_days is null")
@@ -353,7 +357,6 @@ class PlantCreationStateHandlerTests {
 
         handler.handle(testUser, update, telegramClient);
 
-        // Должен использовать дефолтный интервал 7
         verify(plantService).createPlantWithWateringSchedule(
                 eq(testUser),
                 eq(1L),
@@ -361,7 +364,8 @@ class PlantCreationStateHandlerTests {
                 eq(7),
                 any()
         );
-        verify(userService).resetToIdle(testUser);
+        verify(userService).updateState(testUser, ConversationState.AWAITING_PLANT_MISTING_SETUP);
+        verify(userService, never()).resetToIdle(testUser);
     }
 
     // ==================== AwaitingPlantSpeciesSearchStateHandler Tests ====================
@@ -423,6 +427,190 @@ class PlantCreationStateHandlerTests {
         handler.handle(testUser, update, telegramClient);
 
         verify(userService).updateState(testUser, ConversationState.AWAITING_PLANT_NAME);
+        verify(telegramClient).execute(any(SendMessage.class));
+    }
+
+    // ==================== AwaitingPlantMistingSetupStateHandler Tests ====================
+
+    @DisplayName("MISTING:DEFAULT → создаёт расписание 3 дня, переходит к удобрению")
+    @Test
+    void testMistingHandler_Default() throws TelegramApiException {
+        testUser.getStateData().put("plant_id", "42");
+
+        com.plantcare.bot.repository.PlantRepository plantRepository =
+                mock(com.plantcare.bot.repository.PlantRepository.class);
+        when(plantRepository.findById(42L)).thenReturn(Optional.of(testPlant));
+
+        AwaitingPlantMistingSetupStateHandler handler =
+                new AwaitingPlantMistingSetupStateHandler(userService, plantService, plantRepository);
+
+        Update update = createCallbackUpdate("MISTING:DEFAULT");
+        handler.handle(testUser, update, telegramClient);
+
+        verify(plantService).addCareSchedule(
+                eq(testPlant),
+                eq(com.plantcare.bot.domain.enums.TaskType.MISTING),
+                eq(3),
+                any()
+        );
+        verify(userService).updateState(testUser, ConversationState.AWAITING_PLANT_FERTILIZING_SETUP);
+        verify(telegramClient, atLeastOnce()).execute(any(SendMessage.class));
+    }
+
+    @DisplayName("MISTING:SKIP → не создаёт расписание, переходит к удобрению")
+    @Test
+    void testMistingHandler_Skip() throws TelegramApiException {
+        testUser.getStateData().put("plant_id", "42");
+
+        com.plantcare.bot.repository.PlantRepository plantRepository =
+                mock(com.plantcare.bot.repository.PlantRepository.class);
+        when(plantRepository.findById(42L)).thenReturn(Optional.of(testPlant));
+
+        AwaitingPlantMistingSetupStateHandler handler =
+                new AwaitingPlantMistingSetupStateHandler(userService, plantService, plantRepository);
+
+        Update update = createCallbackUpdate("MISTING:SKIP");
+        handler.handle(testUser, update, telegramClient);
+
+        verify(plantService, never()).addCareSchedule(any(), any(), anyInt(), any());
+        verify(userService).updateState(testUser, ConversationState.AWAITING_PLANT_FERTILIZING_SETUP);
+    }
+
+    @DisplayName("MISTING:CUSTOM → просит ввести число, не переходит дальше")
+    @Test
+    void testMistingHandler_CustomAsksForInput() throws TelegramApiException {
+        testUser.getStateData().put("plant_id", "42");
+
+        com.plantcare.bot.repository.PlantRepository plantRepository =
+                mock(com.plantcare.bot.repository.PlantRepository.class);
+
+        AwaitingPlantMistingSetupStateHandler handler =
+                new AwaitingPlantMistingSetupStateHandler(userService, plantService, plantRepository);
+
+        Update update = createCallbackUpdate("MISTING:CUSTOM");
+        handler.handle(testUser, update, telegramClient);
+
+        verify(userService).setStateData(testUser, "misting_awaiting_input", "true");
+        verify(userService, never()).updateState(any(), eq(ConversationState.AWAITING_PLANT_FERTILIZING_SETUP));
+        verify(telegramClient).execute(any(SendMessage.class));
+    }
+
+    @DisplayName("MISTING: кастомный ввод числа → создаёт расписание, переходит к удобрению")
+    @Test
+    void testMistingHandler_CustomIntervalInput() throws TelegramApiException {
+        testUser.getStateData().put("plant_id", "42");
+        testUser.getStateData().put("misting_awaiting_input", "true");
+
+        com.plantcare.bot.repository.PlantRepository plantRepository =
+                mock(com.plantcare.bot.repository.PlantRepository.class);
+        when(plantRepository.findById(42L)).thenReturn(Optional.of(testPlant));
+
+        AwaitingPlantMistingSetupStateHandler handler =
+                new AwaitingPlantMistingSetupStateHandler(userService, plantService, plantRepository);
+
+        Update update = createTextMessageUpdate("5");
+        handler.handle(testUser, update, telegramClient);
+
+        verify(plantService).addCareSchedule(
+                eq(testPlant),
+                eq(com.plantcare.bot.domain.enums.TaskType.MISTING),
+                eq(5),
+                any()
+        );
+        verify(userService).updateState(testUser, ConversationState.AWAITING_PLANT_FERTILIZING_SETUP);
+    }
+
+    // ==================== AwaitingPlantFertilizingSetupStateHandler Tests ====================
+
+    @DisplayName("FERTILIZING:DEFAULT → создаёт расписание 14 дней, завершает создание")
+    @Test
+    void testFertilizingHandler_Default() throws TelegramApiException {
+        testUser.getStateData().put("plant_id", "42");
+
+        com.plantcare.bot.repository.PlantRepository plantRepository =
+                mock(com.plantcare.bot.repository.PlantRepository.class);
+        when(plantRepository.findById(42L)).thenReturn(Optional.of(testPlant));
+        when(plantService.getActiveSchedules(42L)).thenReturn(List.of());
+
+        AwaitingPlantFertilizingSetupStateHandler handler =
+                new AwaitingPlantFertilizingSetupStateHandler(userService, plantService, plantRepository);
+
+        Update update = createCallbackUpdate("FERTILIZING:DEFAULT");
+        handler.handle(testUser, update, telegramClient);
+
+        verify(plantService).addCareSchedule(
+                eq(testPlant),
+                eq(com.plantcare.bot.domain.enums.TaskType.FERTILIZING),
+                eq(14),
+                any()
+        );
+        verify(userService).resetToIdle(testUser);
+        verify(telegramClient, atLeastOnce()).execute(any(SendMessage.class));
+    }
+
+    @DisplayName("FERTILIZING:SKIP → не создаёт расписание, завершает создание")
+    @Test
+    void testFertilizingHandler_Skip() throws TelegramApiException {
+        testUser.getStateData().put("plant_id", "42");
+
+        com.plantcare.bot.repository.PlantRepository plantRepository =
+                mock(com.plantcare.bot.repository.PlantRepository.class);
+        when(plantRepository.findById(42L)).thenReturn(Optional.of(testPlant));
+        when(plantService.getActiveSchedules(42L)).thenReturn(List.of());
+
+        AwaitingPlantFertilizingSetupStateHandler handler =
+                new AwaitingPlantFertilizingSetupStateHandler(userService, plantService, plantRepository);
+
+        Update update = createCallbackUpdate("FERTILIZING:SKIP");
+        handler.handle(testUser, update, telegramClient);
+
+        verify(plantService, never()).addCareSchedule(any(), any(), anyInt(), any());
+        verify(userService).resetToIdle(testUser);
+    }
+
+    @DisplayName("FERTILIZING: кастомный ввод числа → создаёт расписание, завершает создание")
+    @Test
+    void testFertilizingHandler_CustomIntervalInput() throws TelegramApiException {
+        testUser.getStateData().put("plant_id", "42");
+        testUser.getStateData().put("fertilizing_awaiting_input", "true");
+
+        com.plantcare.bot.repository.PlantRepository plantRepository =
+                mock(com.plantcare.bot.repository.PlantRepository.class);
+        when(plantRepository.findById(42L)).thenReturn(Optional.of(testPlant));
+        when(plantService.getActiveSchedules(42L)).thenReturn(List.of());
+
+        AwaitingPlantFertilizingSetupStateHandler handler =
+                new AwaitingPlantFertilizingSetupStateHandler(userService, plantService, plantRepository);
+
+        Update update = createTextMessageUpdate("21");
+        handler.handle(testUser, update, telegramClient);
+
+        verify(plantService).addCareSchedule(
+                eq(testPlant),
+                eq(com.plantcare.bot.domain.enums.TaskType.FERTILIZING),
+                eq(21),
+                any()
+        );
+        verify(userService).resetToIdle(testUser);
+    }
+
+    @DisplayName("FERTILIZING: невалидный ввод → отправляет ошибку, не переходит дальше")
+    @Test
+    void testFertilizingHandler_InvalidInput() throws TelegramApiException {
+        testUser.getStateData().put("plant_id", "42");
+        testUser.getStateData().put("fertilizing_awaiting_input", "true");
+
+        com.plantcare.bot.repository.PlantRepository plantRepository =
+                mock(com.plantcare.bot.repository.PlantRepository.class);
+
+        AwaitingPlantFertilizingSetupStateHandler handler =
+                new AwaitingPlantFertilizingSetupStateHandler(userService, plantService, plantRepository);
+
+        Update update = createTextMessageUpdate("abc");
+        handler.handle(testUser, update, telegramClient);
+
+        verify(plantService, never()).addCareSchedule(any(), any(), anyInt(), any());
+        verify(userService, never()).resetToIdle(any());
         verify(telegramClient).execute(any(SendMessage.class));
     }
 

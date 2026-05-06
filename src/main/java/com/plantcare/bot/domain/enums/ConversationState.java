@@ -14,6 +14,8 @@ public enum ConversationState {
     AWAITING_PLANT_ROOM,
     AWAITING_PLANT_WATERING_INTERVAL,
     AWAITING_PLANT_LAST_WATERED,
+    AWAITING_PLANT_MISTING_SETUP,      // Настройка опрыскивания (после создания)
+    AWAITING_PLANT_FERTILIZING_SETUP,  // Настройка удобрения (после опрыскивания)
 
     // Работа с комнатами
     AWAITING_ROOM_NAME,

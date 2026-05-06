@@ -9,6 +9,7 @@ import jakarta.persistence.Enumerated;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
+import jakarta.persistence.OneToOne;
 import jakarta.persistence.Table;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -43,4 +44,20 @@ public class CareHistory extends BaseEntity {
 
     @Column(length = 500)
     private String note;
+
+    /**
+     * Ссылка на компенсирующую запись. История иммутабельна — ошибочная запись
+     * не удаляется, а перекрывается компенсирующей. Резерв под Этап 3 (кнопка отмены).
+     * NULL означает, что запись активна и не отменена.
+     */
+    @OneToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "cancelled_by")
+    private CareHistory cancelledBy;
+
+    /**
+     * Возвращает true, если запись была отменена компенсирующей.
+     */
+    public boolean isCancelled() {
+        return cancelledBy != null;
+    }
 }
