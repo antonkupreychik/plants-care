@@ -11,6 +11,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
 import org.telegram.telegrambots.meta.api.objects.Update;
+import org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMarkup;
+import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardButton;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 import org.telegram.telegrambots.meta.generics.TelegramClient;
 
@@ -96,7 +98,7 @@ public class AwaitingPlantLastWateredStateHandler implements StateHandler {
             log.info("Creating plant: name={}, speciesId={}, interval={}, nextDueAt={}",
                     plantName, speciesId, intervalDays, nextDueAt);
 
-            // Создаём растение и расписание
+            // Создаём растение и расписание полива
             Plant savedPlant = plantService.createPlantWithWateringSchedule(
                     user,
                     speciesId,
@@ -105,11 +107,13 @@ public class AwaitingPlantLastWateredStateHandler implements StateHandler {
                     nextDueAt
             );
 
-            // Отправляем подтверждение и возвращаемся в IDLE
-            sendConfirmation(user, savedPlant, nextDueAt, client);
-            userService.resetToIdle(user);
+            // Сохраняем plant_id для следующих шагов (MISTING / FERTILIZING)
+            userService.setStateData(user, "plant_id", String.valueOf(savedPlant.getId()));
 
-            log.info("Plant creation completed for user {}", chatId);
+            // Переходим к настройке опрыскивания
+            askAboutMisting(user, savedPlant.getName(), client);
+
+            log.info("Plant creation step 1 done for user {}, asking about misting", chatId);
 
         } catch (Exception e) {
             log.error("Failed to create plant for user {}", chatId, e);
@@ -147,6 +151,48 @@ public class AwaitingPlantLastWateredStateHandler implements StateHandler {
             case "FORGOTTEN" -> now;  // Полить нужно прямо сейчас
             default -> throw new IllegalArgumentException("Unknown choice: " + choice);
         };
+    }
+
+    /**
+     * Переход к настройке опрыскивания: спрашиваем нужно ли, предлагаем дефолт 3 дня.
+     */
+    private void askAboutMisting(User user, String plantName, TelegramClient client) {
+        userService.updateState(user, ConversationState.AWAITING_PLANT_MISTING_SETUP);
+
+        InlineKeyboardMarkup keyboard = InlineKeyboardMarkup.builder()
+                .keyboardRow(new org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardRow(
+                        InlineKeyboardButton.builder()
+                                .text("💨 Да, каждые 3 дня")
+                                .callbackData("MISTING:DEFAULT")
+                                .build()
+                ))
+                .keyboardRow(new org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardRow(
+                        InlineKeyboardButton.builder()
+                                .text("✏️ Да, задать интервал")
+                                .callbackData("MISTING:CUSTOM")
+                                .build()
+                ))
+                .keyboardRow(new org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardRow(
+                        InlineKeyboardButton.builder()
+                                .text("❌ Не нужно")
+                                .callbackData("MISTING:SKIP")
+                                .build()
+                ))
+                .build();
+
+        SendMessage message = SendMessage.builder()
+                .chatId(user.getTelegramChatId().toString())
+                .text("💨 Нужно ли опрыскивать *" + plantName + "*?\n\n"
+                        + "Опрыскивание повышает влажность воздуха — полезно для тропических растений.")
+                .parseMode("Markdown")
+                .replyMarkup(keyboard)
+                .build();
+
+        try {
+            client.execute(message);
+        } catch (TelegramApiException e) {
+            log.error("Failed to send misting question", e);
+        }
     }
 
     private void sendConfirmation(User user, Plant plant, LocalDateTime nextDueAt, TelegramClient client) {

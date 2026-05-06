@@ -205,6 +205,123 @@ class PlantServiceTest extends IntegrationTestBase {
         assertThat(results).isEmpty();
     }
 
+    // ==================== addCareSchedule ====================
+
+    @Test
+    @DisplayName("addCareSchedule: создаёт MISTING расписание для существующего растения")
+    void addCareSchedule_createsMistingSchedule() {
+        LocalDateTime waterDue = LocalDateTime.now().truncatedTo(ChronoUnit.MICROS).plusDays(3);
+        Plant plant = plantService.createPlantWithWateringSchedule(
+                testUser, monstera.getId(), "Монстера", 3, waterDue);
+
+        LocalDateTime mistingDue = LocalDateTime.now().truncatedTo(ChronoUnit.MICROS).plusDays(3);
+        CareSchedule misting = plantService.addCareSchedule(
+                plant, TaskType.MISTING, 3, mistingDue);
+
+        assertThat(misting.getId()).isNotNull();
+        assertThat(misting.getTaskType()).isEqualTo(TaskType.MISTING);
+        assertThat(misting.getIntervalDays()).isEqualTo(3);
+        assertThat(misting.getNextDueAt()).isEqualTo(mistingDue);
+        assertThat(misting.isActive()).isTrue();
+    }
+
+    @Test
+    @DisplayName("addCareSchedule: создаёт FERTILIZING расписание")
+    void addCareSchedule_createsFertilizingSchedule() {
+        LocalDateTime waterDue = LocalDateTime.now().truncatedTo(ChronoUnit.MICROS).plusDays(7);
+        Plant plant = plantService.createPlantWithWateringSchedule(
+                testUser, null, "Кактус", 7, waterDue);
+
+        LocalDateTime fertilizeDue = LocalDateTime.now().truncatedTo(ChronoUnit.MICROS).plusDays(14);
+        CareSchedule fertilizing = plantService.addCareSchedule(
+                plant, TaskType.FERTILIZING, 14, fertilizeDue);
+
+        assertThat(fertilizing.getTaskType()).isEqualTo(TaskType.FERTILIZING);
+        assertThat(fertilizing.getIntervalDays()).isEqualTo(14);
+        assertThat(fertilizing.isActive()).isTrue();
+    }
+
+    @Test
+    @DisplayName("addCareSchedule: повторный вызов обновляет существующее, не создаёт дубль")
+    void addCareSchedule_updatesExisting() {
+        LocalDateTime waterDue = LocalDateTime.now().truncatedTo(ChronoUnit.MICROS).plusDays(7);
+        Plant plant = plantService.createPlantWithWateringSchedule(
+                testUser, null, "Папоротник", 7, waterDue);
+
+        LocalDateTime first = LocalDateTime.now().truncatedTo(ChronoUnit.MICROS).plusDays(3);
+        plantService.addCareSchedule(plant, TaskType.MISTING, 3, first);
+
+        LocalDateTime second = LocalDateTime.now().truncatedTo(ChronoUnit.MICROS).plusDays(1);
+        plantService.addCareSchedule(plant, TaskType.MISTING, 1, second);
+
+        List<CareSchedule> all = scheduleRepository.findAllByPlantId(plant.getId()).stream()
+                .filter(s -> s.getTaskType() == TaskType.MISTING)
+                .toList();
+
+        // Дубля нет — только одна запись типа MISTING
+        assertThat(all).hasSize(1);
+        assertThat(all.get(0).getIntervalDays()).isEqualTo(1);
+        assertThat(all.get(0).getNextDueAt()).isEqualTo(second);
+    }
+
+    // ==================== deactivateCareSchedule ====================
+
+    @Test
+    @DisplayName("deactivateCareSchedule: деактивирует расписание (is_active = false)")
+    void deactivateCareSchedule_setsInactive() {
+        LocalDateTime waterDue = LocalDateTime.now().truncatedTo(ChronoUnit.MICROS).plusDays(7);
+        Plant plant = plantService.createPlantWithWateringSchedule(
+                testUser, null, "Пальма", 7, waterDue);
+
+        LocalDateTime mistingDue = LocalDateTime.now().truncatedTo(ChronoUnit.MICROS).plusDays(3);
+        plantService.addCareSchedule(plant, TaskType.MISTING, 3, mistingDue);
+
+        plantService.deactivateCareSchedule(plant, TaskType.MISTING);
+
+        CareSchedule misting = scheduleRepository
+                .findByPlantIdAndTaskType(plant.getId(), TaskType.MISTING)
+                .orElseThrow();
+        assertThat(misting.isActive()).isFalse();
+    }
+
+    @Test
+    @DisplayName("deactivateCareSchedule: вызов на несуществующем типе — молча ничего не делает")
+    void deactivateCareSchedule_noopIfNotExists() {
+        LocalDateTime waterDue = LocalDateTime.now().truncatedTo(ChronoUnit.MICROS).plusDays(7);
+        Plant plant = plantService.createPlantWithWateringSchedule(
+                testUser, null, "Сансевиерия", 7, waterDue);
+
+        // FERTILIZING ещё не создавали — не должно падать
+        plantService.deactivateCareSchedule(plant, TaskType.FERTILIZING);
+
+        assertThat(scheduleRepository.findByPlantIdAndTaskType(plant.getId(), TaskType.FERTILIZING))
+                .isEmpty();
+    }
+
+    // ==================== getActiveSchedules ====================
+
+    @Test
+    @DisplayName("getActiveSchedules: возвращает только активные расписания")
+    void getActiveSchedules_returnsOnlyActive() {
+        LocalDateTime waterDue = LocalDateTime.now().truncatedTo(ChronoUnit.MICROS).plusDays(7);
+        Plant plant = plantService.createPlantWithWateringSchedule(
+                testUser, null, "Фикус", 7, waterDue);
+
+        plantService.addCareSchedule(plant, TaskType.MISTING, 3,
+                LocalDateTime.now().truncatedTo(ChronoUnit.MICROS).plusDays(3));
+        plantService.addCareSchedule(plant, TaskType.FERTILIZING, 14,
+                LocalDateTime.now().truncatedTo(ChronoUnit.MICROS).plusDays(14));
+
+        // Деактивируем удобрение
+        plantService.deactivateCareSchedule(plant, TaskType.FERTILIZING);
+
+        List<CareSchedule> active = plantService.getActiveSchedules(plant.getId());
+
+        assertThat(active).hasSize(2);
+        assertThat(active).extracting(CareSchedule::getTaskType)
+                .containsExactlyInAnyOrder(TaskType.WATERING, TaskType.MISTING);
+    }
+
     // ==================== Валидация (статические методы) ====================
 
     @Test

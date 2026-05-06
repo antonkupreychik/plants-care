@@ -98,6 +98,77 @@ public class PlantService {
     }
 
     /**
+     * Добавляет расписание ухода (MISTING или FERTILIZING) к существующему растению.
+     * WATERING уже создаётся при создании растения.
+     * Если расписание данного типа уже есть — активирует его с новым интервалом.
+     *
+     * @param plant       растение
+     * @param taskType    тип задачи (MISTING или FERTILIZING)
+     * @param intervalDays интервал в днях
+     * @param nextDueAt   время следующего события
+     * @return сохранённое расписание
+     */
+    @Transactional
+    public CareSchedule addCareSchedule(
+            Plant plant,
+            TaskType taskType,
+            Integer intervalDays,
+            LocalDateTime nextDueAt
+    ) {
+        // Если расписание уже существует — обновляем, не создаём дубль
+        return careScheduleRepository
+                .findByPlantIdAndTaskType(plant.getId(), taskType)
+                .map(existing -> {
+                    existing.setIntervalDays(intervalDays);
+                    existing.setNextDueAt(nextDueAt);
+                    existing.setActive(true);
+                    CareSchedule saved = careScheduleRepository.save(existing);
+                    log.info("Updated {} schedule for plant {} (nextDueAt={})",
+                            taskType, plant.getId(), nextDueAt);
+                    return saved;
+                })
+                .orElseGet(() -> {
+                    CareSchedule schedule = CareSchedule.builder()
+                            .plant(plant)
+                            .taskType(taskType)
+                            .intervalDays(intervalDays)
+                            .nextDueAt(nextDueAt)
+                            .active(true)
+                            .build();
+                    CareSchedule saved = careScheduleRepository.save(schedule);
+                    log.info("Created {} schedule for plant {} (nextDueAt={})",
+                            taskType, plant.getId(), nextDueAt);
+                    return saved;
+                });
+    }
+
+    /**
+     * Деактивирует расписание заданного типа для растения.
+     * Используется при отключении MISTING/FERTILIZING тумблером в карточке.
+     */
+    @Transactional
+    public void deactivateCareSchedule(Plant plant, TaskType taskType) {
+        careScheduleRepository
+                .findByPlantIdAndTaskType(plant.getId(), taskType)
+                .ifPresent(schedule -> {
+                    schedule.setActive(false);
+                    careScheduleRepository.save(schedule);
+                    log.info("Deactivated {} schedule for plant {}", taskType, plant.getId());
+                });
+    }
+
+    /**
+     * Получить все активные расписания растения.
+     * Используется в карточке растения для отображения трёх таймеров.
+     */
+    @Transactional(readOnly = true)
+    public List<CareSchedule> getActiveSchedules(Long plantId) {
+        return careScheduleRepository.findAllByPlantId(plantId).stream()
+                .filter(CareSchedule::isActive)
+                .toList();
+    }
+
+    /**
      * Валидация имени растения
      */
     public static boolean isValidPlantName(String name) {
