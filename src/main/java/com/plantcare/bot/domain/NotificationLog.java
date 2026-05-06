@@ -18,6 +18,7 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
 
 @Entity
 @Table(name = "notifications_log")
@@ -42,5 +43,5 @@ public class NotificationLog extends BaseEntity {
 
     @Column(name = "sent_at", nullable = false)
     @Builder.Default
-    private LocalDateTime sentAt = LocalDateTime.now();
+    private LocalDateTime sentAt = LocalDateTime.now().truncatedTo(ChronoUnit.MICROS);
 }

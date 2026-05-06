@@ -18,6 +18,7 @@ import org.hibernate.annotations.UpdateTimestamp;
 
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.time.temporal.ChronoUnit;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -75,6 +76,6 @@ public class User extends BaseEntity {
     }
 
     public boolean isPaused() {
-        return pausedUntil != null && pausedUntil.isAfter(LocalDateTime.now());
+        return pausedUntil != null && pausedUntil.isAfter(LocalDateTime.now().truncatedTo(ChronoUnit.MICROS));
     }
 }

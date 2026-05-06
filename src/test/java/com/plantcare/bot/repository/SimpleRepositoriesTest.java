@@ -13,6 +13,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 
 import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -96,19 +97,19 @@ class SimpleRepositoriesTest extends IntegrationTestBase {
                 .plant(plant)
                 .taskType(TaskType.WATERING)
                 .notificationType(NotificationType.DUE)
-                .sentAt(LocalDateTime.now().minusHours(2))
+                .sentAt(LocalDateTime.now().truncatedTo(ChronoUnit.MICROS).minusHours(2))
                 .build());
 
         // За последние 6 часов есть запись — true
         assertThat(notificationRepository.existsByPlantIdAndTaskTypeAndSentAtAfter(
-                plant.getId(), TaskType.WATERING, LocalDateTime.now().minusHours(6))).isTrue();
+                plant.getId(), TaskType.WATERING, LocalDateTime.now().truncatedTo(ChronoUnit.MICROS).minusHours(6))).isTrue();
 
         // За последние 30 минут — нет
         assertThat(notificationRepository.existsByPlantIdAndTaskTypeAndSentAtAfter(
-                plant.getId(), TaskType.WATERING, LocalDateTime.now().minusMinutes(30))).isFalse();
+                plant.getId(), TaskType.WATERING, LocalDateTime.now().truncatedTo(ChronoUnit.MICROS).minusMinutes(30))).isFalse();
 
         // Другой тип задачи — нет
         assertThat(notificationRepository.existsByPlantIdAndTaskTypeAndSentAtAfter(
-                plant.getId(), TaskType.MISTING, LocalDateTime.now().minusHours(6))).isFalse();
+                plant.getId(), TaskType.MISTING, LocalDateTime.now().truncatedTo(ChronoUnit.MICROS).minusHours(6))).isFalse();
     }
 }

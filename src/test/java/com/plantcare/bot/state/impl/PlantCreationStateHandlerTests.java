@@ -18,6 +18,7 @@ import org.telegram.telegrambots.meta.api.objects.message.Message;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 import org.telegram.telegrambots.meta.generics.TelegramClient;
 
+import java.time.temporal.ChronoUnit;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Optional;
@@ -266,7 +267,7 @@ class PlantCreationStateHandlerTests {
                 eq(1L),
                 eq("Test Plant"),
                 eq(7),
-                argThat(date -> date.isAfter(java.time.LocalDateTime.now()))
+                argThat(date -> date.isAfter(java.time.LocalDateTime.now().truncatedTo(ChronoUnit.MICROS)))
         );
         verify(userService).resetToIdle(testUser);
         verify(telegramClient, atLeastOnce()).execute(any(SendMessage.class));
@@ -321,7 +322,7 @@ class PlantCreationStateHandlerTests {
                 isNull(),
                 eq("Test Plant"),
                 eq(7),
-                argThat(date -> date.isBefore(java.time.LocalDateTime.now().plusSeconds(1)))
+                argThat(date -> date.isBefore(java.time.LocalDateTime.now().truncatedTo(ChronoUnit.MICROS).plusSeconds(1)))
         );
         verify(userService).resetToIdle(testUser);
     }
