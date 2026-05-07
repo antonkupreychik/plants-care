@@ -8,6 +8,7 @@ import com.plantcare.bot.domain.enums.ConversationState;
 import com.plantcare.bot.domain.enums.TaskType;
 import com.plantcare.bot.repository.PlantRepository;
 import com.plantcare.bot.service.LocationService;
+import com.plantcare.bot.service.MainMenuService;
 import com.plantcare.bot.service.PlantService;
 import com.plantcare.bot.service.UserService;
 import org.junit.jupiter.api.BeforeEach;
@@ -19,6 +20,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
 import org.telegram.telegrambots.meta.api.objects.CallbackQuery;
 import org.telegram.telegrambots.meta.api.objects.Update;
@@ -53,6 +55,9 @@ class PlantCreationStateHandlerTests {
     @Mock
     private TelegramClient telegramClient;
 
+    @Mock
+    private MainMenuService mainMenuService;
+
     private User testUser;
     private Species testSpecies;
     private Plant testPlant;
@@ -61,40 +66,42 @@ class PlantCreationStateHandlerTests {
     @BeforeEach
     void setUp() {
         testUser = User.builder()
-                .id(1L)
                 .telegramChatId(123L)
                 .username("testuser")
                 .timezone("UTC")
                 .stateData(new HashMap<>())
                 .build();
 
+        ReflectionTestUtils.setField(testUser, "id", 123L);
+
         testSpecies = Species.builder()
-                .id(1L)
                 .name("Монстера")
                 .wateringDays(7)
                 .popularity(100)
                 .build();
 
+        ReflectionTestUtils.setField(testSpecies, "id", 1L);
+
         defaultLocation = Location.builder()
-                .id(1L)
                 .user(testUser)
                 .name("Мои растения")
                 .emoji("🪴")
                 .defaultLocation(true)
                 .build();
 
+        ReflectionTestUtils.setField(defaultLocation, "id", 10L);
+
         testPlant = Plant.builder()
-                .id(42L)
                 .user(testUser)
                 .name("Test Plant")
                 .location(defaultLocation)
                 .build();
 
+        ReflectionTestUtils.setField(testPlant, "id", 42L);
+
         when(locationService.getUserLocations(testUser.getId()))
                 .thenReturn(List.of(defaultLocation));
     }
-
-    // ==================== AwaitingPlantSpeciesChoiceStateHandler Tests ====================
 
     @DisplayName("Should handle SPECIES:ID callback and show preview")
     @Test
@@ -154,8 +161,6 @@ class PlantCreationStateHandlerTests {
         verify(userService, never()).setStateData(eq(testUser), eq("species_id"), anyString());
     }
 
-    // ==================== AwaitingPlantNameStateHandler Tests ====================
-
     @DisplayName("Should accept valid plant name")
     @Test
     void testNameHandler_ValidName() throws TelegramApiException {
@@ -200,8 +205,6 @@ class PlantCreationStateHandlerTests {
         verify(userService, never()).setStateData(eq(testUser), eq("plant_name"), anyString());
         verify(telegramClient).execute(any(SendMessage.class));
     }
-
-    // ==================== AwaitingPlantWateringIntervalStateHandler Tests ====================
 
     @DisplayName("Should accept valid watering interval")
     @Test
@@ -265,8 +268,6 @@ class PlantCreationStateHandlerTests {
         verify(userService, never()).setStateData(eq(testUser), eq("interval_days"), anyString());
         verify(telegramClient).execute(any(SendMessage.class));
     }
-
-    // ==================== AwaitingPlantLastWateredStateHandler Tests ====================
 
     @DisplayName("LAST_WATERED:TODAY should save watering data and ask location")
     @Test
@@ -387,8 +388,6 @@ class PlantCreationStateHandlerTests {
         verify(userService, never()).resetToIdle(testUser);
     }
 
-    // ==================== AwaitingPlantSpeciesSearchStateHandler Tests ====================
-
     @DisplayName("Should search species by query")
     @Test
     void testSearchHandler_FindSpecies() throws TelegramApiException {
@@ -452,8 +451,6 @@ class PlantCreationStateHandlerTests {
         verify(telegramClient).execute(any(SendMessage.class));
     }
 
-    // ==================== AwaitingPlantMistingSetupStateHandler Tests ====================
-
     @DisplayName("MISTING:DEFAULT should create schedule and go to fertilizing")
     @Test
     void testMistingHandler_Default() throws TelegramApiException {
@@ -461,7 +458,7 @@ class PlantCreationStateHandlerTests {
 
         PlantRepository plantRepository = mock(PlantRepository.class);
 
-        when(plantRepository.findByUserIdAndIdAndArchivedAtIsNull(1L, 42L))
+        when(plantRepository.findByUserIdAndIdAndArchivedAtIsNull(123L, 42L))
                 .thenReturn(Optional.of(testPlant));
 
         AwaitingPlantMistingSetupStateHandler handler =
@@ -489,7 +486,7 @@ class PlantCreationStateHandlerTests {
 
         PlantRepository plantRepository = mock(PlantRepository.class);
 
-        when(plantRepository.findByUserIdAndIdAndArchivedAtIsNull(1L, 42L))
+        when(plantRepository.findByUserIdAndIdAndArchivedAtIsNull(123L, 42L))
                 .thenReturn(Optional.of(testPlant));
 
         AwaitingPlantMistingSetupStateHandler handler =
@@ -530,7 +527,7 @@ class PlantCreationStateHandlerTests {
 
         PlantRepository plantRepository = mock(PlantRepository.class);
 
-        when(plantRepository.findByUserIdAndIdAndArchivedAtIsNull(1L, 42L))
+        when(plantRepository.findByUserIdAndIdAndArchivedAtIsNull(123L, 42L))
                 .thenReturn(Optional.of(testPlant));
 
         AwaitingPlantMistingSetupStateHandler handler =
@@ -552,8 +549,6 @@ class PlantCreationStateHandlerTests {
         verify(userService).updateState(testUser, ConversationState.AWAITING_PLANT_FERTILIZING_SETUP);
     }
 
-    // ==================== AwaitingPlantFertilizingSetupStateHandler Tests ====================
-
     @DisplayName("FERTILIZING:DEFAULT should create schedule and finish")
     @Test
     void testFertilizingHandler_Default() throws TelegramApiException {
@@ -561,14 +556,19 @@ class PlantCreationStateHandlerTests {
 
         PlantRepository plantRepository = mock(PlantRepository.class);
 
-        when(plantRepository.findByUserIdAndIdAndArchivedAtIsNull(1L, 42L))
+        when(plantRepository.findByUserIdAndIdAndArchivedAtIsNull(123L, 42L))
                 .thenReturn(Optional.of(testPlant));
 
         when(plantService.getActiveSchedules(42L))
                 .thenReturn(List.of());
 
         AwaitingPlantFertilizingSetupStateHandler handler =
-                new AwaitingPlantFertilizingSetupStateHandler(userService, plantService, plantRepository);
+                new AwaitingPlantFertilizingSetupStateHandler(
+                        userService,
+                        plantService,
+                        plantRepository,
+                        mainMenuService
+                );
 
         Update update = createCallbackUpdate("FERTILIZING:DEFAULT");
 
@@ -582,6 +582,7 @@ class PlantCreationStateHandlerTests {
         );
 
         verify(userService).resetToIdle(testUser);
+        verify(mainMenuService).sendMainMenu(testUser, telegramClient);
         verify(telegramClient, atLeastOnce()).execute(any(SendMessage.class));
     }
 
@@ -592,14 +593,19 @@ class PlantCreationStateHandlerTests {
 
         PlantRepository plantRepository = mock(PlantRepository.class);
 
-        when(plantRepository.findByUserIdAndIdAndArchivedAtIsNull(1L, 42L))
+        when(plantRepository.findByUserIdAndIdAndArchivedAtIsNull(123L, 42L))
                 .thenReturn(Optional.of(testPlant));
 
         when(plantService.getActiveSchedules(42L))
                 .thenReturn(List.of());
 
         AwaitingPlantFertilizingSetupStateHandler handler =
-                new AwaitingPlantFertilizingSetupStateHandler(userService, plantService, plantRepository);
+                new AwaitingPlantFertilizingSetupStateHandler(
+                        userService,
+                        plantService,
+                        plantRepository,
+                        mainMenuService
+                );
 
         Update update = createCallbackUpdate("FERTILIZING:SKIP");
 
@@ -607,6 +613,7 @@ class PlantCreationStateHandlerTests {
 
         verify(plantService, never()).addCareSchedule(any(), any(), anyInt(), any());
         verify(userService).resetToIdle(testUser);
+        verify(mainMenuService).sendMainMenu(testUser, telegramClient);
     }
 
     @DisplayName("FERTILIZING custom interval should create schedule and finish")
@@ -617,14 +624,19 @@ class PlantCreationStateHandlerTests {
 
         PlantRepository plantRepository = mock(PlantRepository.class);
 
-        when(plantRepository.findByUserIdAndIdAndArchivedAtIsNull(1L, 42L))
+        when(plantRepository.findByUserIdAndIdAndArchivedAtIsNull(123L, 42L))
                 .thenReturn(Optional.of(testPlant));
 
         when(plantService.getActiveSchedules(42L))
                 .thenReturn(List.of());
 
         AwaitingPlantFertilizingSetupStateHandler handler =
-                new AwaitingPlantFertilizingSetupStateHandler(userService, plantService, plantRepository);
+                new AwaitingPlantFertilizingSetupStateHandler(
+                        userService,
+                        plantService,
+                        plantRepository,
+                        mainMenuService
+                );
 
         Update update = createTextMessageUpdate("21");
 
@@ -640,6 +652,7 @@ class PlantCreationStateHandlerTests {
         );
 
         verify(userService).resetToIdle(testUser);
+        verify(mainMenuService).sendMainMenu(testUser, telegramClient);
     }
 
     @DisplayName("FERTILIZING invalid input should send error and stay in state")
@@ -651,7 +664,12 @@ class PlantCreationStateHandlerTests {
         PlantRepository plantRepository = mock(PlantRepository.class);
 
         AwaitingPlantFertilizingSetupStateHandler handler =
-                new AwaitingPlantFertilizingSetupStateHandler(userService, plantService, plantRepository);
+                new AwaitingPlantFertilizingSetupStateHandler(
+                        userService,
+                        plantService,
+                        plantRepository,
+                        mainMenuService
+                );
 
         Update update = createTextMessageUpdate("abc");
 
@@ -659,10 +677,9 @@ class PlantCreationStateHandlerTests {
 
         verify(plantService, never()).addCareSchedule(any(), any(), anyInt(), any());
         verify(userService, never()).resetToIdle(any());
+        verify(mainMenuService, never()).sendMainMenu(any(), any());
         verify(telegramClient).execute(any(SendMessage.class));
     }
-
-    // ==================== Helper Methods ====================
 
     private Update createCallbackUpdate(String callbackData) {
         Update update = new Update();

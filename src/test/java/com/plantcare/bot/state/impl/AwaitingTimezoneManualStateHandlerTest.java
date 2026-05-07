@@ -7,18 +7,16 @@ import com.plantcare.bot.support.IntegrationTestBase;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.telegram.telegrambots.meta.api.methods.AnswerCallbackQuery;
-import org.telegram.telegrambots.meta.api.methods.botapimethods.BotApiMethod;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
 import org.telegram.telegrambots.meta.api.objects.CallbackQuery;
 import org.telegram.telegrambots.meta.api.objects.Update;
 import org.telegram.telegrambots.meta.api.objects.message.Message;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 import org.telegram.telegrambots.meta.generics.TelegramClient;
-
-import java.io.Serializable;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -43,60 +41,73 @@ class AwaitingTimezoneManualStateHandlerTest extends IntegrationTestBase {
     void setUp() {
         testUser = userService.findOrCreate(chatId, "test_user");
         userService.updateState(testUser, ConversationState.AWAITING_TIMEZONE_MANUAL);
+
+        reset(telegramClient);
     }
 
     @Test
     @DisplayName("Успешное сохранение таймзоны при получении CallbackQuery")
     void shouldSaveTimezoneAndTransitionStateOnCallback() throws TelegramApiException {
-        // GIVEN
         String selectedTz = "Europe/Riga";
+
         Update update = mock(Update.class);
         CallbackQuery callbackQuery = mock(CallbackQuery.class);
+
         when(update.hasCallbackQuery()).thenReturn(true);
         when(update.getCallbackQuery()).thenReturn(callbackQuery);
+
         when(callbackQuery.getData()).thenReturn("SET_TZ:" + selectedTz);
         when(callbackQuery.getId()).thenReturn("query_123");
 
-        // WHEN
         handler.handle(testUser, update, telegramClient);
 
-        // THEN
-        // 1. Проверяем обновление сущности пользователя
-        assertThat(testUser.getTimezone()).isEqualTo(selectedTz);
-        assertThat(testUser.getConversationState()).isEqualTo(ConversationState.AWAITING_PLANT_NAME);
+        User reloadedUser = userService.findByChatId(chatId)
+                .orElseThrow();
 
-        // 2. Проверяем вызовы Telegram API
-        verify(telegramClient).execute(any(SendMessage.class));
+        assertThat(reloadedUser.getTimezone()).isEqualTo(selectedTz);
+        assertThat(reloadedUser.getConversationState()).isEqualTo(ConversationState.IDLE);
+
+        ArgumentCaptor<SendMessage> messageCaptor = ArgumentCaptor.forClass(SendMessage.class);
+        verify(telegramClient).execute(messageCaptor.capture());
+
+        SendMessage sentMessage = messageCaptor.getValue();
+
+        assertThat(sentMessage.getChatId()).isEqualTo(chatId.toString());
+        assertThat(sentMessage.getText()).contains("✅ Часовой пояс установлен: " + selectedTz);
+        assertThat(sentMessage.getText()).contains("/menu");
+
         verify(telegramClient).execute(any(AnswerCallbackQuery.class));
     }
 
     @Test
     @DisplayName("Отправка напоминания при получении текста вместо клика по кнопке")
     void shouldSendReminderWhenTextReceivedInsteadOfCallback() throws TelegramApiException {
-        // GIVEN
         Update update = mock(Update.class);
         Message message = mock(Message.class);
+
         when(update.hasCallbackQuery()).thenReturn(false);
         when(update.hasMessage()).thenReturn(true);
         when(update.getMessage()).thenReturn(message);
+
+        when(message.hasText()).thenReturn(true);
         when(message.getText()).thenReturn("Москва");
 
-        // WHEN
         handler.handle(testUser, update, telegramClient);
 
-        // THEN
-        // 1. Состояние не должно измениться
-        assertThat(testUser.getConversationState()).isEqualTo(ConversationState.AWAITING_TIMEZONE_MANUAL);
+        User reloadedUser = userService.findByChatId(chatId)
+                .orElseThrow();
 
-        // 2. Должно быть отправлено сообщение с напоминанием
-        verify(telegramClient).execute((BotApiMethod<Serializable>) argThat(msg -> {
-            if (msg instanceof SendMessage sm) {
-                return sm.getText().contains("Пожалуйста, выбери город из списка");
-            }
-            return false;
-        }));
+        assertThat(reloadedUser.getConversationState())
+                .isEqualTo(ConversationState.AWAITING_TIMEZONE_MANUAL);
 
-        // AnswerCallbackQuery не должен вызываться
+        ArgumentCaptor<SendMessage> messageCaptor = ArgumentCaptor.forClass(SendMessage.class);
+        verify(telegramClient).execute(messageCaptor.capture());
+
+        SendMessage sentMessage = messageCaptor.getValue();
+
+        assertThat(sentMessage.getChatId()).isEqualTo(chatId.toString());
+        assertThat(sentMessage.getText()).contains("Пожалуйста, выбери город из списка");
+
         verify(telegramClient, never()).execute(any(AnswerCallbackQuery.class));
     }
 }

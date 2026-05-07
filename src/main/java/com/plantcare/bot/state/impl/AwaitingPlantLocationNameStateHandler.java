@@ -2,6 +2,7 @@ package com.plantcare.bot.state.impl;
 
 import com.plantcare.bot.domain.User;
 import com.plantcare.bot.domain.enums.ConversationState;
+import com.plantcare.bot.service.LocationService;
 import com.plantcare.bot.service.UserService;
 import com.plantcare.bot.state.interfaces.StateHandler;
 import com.plantcare.bot.util.LocationEmojiKeyboard;
@@ -18,7 +19,10 @@ import org.telegram.telegrambots.meta.generics.TelegramClient;
 @RequiredArgsConstructor
 public class AwaitingPlantLocationNameStateHandler implements StateHandler {
 
+    private static final String PLANT_LOCATION_EMOJI_CALLBACK_PREFIX = "PLANT_LOCATION_EMOJI:";
+
     private final UserService userService;
+    private final LocationService locationService;
 
     @Override
     public ConversationState getSupportedState() {
@@ -40,20 +44,35 @@ public class AwaitingPlantLocationNameStateHandler implements StateHandler {
 
         String name = update.getMessage().getText().trim();
 
-        if (name.isBlank()) {
+        if (name.isBlank() || name.length() > 30) {
             sendText(
                     client,
                     chatId,
-                    "❌ Название комнаты не может быть пустым.\n\nВведи название от 1 до 30 символов:"
+                    "❌ Название комнаты должно быть от 1 до 30 символов. Попробуй ещё раз:"
             );
             return;
         }
 
-        if (name.length() > 30) {
+        if (locationService.hasReachedLocationsLimit(user.getId())) {
             sendText(
                     client,
                     chatId,
-                    "❌ Название комнаты должно быть не длиннее 30 символов.\n\nПопробуй ещё раз:"
+                    "❌ Можно создать максимум " + locationService.getMaxLocationsPerUser() + " комнат.\n\n" +
+                            "Выбери существующую комнату или нажми «Пропустить»."
+            );
+
+            userService.updateState(user, ConversationState.AWAITING_PLANT_ROOM);
+            return;
+        }
+
+        boolean duplicateExists = locationService.getUserLocations(user.getId()).stream()
+                .anyMatch(location -> location.getName().equalsIgnoreCase(name));
+
+        if (duplicateExists) {
+            sendText(
+                    client,
+                    chatId,
+                    "❌ Такая комната уже есть. Введи другое название:"
             );
             return;
         }
@@ -69,7 +88,7 @@ public class AwaitingPlantLocationNameStateHandler implements StateHandler {
                         Например:
                         🛋 🛏 🍳 🌿 💼 🚿 🪴 ❤️
                         """)
-                .replyMarkup(LocationEmojiKeyboard.build("PLANT_LOCATION_EMOJI:"))
+                .replyMarkup(LocationEmojiKeyboard.build(PLANT_LOCATION_EMOJI_CALLBACK_PREFIX))
                 .build();
 
         try {

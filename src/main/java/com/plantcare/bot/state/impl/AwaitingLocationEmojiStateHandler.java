@@ -10,6 +10,7 @@ import com.plantcare.bot.state.interfaces.StateHandler;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+import org.telegram.telegrambots.meta.api.methods.AnswerCallbackQuery;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
 import org.telegram.telegrambots.meta.api.objects.Update;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
@@ -22,6 +23,8 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class AwaitingLocationEmojiStateHandler implements StateHandler {
 
+    private static final String LOCATION_EMOJI_CALLBACK_PREFIX = "LOCATION_EMOJI:";
+
     private final UserService userService;
     private final LocationService locationService;
     private final LocationMenuService locationMenuService;
@@ -33,20 +36,40 @@ public class AwaitingLocationEmojiStateHandler implements StateHandler {
 
     @Override
     public void handle(User user, Update update, TelegramClient client) {
-        if (!update.hasMessage() || !update.getMessage().hasText()) {
+        if (update.hasCallbackQuery()) {
+            String callbackData = update.getCallbackQuery().getData();
+
+            if (callbackData != null && callbackData.startsWith(LOCATION_EMOJI_CALLBACK_PREFIX)) {
+                String emoji = callbackData.substring(LOCATION_EMOJI_CALLBACK_PREFIX.length());
+                createLocation(user, emoji, client);
+                answerCallback(update.getCallbackQuery().getId(), client);
+            }
+
             return;
         }
 
-        String emoji = update.getMessage().getText().trim();
+        if (update.hasMessage() && update.getMessage().hasText()) {
+            String emoji = update.getMessage().getText().trim();
+            createLocation(user, emoji, client);
+        }
+    }
 
+    private void createLocation(User user, String emoji, TelegramClient client) {
         try {
-            if (emoji.isEmpty() || emoji.length() > 16) {
+            if (emoji == null || emoji.isBlank() || emoji.length() > 16) {
                 sendText(user, client, "Emoji должен быть одним символом. Попробуй ещё раз.");
                 return;
             }
 
             Map<String, Object> stateData = user.getStateData();
-            String name = (String) stateData.get("location_name");
+            String name = stateData != null ? (String) stateData.get("location_name") : null;
+
+            if (name == null || name.isBlank()) {
+                sendText(user, client, "❌ Не нашёл название комнаты. Попробуй создать комнату заново.");
+                userService.resetToIdle(user);
+                locationMenuService.sendLocationsMenu(user, client);
+                return;
+            }
 
             Location location = locationService.createLocation(user, name, emoji);
 
@@ -55,9 +78,11 @@ public class AwaitingLocationEmojiStateHandler implements StateHandler {
             userService.resetToIdle(user);
             locationMenuService.sendLocationsMenu(user, client);
 
+        } catch (IllegalArgumentException e) {
+            sendText(user, client, "❌ " + e.getMessage());
         } catch (Exception e) {
             log.error("Failed to create location for user {}", user.getTelegramChatId(), e);
-            sendText(user, client, "❌ Не получилось создать комнату: " + e.getMessage());
+            sendText(user, client, "❌ Не получилось создать комнату. Попробуй ещё раз.");
             userService.resetToIdle(user);
         }
     }
@@ -72,6 +97,16 @@ public class AwaitingLocationEmojiStateHandler implements StateHandler {
             client.execute(message);
         } catch (TelegramApiException e) {
             log.error("Failed to send message", e);
+        }
+    }
+
+    private void answerCallback(String callbackQueryId, TelegramClient client) {
+        try {
+            client.execute(AnswerCallbackQuery.builder()
+                    .callbackQueryId(callbackQueryId)
+                    .build());
+        } catch (TelegramApiException e) {
+            log.error("Failed to answer callback", e);
         }
     }
 }

@@ -5,12 +5,15 @@ import com.plantcare.bot.domain.Plant;
 import com.plantcare.bot.domain.User;
 import com.plantcare.bot.repository.LocationRepository;
 import com.plantcare.bot.repository.PlantRepository;
+import com.plantcare.bot.util.EmojiValidator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 @Slf4j
 @Service
@@ -23,10 +26,11 @@ public class LocationService {
 
     private final LocationRepository locationRepository;
     private final PlantRepository plantRepository;
+    private final AnalyticsService analyticsService;
 
     @Transactional(readOnly = true)
     public List<Location> getUserLocations(Long userId) {
-        return locationRepository.findAllByUserIdOrderByDefaultLocationAscNameAsc(userId);
+        return locationRepository.findAllByUserIdOrderByDefaultLocationAscCreatedAtAsc(userId);
     }
 
     @Transactional(readOnly = true)
@@ -40,6 +44,15 @@ public class LocationService {
                 .orElseThrow(() -> new IllegalArgumentException("Комната не найдена"));
     }
 
+    @Transactional(readOnly = true)
+    public boolean hasReachedLocationsLimit(Long userId) {
+        return locationRepository.countByUserId(userId) >= MAX_LOCATIONS_PER_USER;
+    }
+
+    public int getMaxLocationsPerUser() {
+        return MAX_LOCATIONS_PER_USER;
+    }
+
     @Transactional
     public Location getOrCreateDefaultLocation(User user) {
         return locationRepository.findByUserIdAndDefaultLocationTrue(user.getId())
@@ -51,7 +64,21 @@ public class LocationService {
                             .defaultLocation(true)
                             .build();
 
-                    return locationRepository.save(location);
+                    Location saved = locationRepository.save(location);
+
+                    analyticsService.track(user.getId(), "location_created", Map.of(
+                            "location_id", saved.getId(),
+                            "is_default", true,
+                            "source", "default"
+                    ));
+
+                    log.info(
+                            "Created default location {} for user {}",
+                            saved.getId(),
+                            user.getTelegramChatId()
+                    );
+
+                    return saved;
                 });
     }
 
@@ -63,9 +90,7 @@ public class LocationService {
         validateLocationName(normalizedName);
         validateEmoji(normalizedEmoji);
 
-        long locationsCount = locationRepository.countByUserId(user.getId());
-
-        if (locationsCount >= MAX_LOCATIONS_PER_USER) {
+        if (hasReachedLocationsLimit(user.getId())) {
             throw new IllegalArgumentException("Можно создать максимум 20 комнат");
         }
 
@@ -81,6 +106,12 @@ public class LocationService {
                 .build();
 
         Location saved = locationRepository.save(location);
+
+        analyticsService.track(user.getId(), "location_created", Map.of(
+                "location_id", saved.getId(),
+                "is_default", false,
+                "source", "manual"
+        ));
 
         log.info(
                 "Created location {} for user {}",
@@ -111,7 +142,16 @@ public class LocationService {
 
         location.setName(normalizedName);
 
-        return locationRepository.save(location);
+        Location saved = locationRepository.save(location);
+
+        log.info(
+                "Renamed location {} for user {} to '{}'",
+                locationId,
+                userId,
+                normalizedName
+        );
+
+        return saved;
     }
 
     @Transactional
@@ -123,7 +163,16 @@ public class LocationService {
         Location location = getUserLocationOrThrow(userId, locationId);
         location.setEmoji(normalizedEmoji);
 
-        return locationRepository.save(location);
+        Location saved = locationRepository.save(location);
+
+        log.info(
+                "Changed emoji for location {} of user {} to '{}'",
+                locationId,
+                userId,
+                normalizedEmoji
+        );
+
+        return saved;
     }
 
     @Transactional(readOnly = true)
@@ -151,14 +200,6 @@ public class LocationService {
         Plant plant = plantRepository.findByUserIdAndIdAndArchivedAtIsNull(userId, plantId)
                 .orElseThrow(() -> new IllegalArgumentException("Растение не найдено"));
 
-        /*
-         * Важно:
-         * location у Plant может быть LAZY.
-         * Если вернуть plant наружу и потом вызвать plant.getLocation().getDisplayName(),
-         * Hibernate может упасть с LazyInitializationException.
-         *
-         * Поэтому инициализируем location внутри транзакции.
-         */
         if (plant.getLocation() != null) {
             plant.getLocation().getId();
             plant.getLocation().getName();
@@ -174,14 +215,14 @@ public class LocationService {
         Plant plant = getUserPlant(userId, plantId);
         Location targetLocation = getUserLocationOrThrow(userId, targetLocationId);
 
+        Long previousLocationId = plant.getLocation() != null
+                ? plant.getLocation().getId()
+                : null;
+
         plant.setLocation(targetLocation);
 
         Plant saved = plantRepository.save(plant);
 
-        /*
-         * Инициализируем новую location перед возвратом,
-         * чтобы код выше мог безопасно вызвать plant.getLocation().getDisplayName().
-         */
         if (saved.getLocation() != null) {
             saved.getLocation().getId();
             saved.getLocation().getName();
@@ -189,10 +230,18 @@ public class LocationService {
             saved.getLocation().isDefaultLocation();
         }
 
+        Map<String, Object> properties = new HashMap<>();
+        properties.put("plant_id", plantId);
+        properties.put("from_location_id", previousLocationId);
+        properties.put("to_location_id", targetLocationId);
+
+        analyticsService.track(userId, "plant_moved", properties);
+
         log.info(
-                "Moved plant {} of user {} to location {}",
+                "Moved plant {} of user {} from location {} to location {}",
                 plantId,
                 userId,
+                previousLocationId,
                 targetLocationId
         );
 
@@ -224,6 +273,12 @@ public class LocationService {
 
         plantRepository.saveAll(plants);
         locationRepository.delete(locationToDelete);
+
+        analyticsService.track(userId, "location_deleted", Map.of(
+                "location_id", locationId,
+                "target_location_id", targetLocationId,
+                "moved_plants_count", plants.size()
+        ));
 
         log.info(
                 "Deleted location {} for user {}, moved {} plants to location {}",
@@ -257,12 +312,8 @@ public class LocationService {
     }
 
     private void validateEmoji(String emoji) {
-        if (emoji == null || emoji.isBlank()) {
-            throw new IllegalArgumentException("Emoji не может быть пустым");
-        }
-
-        if (emoji.length() > 16) {
-            throw new IllegalArgumentException("Emoji должен быть одним символом");
+        if (!EmojiValidator.isValidEmoji(emoji)) {
+            throw new IllegalArgumentException("Emoji должен быть одним emoji-символом");
         }
     }
 }

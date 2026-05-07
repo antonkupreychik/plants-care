@@ -8,12 +8,16 @@ import com.plantcare.bot.service.LocationService;
 import com.plantcare.bot.service.PlantService;
 import com.plantcare.bot.service.UserService;
 import com.plantcare.bot.state.interfaces.StateHandler;
+import com.plantcare.bot.util.EmojiValidator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.telegram.telegrambots.meta.api.methods.AnswerCallbackQuery;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
 import org.telegram.telegrambots.meta.api.objects.Update;
+import org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMarkup;
+import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardButton;
+import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardRow;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 import org.telegram.telegrambots.meta.generics.TelegramClient;
 
@@ -24,6 +28,8 @@ import java.util.Map;
 @Component
 @RequiredArgsConstructor
 public class AwaitingPlantLocationEmojiStateHandler implements StateHandler {
+
+    private static final String CALLBACK_PREFIX = "PLANT_LOCATION_EMOJI:";
 
     private final UserService userService;
     private final LocationService locationService;
@@ -41,11 +47,11 @@ public class AwaitingPlantLocationEmojiStateHandler implements StateHandler {
         if (update.hasCallbackQuery()) {
             String data = update.getCallbackQuery().getData();
 
-            if (!data.startsWith("PLANT_LOCATION_EMOJI:")) {
+            if (data == null || !data.startsWith(CALLBACK_PREFIX)) {
                 return;
             }
 
-            emoji = data.substring("PLANT_LOCATION_EMOJI:".length());
+            emoji = data.substring(CALLBACK_PREFIX.length());
             answerCallback(update, client);
 
         } else if (update.hasMessage() && update.getMessage().hasText()) {
@@ -54,8 +60,12 @@ public class AwaitingPlantLocationEmojiStateHandler implements StateHandler {
             return;
         }
 
-        if (!isValidEmojiInput(emoji)) {
-            sendText(client, user.getTelegramChatId(), "❌ Отправь один emoji. Например: 🌿");
+        if (!EmojiValidator.isValidEmoji(emoji)) {
+            sendText(
+                    client,
+                    user.getTelegramChatId(),
+                    "❌ Emoji должен быть одним emoji-символом. Например: 🌿"
+            );
             return;
         }
 
@@ -89,6 +99,15 @@ public class AwaitingPlantLocationEmojiStateHandler implements StateHandler {
                     savedPlant.getId(),
                     user.getTelegramChatId()
             );
+
+        } catch (IllegalArgumentException e) {
+            log.warn(
+                    "Failed to create location inside plant flow for user {}: {}",
+                    user.getTelegramChatId(),
+                    e.getMessage()
+            );
+
+            sendText(client, user.getTelegramChatId(), "❌ " + e.getMessage());
 
         } catch (Exception e) {
             log.error("Failed to create location inside plant flow for user {}", user.getTelegramChatId(), e);
@@ -126,21 +145,21 @@ public class AwaitingPlantLocationEmojiStateHandler implements StateHandler {
     private void askAboutMisting(User user, String plantName, TelegramClient client) {
         userService.updateState(user, ConversationState.AWAITING_PLANT_MISTING_SETUP);
 
-        var keyboard = org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMarkup.builder()
-                .keyboardRow(new org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardRow(
-                        org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardButton.builder()
+        InlineKeyboardMarkup keyboard = InlineKeyboardMarkup.builder()
+                .keyboardRow(new InlineKeyboardRow(
+                        InlineKeyboardButton.builder()
                                 .text("💨 Да, каждые 3 дня")
                                 .callbackData("MISTING:DEFAULT")
                                 .build()
                 ))
-                .keyboardRow(new org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardRow(
-                        org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardButton.builder()
+                .keyboardRow(new InlineKeyboardRow(
+                        InlineKeyboardButton.builder()
                                 .text("✏️ Да, задать интервал")
                                 .callbackData("MISTING:CUSTOM")
                                 .build()
                 ))
-                .keyboardRow(new org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardRow(
-                        org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardButton.builder()
+                .keyboardRow(new InlineKeyboardRow(
+                        InlineKeyboardButton.builder()
                                 .text("❌ Не нужно")
                                 .callbackData("MISTING:SKIP")
                                 .build()
@@ -160,16 +179,6 @@ public class AwaitingPlantLocationEmojiStateHandler implements StateHandler {
         } catch (TelegramApiException e) {
             log.error("Failed to send misting question", e);
         }
-    }
-
-    private boolean isValidEmojiInput(String value) {
-        if (value == null || value.isBlank()) {
-            return false;
-        }
-
-        String trimmed = value.trim();
-
-        return trimmed.codePointCount(0, trimmed.length()) <= 2 && trimmed.length() <= 8;
     }
 
     private void sendText(TelegramClient client, Long chatId, String text) {

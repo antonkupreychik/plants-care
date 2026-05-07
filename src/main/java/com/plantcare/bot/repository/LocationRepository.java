@@ -10,7 +10,7 @@ import java.util.Optional;
 @Repository
 public interface LocationRepository extends JpaRepository<Location, Long> {
 
-    List<Location> findAllByUserIdOrderByDefaultLocationAscNameAsc(Long userId);
+    List<Location> findAllByUserIdOrderByDefaultLocationAscCreatedAtAsc(Long userId);
 
     Optional<Location> findByUserIdAndId(Long userId, Long locationId);
 

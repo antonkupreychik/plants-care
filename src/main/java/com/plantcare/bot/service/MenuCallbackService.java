@@ -117,11 +117,19 @@ public class MenuCallbackService {
             User user
     ) {
         if ("LOCATION:CREATE".equals(data)) {
+            if (locationService.hasReachedLocationsLimit(user.getId())) {
+                answerCallback(
+                        client,
+                        callbackId,
+                        "❌ Можно создать максимум " + locationService.getMaxLocationsPerUser() + " комнат"
+                );
+                return;
+            }
+
             sendLocationPresetMenu(user, client);
             answerCallback(client, callbackId, "");
             return;
         }
-
         if (data.startsWith("LOCATION:PRESET:")) {
             String presetKey = data.substring("LOCATION:PRESET:".length());
 
