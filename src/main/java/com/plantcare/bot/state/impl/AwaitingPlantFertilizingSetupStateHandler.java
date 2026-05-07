@@ -1,49 +1,42 @@
 package com.plantcare.bot.state.impl;
 
+import com.plantcare.bot.domain.CareSchedule;
 import com.plantcare.bot.domain.Plant;
 import com.plantcare.bot.domain.User;
 import com.plantcare.bot.domain.enums.ConversationState;
 import com.plantcare.bot.domain.enums.TaskType;
 import com.plantcare.bot.repository.PlantRepository;
+import com.plantcare.bot.service.MainMenuService;
 import com.plantcare.bot.service.PlantService;
 import com.plantcare.bot.service.UserService;
 import com.plantcare.bot.state.interfaces.StateHandler;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+import org.telegram.telegrambots.meta.api.methods.AnswerCallbackQuery;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
 import org.telegram.telegrambots.meta.api.objects.Update;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 import org.telegram.telegrambots.meta.generics.TelegramClient;
 
 import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
-/**
- * Шаг создания растения: настройка удобрения (FERTILIZING).
- * Последний шаг в диалоге создания растения — после него IDLE + финальное подтверждение.
- *
- * Сценарии:
- * - FERTILIZING:DEFAULT  → создаём расписание с дефолтным интервалом 14 дней
- * - FERTILIZING:CUSTOM   → просим ввести интервал текстом
- * - FERTILIZING:SKIP     → пропускаем, завершаем создание
- * - текст с числом        → обрабатываем введённый интервал (после CUSTOM)
- */
 @Slf4j
 @Component
 @RequiredArgsConstructor
 public class AwaitingPlantFertilizingSetupStateHandler implements StateHandler {
 
-    private static final int DEFAULT_FERTILIZING_DAYS = 14;
-    private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("d MMM", java.util.Locale.forLanguageTag("ru"));
+    private static final int DEFAULT_FERTILIZING_INTERVAL_DAYS = 14;
+    private static final String FERTILIZING_AWAITING_INPUT_KEY = "fertilizing_awaiting_input";
+    private static final String PLANT_ID_KEY = "plant_id";
 
     private final UserService userService;
     private final PlantService plantService;
     private final PlantRepository plantRepository;
+    private final MainMenuService mainMenuService;
 
     @Override
     public ConversationState getSupportedState() {
@@ -52,177 +45,269 @@ public class AwaitingPlantFertilizingSetupStateHandler implements StateHandler {
 
     @Override
     public void handle(User user, Update update, TelegramClient client) {
-        // Ввод числа — кастомный интервал
-        if (update.hasMessage() && update.getMessage().hasText()) {
-            handleCustomIntervalInput(user, update, client);
+        Map<String, Object> stateData = user.getStateData();
+
+        boolean awaitingCustomInput = "true".equals(String.valueOf(
+                stateData.get(FERTILIZING_AWAITING_INPUT_KEY)
+        ));
+
+        if (awaitingCustomInput && update.hasMessage() && update.getMessage().hasText()) {
+            handleCustomIntervalInput(user, update.getMessage().getText(), client);
             return;
         }
 
         if (!update.hasCallbackQuery()) {
+            sendText(
+                    client,
+                    user.getTelegramChatId(),
+                    "Пожалуйста, выбери вариант кнопкой ниже или введи интервал, если выбрал ручную настройку."
+            );
             return;
         }
 
         String callbackData = update.getCallbackQuery().getData();
-        answerCallback(client, update.getCallbackQuery().getId());
 
-        switch (callbackData) {
-            case "FERTILIZING:DEFAULT" -> {
-                createFertilizingSchedule(user, DEFAULT_FERTILIZING_DAYS);
-                finishCreation(user, client);
-            }
-            case "FERTILIZING:CUSTOM" -> askForCustomInterval(user, client);
-            case "FERTILIZING:SKIP"   -> {
-                log.info("User {} skipped fertilizing for plant {}",
-                        user.getTelegramChatId(), getPlantId(user));
-                finishCreation(user, client);
-            }
-            default -> log.warn("Unknown fertilizing callback: {}", callbackData);
+        if (callbackData == null || !callbackData.startsWith("FERTILIZING:")) {
+            return;
+        }
+
+        answerCallback(update, client);
+
+        String action = callbackData.substring("FERTILIZING:".length());
+
+        switch (action) {
+            case "DEFAULT" -> handleDefault(user, client);
+            case "CUSTOM" -> handleCustomRequest(user, client);
+            case "SKIP" -> handleSkip(user, client);
+            default -> sendText(client, user.getTelegramChatId(), "❌ Неизвестный вариант удобрения.");
         }
     }
 
-    private void handleCustomIntervalInput(User user, Update update, TelegramClient client) {
-        String text = update.getMessage().getText().trim();
+    private void handleDefault(User user, TelegramClient client) {
+        Plant plant = findPlantFromStateData(user, client);
+
+        if (plant == null) {
+            return;
+        }
+
+        LocalDateTime nextDueAt = LocalDateTime.now()
+                .truncatedTo(ChronoUnit.MICROS)
+                .plusDays(DEFAULT_FERTILIZING_INTERVAL_DAYS);
+
+        plantService.addCareSchedule(
+                plant,
+                TaskType.FERTILIZING,
+                DEFAULT_FERTILIZING_INTERVAL_DAYS,
+                nextDueAt
+        );
+
+        log.info(
+                "Fertilizing schedule created: plant={}, interval={}",
+                plant.getId(),
+                DEFAULT_FERTILIZING_INTERVAL_DAYS
+        );
+
+        finishCreation(user, plant, client);
+    }
+
+    private void handleCustomRequest(User user, TelegramClient client) {
+        userService.setStateData(user, FERTILIZING_AWAITING_INPUT_KEY, "true");
+
+        SendMessage message = SendMessage.builder()
+                .chatId(user.getTelegramChatId().toString())
+                .text("""
+                        ✏️ Введи интервал удобрения в днях.
+
+                        Например:
+                        14
+                        21
+                        30
+                        """)
+                .build();
+
+        execute(client, message);
+    }
+
+    private void handleCustomIntervalInput(User user, String text, TelegramClient client) {
         Long chatId = user.getTelegramChatId();
 
-        Map<String, Object> stateData = user.getStateData();
-        if (!"true".equals(stateData.get("fertilizing_awaiting_input"))) {
-            return;
-        }
+        int intervalDays;
 
         try {
-            int interval = Integer.parseInt(text);
-            if (!PlantService.isValidInterval(interval)) {
-                sendText(client, chatId, "❌ Интервал должен быть от 1 до 365 дней. Попробуй ещё раз:");
-                return;
-            }
-
-            userService.setStateData(user, "fertilizing_awaiting_input", null);
-            createFertilizingSchedule(user, interval);
-            finishCreation(user, client);
-
+            intervalDays = Integer.parseInt(text.trim());
         } catch (NumberFormatException e) {
-            sendText(client, chatId, "❌ Введи число от 1 до 365, пожалуйста.");
-        }
-    }
-
-    private void askForCustomInterval(User user, TelegramClient client) {
-        userService.setStateData(user, "fertilizing_awaiting_input", "true");
-        sendText(client, user.getTelegramChatId(),
-                "📅 Введи интервал удобрения в днях (от 1 до 365).\n\nНапример: 14 — раз в две недели");
-    }
-
-    private void createFertilizingSchedule(User user, int intervalDays) {
-        Long plantId = getPlantId(user);
-        Plant plant = plantRepository.findById(plantId).orElse(null);
-        if (plant == null) {
-            log.error("Plant {} not found for user {} during fertilizing setup",
-                    plantId, user.getTelegramChatId());
+            sendText(client, chatId, "❌ Введи число от 1 до 365.");
             return;
         }
-        LocalDateTime nextDueAt = LocalDateTime.now().truncatedTo(ChronoUnit.MICROS)
+
+        if (intervalDays < 1 || intervalDays > 365) {
+            sendText(client, chatId, "❌ Интервал должен быть от 1 до 365 дней.");
+            return;
+        }
+
+        Plant plant = findPlantFromStateData(user, client);
+
+        if (plant == null) {
+            return;
+        }
+
+        userService.removeStateData(user, FERTILIZING_AWAITING_INPUT_KEY);
+
+        LocalDateTime nextDueAt = LocalDateTime.now()
+                .truncatedTo(ChronoUnit.MICROS)
                 .plusDays(intervalDays);
-        plantService.addCareSchedule(plant, TaskType.FERTILIZING, intervalDays, nextDueAt);
-        log.info("Fertilizing schedule created: plant={}, interval={}", plantId, intervalDays);
+
+        plantService.addCareSchedule(
+                plant,
+                TaskType.FERTILIZING,
+                intervalDays,
+                nextDueAt
+        );
+
+        log.info(
+                "Custom fertilizing schedule created: plant={}, interval={}",
+                plant.getId(),
+                intervalDays
+        );
+
+        finishCreation(user, plant, client);
     }
 
-    /**
-     * Завершение диалога: отправляем сводное подтверждение со всеми расписаниями.
-     */
-    private void finishCreation(User user, TelegramClient client) {
-        Long plantId = getPlantId(user);
-        Plant plant = plantRepository.findById(plantId).orElse(null);
-        String plantName = plant != null ? plant.getName() : "растение";
+    private void handleSkip(User user, TelegramClient client) {
+        Plant plant = findPlantFromStateData(user, client);
 
-        List<com.plantcare.bot.domain.CareSchedule> schedules =
-                plant != null ? plantService.getActiveSchedules(plantId) : List.of();
+        if (plant == null) {
+            return;
+        }
 
-        String text = buildSummary(plantName, schedules);
+        log.info(
+                "User {} skipped fertilizing for plant {}",
+                user.getTelegramChatId(),
+                plant.getId()
+        );
+
+        finishCreation(user, plant, client);
+    }
+
+    private Plant findPlantFromStateData(User user, TelegramClient client) {
+        Map<String, Object> stateData = user.getStateData();
+        Object plantIdValue = stateData.get(PLANT_ID_KEY);
+
+        if (plantIdValue == null) {
+            log.error("plant_id not found in stateData for user {}", user.getTelegramChatId());
+            sendText(client, user.getTelegramChatId(), "❌ Не удалось найти растение. Попробуй добавить его заново.");
+            userService.resetToIdle(user);
+            return null;
+        }
+
+        Long plantId;
 
         try {
-            client.execute(SendMessage.builder()
-                    .chatId(user.getTelegramChatId().toString())
-                    .text(text)
-                    .parseMode("Markdown")
-                    .build());
-        } catch (TelegramApiException e) {
-            log.error("Failed to send creation summary", e);
+            plantId = Long.parseLong(String.valueOf(plantIdValue));
+        } catch (NumberFormatException e) {
+            log.error("Invalid plant_id={} for user {}", plantIdValue, user.getTelegramChatId(), e);
+            sendText(client, user.getTelegramChatId(), "❌ Некорректные данные растения. Попробуй добавить его заново.");
+            userService.resetToIdle(user);
+            return null;
         }
+
+        return plantRepository.findByUserIdAndIdAndArchivedAtIsNull(
+                        user.getId(),
+                        plantId
+                )
+                .orElseGet(() -> {
+                    log.error(
+                            "Plant {} not found for user {} during fertilizing setup",
+                            plantId,
+                            user.getTelegramChatId()
+                    );
+
+                    sendText(
+                            client,
+                            user.getTelegramChatId(),
+                            "❌ Растение не найдено. Попробуй добавить его заново."
+                    );
+
+                    userService.resetToIdle(user);
+                    return null;
+                });
+    }
+
+    private void finishCreation(User user, Plant plant, TelegramClient client) {
+        List<CareSchedule> schedules = plantService.getActiveSchedules(plant.getId());
+
+        StringBuilder text = new StringBuilder();
+
+        text.append("✅ Растение добавлено!\n\n");
+        text.append("🌿 *").append(plant.getName()).append("*\n");
+
+        if (plant.getLocation() != null) {
+            text.append("📍 Комната: ")
+                    .append(plant.getLocation().getDisplayName())
+                    .append("\n");
+        }
+
+        if (!schedules.isEmpty()) {
+            text.append("\n📅 Напоминания:\n");
+
+            for (CareSchedule schedule : schedules) {
+                text.append("• ")
+                        .append(formatTaskType(schedule.getTaskType()))
+                        .append(" каждые ")
+                        .append(schedule.getIntervalDays())
+                        .append(" дн.\n");
+            }
+        }
+
+        SendMessage message = SendMessage.builder()
+                .chatId(user.getTelegramChatId().toString())
+                .text(text.toString())
+                .parseMode("Markdown")
+                .build();
+
+        execute(client, message);
 
         userService.resetToIdle(user);
-        log.info("Plant creation completed for user {}, plant={}", user.getTelegramChatId(), plantId);
+
+        mainMenuService.sendMainMenu(user, client);
+
+        log.info(
+                "Plant creation completed for user {}, plant={}",
+                user.getTelegramChatId(),
+                plant.getId()
+        );
     }
 
-    /**
-     * Строит финальное сообщение — сводка всех добавленных расписаний.
-     *
-     * Пример:
-     * ✅ Монстера добавлена!
-     *
-     * 💧 Полив — через 7 дней (15 мая)
-     * 💨 Опрыскивание — через 3 дня (11 мая)
-     * 🌿 Удобрение — через 14 дней (22 мая)
-     *
-     * Буду напоминать вовремя 🌱
-     */
-    private String buildSummary(String plantName,
-            List<com.plantcare.bot.domain.CareSchedule> schedules) {
-
-        StringBuilder sb = new StringBuilder();
-        sb.append("✅ *").append(plantName).append("* добавлена!\n\n");
-
-        List<String> lines = new ArrayList<>();
-        for (var s : schedules) {
-            String icon = switch (s.getTaskType()) {
-                case WATERING    -> "💧 Полив";
-                case MISTING     -> "💨 Опрыскивание";
-                case FERTILIZING -> "🌿 Удобрение";
-            };
-            long daysUntil = java.time.Duration.between(
-                    LocalDateTime.now().truncatedTo(ChronoUnit.DAYS),
-                    s.getNextDueAt().truncatedTo(ChronoUnit.DAYS)
-            ).toDays();
-
-            String when = daysUntil <= 0 ? "сегодня"
-                    : daysUntil == 1 ? "завтра"
-                    : "через " + daysUntil + " " + pluralDays(daysUntil);
-
-            lines.add(icon + " — " + when + " (" + s.getNextDueAt().format(DATE_FMT) + ")");
-        }
-
-        if (lines.isEmpty()) {
-            sb.append("Расписание не настроено.");
-        } else {
-            sb.append(String.join("\n", lines));
-        }
-
-        sb.append("\n\nБуду напоминать вовремя 🌱");
-        return sb.toString();
-    }
-
-    private String pluralDays(long n) {
-        if (n % 10 == 1 && n % 100 != 11) return "день";
-        if (n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20)) return "дня";
-        return "дней";
-    }
-
-    private Long getPlantId(User user) {
-        Object raw = user.getStateData().get("plant_id");
-        if (raw == null) throw new IllegalStateException("plant_id missing from stateData");
-        return Long.parseLong(raw.toString());
+    private String formatTaskType(TaskType taskType) {
+        return switch (taskType) {
+            case WATERING -> "💧 Полив";
+            case MISTING -> "💨 Опрыскивание";
+            case FERTILIZING -> "🌿 Удобрение";
+        };
     }
 
     private void sendText(TelegramClient client, Long chatId, String text) {
+        SendMessage message = SendMessage.builder()
+                .chatId(chatId.toString())
+                .text(text)
+                .build();
+
+        execute(client, message);
+    }
+
+    private void execute(TelegramClient client, SendMessage message) {
         try {
-            client.execute(SendMessage.builder().chatId(chatId.toString()).text(text).build());
+            client.execute(message);
         } catch (TelegramApiException e) {
-            log.error("Failed to send message", e);
+            log.error("Failed to send fertilizing setup message", e);
         }
     }
 
-    private void answerCallback(TelegramClient client, String callbackId) {
+    private void answerCallback(Update update, TelegramClient client) {
         try {
-            client.execute(org.telegram.telegrambots.meta.api.methods.AnswerCallbackQuery.builder()
-                    .callbackQueryId(callbackId).build());
+            client.execute(AnswerCallbackQuery.builder()
+                    .callbackQueryId(update.getCallbackQuery().getId())
+                    .build());
         } catch (Exception e) {
             log.error("Failed to answer callback", e);
         }

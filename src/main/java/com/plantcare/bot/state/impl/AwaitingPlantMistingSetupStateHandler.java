@@ -95,7 +95,7 @@ public class AwaitingPlantMistingSetupStateHandler implements StateHandler {
                 return;
             }
 
-            userService.setStateData(user, "misting_awaiting_input", null);
+            userService.removeStateData(user, "misting_awaiting_input");
             createMistingSchedule(user, interval, client);
             proceedToFertilizing(user, client);
 
@@ -112,7 +112,8 @@ public class AwaitingPlantMistingSetupStateHandler implements StateHandler {
 
     private void createMistingSchedule(User user, int intervalDays, TelegramClient client) {
         Long plantId = getPlantId(user);
-        Plant plant = plantRepository.findById(plantId).orElse(null);
+        Plant plant = plantRepository.findByUserIdAndIdAndArchivedAtIsNull(user.getId(), plantId)
+                .orElse(null);
         if (plant == null) {
             log.error("Plant {} not found for user {} during misting setup",
                     plantId, user.getTelegramChatId());
@@ -128,7 +129,8 @@ public class AwaitingPlantMistingSetupStateHandler implements StateHandler {
 
     private void proceedToFertilizing(User user, TelegramClient client) {
         Long plantId = getPlantId(user);
-        Plant plant = plantRepository.findById(plantId).orElse(null);
+        Plant plant = plantRepository.findByUserIdAndIdAndArchivedAtIsNull(user.getId(), plantId)
+                .orElse(null);
         String plantName = plant != null ? plant.getName() : "растение";
 
         userService.updateState(user, ConversationState.AWAITING_PLANT_FERTILIZING_SETUP);

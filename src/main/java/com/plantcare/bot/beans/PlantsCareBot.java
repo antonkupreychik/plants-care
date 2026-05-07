@@ -1,12 +1,12 @@
 package com.plantcare.bot.beans;
 
+import com.plantcare.bot.client.TelegramClientProvider;
 import com.plantcare.bot.command.CommandContainer;
 import com.plantcare.bot.command.impl.CancelCommand;
 import com.plantcare.bot.domain.User;
 import com.plantcare.bot.domain.enums.ConversationState;
 import com.plantcare.bot.service.MenuCallbackService;
 import com.plantcare.bot.service.NotificationCallbackService;
-import com.plantcare.bot.service.TelegramClientProvider;
 import com.plantcare.bot.service.UserService;
 import com.plantcare.bot.state.StateResolver;
 import lombok.extern.slf4j.Slf4j;
@@ -24,6 +24,8 @@ public class PlantsCareBot implements LongPollingSingleThreadUpdateConsumer, Tel
     private static final String UNKNOWN = "UNKNOWN";
     private static final String NOTIFICATION_CALLBACK_PREFIX = "v1:";
     private static final String MENU_CALLBACK_PREFIX = "MENU:";
+    private static final String LOCATION_CALLBACK_PREFIX = "LOCATION:";
+    private static final String PLANT_CALLBACK_PREFIX = "PLANT:";
 
     private final TelegramClient telegramClient;
     private final CommandContainer commandContainer;
@@ -33,11 +35,15 @@ public class PlantsCareBot implements LongPollingSingleThreadUpdateConsumer, Tel
     private final NotificationCallbackService notificationCallbackService;
     private final MenuCallbackService menuCallbackService;
 
-    public PlantsCareBot(@Value("${telegram.bot.token}") String botToken,
-                         CommandContainer commandContainer, UserService userService,
-                         StateResolver stateResolver, CancelCommand cancelCommand,
-                         NotificationCallbackService notificationCallbackService,
-                         MenuCallbackService menuCallbackService) {
+    public PlantsCareBot(
+            @Value("${telegram.bot.token}") String botToken,
+            CommandContainer commandContainer,
+            UserService userService,
+            StateResolver stateResolver,
+            CancelCommand cancelCommand,
+            NotificationCallbackService notificationCallbackService,
+            MenuCallbackService menuCallbackService
+    ) {
         this.telegramClient = new OkHttpTelegramClient(botToken);
         this.commandContainer = commandContainer;
         this.userService = userService;
@@ -55,49 +61,78 @@ public class PlantsCareBot implements LongPollingSingleThreadUpdateConsumer, Tel
     @Override
     public void consume(Update update) {
         Long chatId = getChatId(update);
-        if (chatId == null) return;
 
-        // Обработка callback'ов от уведомлений (v1:done:42, v1:snooze:42, v1:skip:42)
-        if (update.hasCallbackQuery()) {
-            String data = update.getCallbackQuery().getData();
-            if (data != null && data.startsWith(NOTIFICATION_CALLBACK_PREFIX)) {
-                notificationCallbackService.handleCallback(update.getCallbackQuery(), telegramClient);
-                return;
-            }
-            if (data != null && data.startsWith(MENU_CALLBACK_PREFIX)) {
-                String userName = getUserName(update);
-                User user = userService.findOrCreate(chatId, userName);
-                menuCallbackService.handleCallback(update.getCallbackQuery(), telegramClient, user);
-                return;
-            }
-        }
-
-        String userName = getUserName(update);
-        User user = userService.findOrCreate(chatId, userName);
-
-        // Обработка /cancel (только если это текстовое сообщение)
-        if (update.hasMessage() && "/cancel".equalsIgnoreCase(update.getMessage().getText())) {
-            cancelCommand.execute(update, telegramClient);
+        if (chatId == null) {
             return;
         }
 
-        if (user.getConversationState() == ConversationState.IDLE) {
-            String command = update.hasMessage() ? getCommandName(update.getMessage().getText()) : "UNKNOWN";
-            commandContainer.retrieveCommand(command).execute(update, telegramClient);
-        } else {
-            stateResolver.resolve(user, update, telegramClient);
+        try {
+            if (update.hasCallbackQuery()) {
+                String data = update.getCallbackQuery().getData();
+
+                if (data != null && data.startsWith(NOTIFICATION_CALLBACK_PREFIX)) {
+                    notificationCallbackService.handleCallback(update.getCallbackQuery(), telegramClient);
+                    return;
+                }
+
+                if (data != null && (
+                        data.startsWith(MENU_CALLBACK_PREFIX) ||
+                                data.startsWith(LOCATION_CALLBACK_PREFIX) ||
+                                data.startsWith(PLANT_CALLBACK_PREFIX)
+                )) {
+                    String userName = getUserName(update);
+                    User user = userService.findOrCreate(chatId, userName);
+                    menuCallbackService.handleCallback(update.getCallbackQuery(), telegramClient, user);
+                    return;
+                }
+            }
+
+            String userName = getUserName(update);
+            User user = userService.findOrCreate(chatId, userName);
+
+            if (update.hasMessage()
+                    && update.getMessage().hasText()
+                    && "/cancel".equalsIgnoreCase(update.getMessage().getText())) {
+                cancelCommand.execute(update, telegramClient);
+                return;
+            }
+
+            if (user.getConversationState() == ConversationState.IDLE) {
+                if (!update.hasMessage() || !update.getMessage().hasText()) {
+                    return;
+                }
+
+                String command = getCommandName(update.getMessage().getText());
+                commandContainer.retrieveCommand(command).execute(update, telegramClient);
+            } else {
+                stateResolver.resolve(user, update, telegramClient);
+            }
+        } catch (Exception e) {
+            log.error("Failed to consume update for chatId={}", chatId, e);
         }
     }
 
     private Long getChatId(Update update) {
-        if (update.hasMessage()) return update.getMessage().getChatId();
-        if (update.hasCallbackQuery()) return update.getCallbackQuery().getMessage().getChatId();
+        if (update.hasMessage()) {
+            return update.getMessage().getChatId();
+        }
+
+        if (update.hasCallbackQuery()) {
+            return update.getCallbackQuery().getMessage().getChatId();
+        }
+
         return null;
     }
 
     private String getUserName(Update update) {
-        if (update.hasMessage()) return update.getMessage().getFrom().getUserName();
-        if (update.hasCallbackQuery()) return update.getCallbackQuery().getFrom().getUserName();
+        if (update.hasMessage() && update.getMessage().getFrom() != null) {
+            return update.getMessage().getFrom().getUserName();
+        }
+
+        if (update.hasCallbackQuery() && update.getCallbackQuery().getFrom() != null) {
+            return update.getCallbackQuery().getFrom().getUserName();
+        }
+
         return "unknown";
     }
 
@@ -105,6 +140,7 @@ public class PlantsCareBot implements LongPollingSingleThreadUpdateConsumer, Tel
         if (text == null || text.isBlank()) {
             return UNKNOWN;
         }
+
         return text.trim().split("\\s+")[0].toLowerCase();
     }
 }

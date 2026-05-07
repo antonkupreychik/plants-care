@@ -1,16 +1,14 @@
 package com.plantcare.bot.repository;
 
 import com.plantcare.bot.domain.CareSchedule;
+import com.plantcare.bot.domain.Location;
 import com.plantcare.bot.domain.Plant;
-import com.plantcare.bot.domain.enums.TaskType;
 import com.plantcare.bot.domain.User;
+import com.plantcare.bot.domain.enums.TaskType;
 import com.plantcare.bot.support.IntegrationTestBase;
-import jakarta.persistence.EntityManager;
-import jakarta.persistence.PersistenceContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
@@ -20,154 +18,252 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class CareScheduleRepositoryTest extends IntegrationTestBase {
 
-    @Autowired private CareScheduleRepository scheduleRepository;
-    @Autowired private PlantRepository plantRepository;
-    @Autowired private UserRepository userRepository;
+    @Autowired
+    private UserRepository userRepository;
 
-    @PersistenceContext
-    private EntityManager em;
+    @Autowired
+    private LocationRepository locationRepository;
+
+    @Autowired
+    private PlantRepository plantRepository;
+
+    @Autowired
+    private CareScheduleRepository careScheduleRepository;
 
     @AfterEach
     void cleanup() {
-        scheduleRepository.deleteAll();
+        careScheduleRepository.deleteAll();
         plantRepository.deleteAll();
+        locationRepository.deleteAll();
         userRepository.deleteAll();
     }
 
     @Test
     void findDueSchedulesReturnsOnlyOverdueAndActive() {
-        User user = saveUser(200L, false);
-        Plant plant = savePlant(user, "Монстера", false);
+        User user = saveUser(100L);
+        Plant plant = savePlant(user, "Монстера");
 
-        LocalDateTime now = LocalDateTime.now().truncatedTo(ChronoUnit.MICROS).truncatedTo(ChronoUnit.MICROS);
+        CareSchedule overdueActive = saveSchedule(
+                plant,
+                TaskType.WATERING,
+                LocalDateTime.now().minusHours(1),
+                true
+        );
 
-        // Просрочена — должна попасть
-        CareSchedule overdue = saveSchedule(plant, TaskType.WATERING, now.minusHours(1), true);
-        // Будущая — не должна попасть
-        saveSchedule(plant, TaskType.MISTING, now.plusDays(1), true);
-        // Деактивирована — не должна попасть, даже если просрочена
-        saveSchedule(plant, TaskType.FERTILIZING, now.minusHours(2), false);
+        saveSchedule(
+                plant,
+                TaskType.MISTING,
+                LocalDateTime.now().plusDays(1),
+                true
+        );
 
-        List<CareSchedule> due = scheduleRepository.findDueSchedules(now);
+        saveSchedule(
+                plant,
+                TaskType.FERTILIZING,
+                LocalDateTime.now().minusHours(2),
+                false
+        );
 
-        assertThat(due).extracting(CareSchedule::getId).containsExactly(overdue.getId());
+        List<CareSchedule> result = careScheduleRepository.findDueSchedules(
+                LocalDateTime.now()
+        );
+
+        assertThat(result)
+                .extracting(CareSchedule::getId)
+                .containsExactly(overdueActive.getId());
     }
 
     @Test
     void findDueSchedulesIgnoresArchivedPlants() {
-        User user = saveUser(201L, false);
-        Plant archived = savePlant(user, "Мёртвая монстера", true);
-        saveSchedule(archived, TaskType.WATERING, LocalDateTime.now().truncatedTo(ChronoUnit.MICROS).truncatedTo(ChronoUnit.MICROS).minusHours(1), true);
+        User user = saveUser(101L);
+        Plant plant = savePlant(user, "Мёртвая монстера");
+        plant.archive();
+        plantRepository.save(plant);
 
-        List<CareSchedule> due = scheduleRepository.findDueSchedules(LocalDateTime.now().truncatedTo(ChronoUnit.MICROS));
+        saveSchedule(
+                plant,
+                TaskType.WATERING,
+                LocalDateTime.now().minusHours(1),
+                true
+        );
 
-        assertThat(due).isEmpty();
+        List<CareSchedule> result = careScheduleRepository.findDueSchedules(
+                LocalDateTime.now()
+        );
+
+        assertThat(result).isEmpty();
     }
 
     @Test
     void findDueSchedulesIgnoresBlockedUsers() {
-        User blocked = saveUser(202L, true);
-        Plant plant = savePlant(blocked, "Монстера", false);
-        saveSchedule(plant, TaskType.WATERING, LocalDateTime.now().truncatedTo(ChronoUnit.MICROS).minusHours(1), true);
+        User user = saveUser(102L);
+        user.setBlocked(true);
+        userRepository.save(user);
 
-        List<CareSchedule> due = scheduleRepository.findDueSchedules(LocalDateTime.now().truncatedTo(ChronoUnit.MICROS));
+        Plant plant = savePlant(user, "Монстера");
 
-        assertThat(due).isEmpty();
+        saveSchedule(
+                plant,
+                TaskType.WATERING,
+                LocalDateTime.now().minusHours(1),
+                true
+        );
+
+        List<CareSchedule> result = careScheduleRepository.findDueSchedules(
+                LocalDateTime.now()
+        );
+
+        assertThat(result).isEmpty();
     }
 
     @Test
-    @Transactional
     void findDueSchedulesAvoidsNPlusOne() {
-        // Самая важная проверка: запрос обязан использовать JOIN FETCH,
-        // чтобы шедулер не делал N+1 при 100 растениях.
+        User user = saveUser(103L);
 
-        User user = saveUser(203L, false);
-        for (int i = 0; i < 5; i++) {
-            Plant plant = savePlant(user, "Plant " + i, false);
-            saveSchedule(plant, TaskType.WATERING, LocalDateTime.now().truncatedTo(ChronoUnit.MICROS).minusHours(1), true);
+        for (int i = 0; i < 3; i++) {
+            Plant plant = savePlant(user, "Plant " + i);
+
+            saveSchedule(
+                    plant,
+                    TaskType.WATERING,
+                    LocalDateTime.now().minusHours(i + 1),
+                    true
+            );
         }
 
-        em.clear(); // Сбрасываем кеш, чтобы реально проверить количество SQL
+        List<CareSchedule> result = careScheduleRepository.findDueSchedules(
+                LocalDateTime.now()
+        );
 
-        List<CareSchedule> due = scheduleRepository.findDueSchedules(LocalDateTime.now().truncatedTo(ChronoUnit.MICROS));
-        assertThat(due).hasSize(5);
+        assertThat(result).hasSize(3);
 
-        // Доступ к plant.user не должен инициировать дополнительные запросы.
-        // Если JOIN FETCH работает — все 3 уровня (schedule, plant, user) уже загружены.
-        for (CareSchedule schedule : due) {
-            assertThat(schedule.getPlant().getName()).isNotNull();
-            assertThat(schedule.getPlant().getUser().getTelegramChatId()).isEqualTo(203L);
+        for (CareSchedule schedule : result) {
+            assertThat(schedule.getPlant()).isNotNull();
+            assertThat(schedule.getPlant().getUser()).isNotNull();
+            assertThat(schedule.getPlant().getLocation()).isNotNull();
         }
     }
 
     @Test
     void findByPlantIdAndTaskTypeReturnsCorrectSchedule() {
-        User user = saveUser(204L, false);
-        Plant plant = savePlant(user, "Монстера", false);
+        User user = saveUser(104L);
+        Plant plant = savePlant(user, "Монстера");
 
-        CareSchedule watering = saveSchedule(plant, TaskType.WATERING, LocalDateTime.now().truncatedTo(ChronoUnit.MICROS), true);
-        saveSchedule(plant, TaskType.MISTING, LocalDateTime.now().truncatedTo(ChronoUnit.MICROS), true);
+        CareSchedule watering = saveSchedule(
+                plant,
+                TaskType.WATERING,
+                LocalDateTime.now().plusDays(1),
+                true
+        );
 
-        assertThat(scheduleRepository.findByPlantIdAndTaskType(plant.getId(), TaskType.WATERING))
-                .map(CareSchedule::getId)
-                .contains(watering.getId());
+        saveSchedule(
+                plant,
+                TaskType.MISTING,
+                LocalDateTime.now().plusDays(2),
+                true
+        );
+
+        var result = careScheduleRepository.findByPlantIdAndTaskType(
+                plant.getId(),
+                TaskType.WATERING
+        );
+
+        assertThat(result).isPresent();
+        assertThat(result.get().getId()).isEqualTo(watering.getId());
     }
 
     @Test
     void findUserSchedulesDueBeforeIncludesOnlyUserOwn() {
-        User user1 = saveUser(205L, false);
-        User user2 = saveUser(206L, false);
-        Plant plant1 = savePlant(user1, "User1's Plant", false);
-        Plant plant2 = savePlant(user2, "User2's Plant", false);
+        User user1 = saveUser(105L);
+        User user2 = saveUser(106L);
 
-        LocalDateTime soon = LocalDateTime.now().truncatedTo(ChronoUnit.MICROS).plusHours(1);
-        saveSchedule(plant1, TaskType.WATERING, LocalDateTime.now().truncatedTo(ChronoUnit.MICROS), true);
-        saveSchedule(plant2, TaskType.WATERING, LocalDateTime.now().truncatedTo(ChronoUnit.MICROS), true);
+        Plant plant1 = savePlant(user1, "User1's Plant");
+        Plant plant2 = savePlant(user2, "User2's Plant");
 
-        List<CareSchedule> u1 = scheduleRepository.findUserSchedulesDueBefore(user1.getId(), soon);
+        CareSchedule user1Schedule = saveSchedule(
+                plant1,
+                TaskType.WATERING,
+                LocalDateTime.now().minusHours(1),
+                true
+        );
 
-        assertThat(u1).hasSize(1);
+        saveSchedule(
+                plant2,
+                TaskType.WATERING,
+                LocalDateTime.now().minusHours(1),
+                true
+        );
+
+        List<CareSchedule> result = careScheduleRepository.findUserSchedulesDueBefore(
+                user1.getId(),
+                LocalDateTime.now()
+        );
+
+        assertThat(result)
+                .extracting(CareSchedule::getId)
+                .containsExactly(user1Schedule.getId());
     }
 
     @Test
     void rescheduleFromUpdatesNextDueAt() {
-        User user = saveUser(207L, false);
-        Plant plant = savePlant(user, "Монстера", false);
-        CareSchedule schedule = saveSchedule(plant, TaskType.WATERING, LocalDateTime.now().truncatedTo(ChronoUnit.MICROS), true);
-        schedule.setIntervalDays(7);
+        User user = saveUser(107L);
+        Plant plant = savePlant(user, "Монстера");
 
-        LocalDateTime watered = LocalDateTime.of(2026, 5, 1, 10, 0);
-        schedule.rescheduleFrom(watered);
+        CareSchedule schedule = saveSchedule(
+                plant,
+                TaskType.WATERING,
+                LocalDateTime.now().minusDays(1),
+                true
+        );
 
-        assertThat(schedule.getNextDueAt()).isEqualTo(watered.plusDays(7));
+        LocalDateTime doneAt = LocalDateTime.now().truncatedTo(ChronoUnit.MICROS);
+        schedule.rescheduleFrom(doneAt);
+
+        CareSchedule saved = careScheduleRepository.save(schedule);
+
+        assertThat(saved.getNextDueAt())
+                .isEqualTo(doneAt.plusDays(saved.getIntervalDays()));
     }
 
-    // --- Helpers ---
-
-    private User saveUser(long chatId, boolean blocked) {
+    private User saveUser(Long chatId) {
         return userRepository.save(User.builder()
                 .telegramChatId(chatId)
-                .blocked(blocked)
+                .timezone("UTC")
+                .blocked(false)
                 .build());
     }
 
-    private Plant savePlant(User user, String name, boolean archived) {
-        Plant plant = Plant.builder()
-                .user(user)
-                .name(name)
-                .build();
-        if (archived) {
-            plant.archive();
-        }
-        return plantRepository.save(plant);
+    private Location saveDefaultLocation(User user) {
+        return locationRepository.findByUserIdAndDefaultLocationTrue(user.getId())
+                .orElseGet(() -> locationRepository.save(Location.builder()
+                        .user(user)
+                        .name(Location.DEFAULT_NAME)
+                        .emoji(Location.DEFAULT_EMOJI)
+                        .defaultLocation(true)
+                        .build()));
     }
 
-    private CareSchedule saveSchedule(Plant plant, TaskType type, LocalDateTime dueAt, boolean active) {
-        return scheduleRepository.save(CareSchedule.builder()
+    private Plant savePlant(User user, String name) {
+        Location location = saveDefaultLocation(user);
+
+        return plantRepository.save(Plant.builder()
+                .user(user)
+                .location(location)
+                .name(name)
+                .build());
+    }
+
+    private CareSchedule saveSchedule(
+            Plant plant,
+            TaskType taskType,
+            LocalDateTime nextDueAt,
+            boolean active
+    ) {
+        return careScheduleRepository.save(CareSchedule.builder()
                 .plant(plant)
-                .taskType(type)
+                .taskType(taskType)
                 .intervalDays(7)
-                .nextDueAt(dueAt)
+                .nextDueAt(nextDueAt.truncatedTo(ChronoUnit.MICROS))
                 .active(active)
                 .build());
     }

@@ -1,5 +1,6 @@
 package com.plantcare.bot.service;
 
+import com.plantcare.bot.client.TelegramClientProvider;
 import com.plantcare.bot.domain.CareSchedule;
 import com.plantcare.bot.domain.NotificationLog;
 import com.plantcare.bot.domain.Plant;

@@ -1,6 +1,6 @@
 package com.plantcare.bot.config;
 
-import com.plantcare.bot.service.TelegramClientProvider;
+import com.plantcare.bot.client.TelegramClientProvider;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
