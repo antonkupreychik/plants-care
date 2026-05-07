@@ -47,9 +47,9 @@ public class AwaitingPlantFertilizingSetupStateHandler implements StateHandler {
     public void handle(User user, Update update, TelegramClient client) {
         Map<String, Object> stateData = user.getStateData();
 
-        boolean awaitingCustomInput = "true".equals(String.valueOf(
-                stateData.get(FERTILIZING_AWAITING_INPUT_KEY)
-        ));
+        boolean awaitingCustomInput = "true".equals(
+                String.valueOf(stateData.get(FERTILIZING_AWAITING_INPUT_KEY))
+        );
 
         if (awaitingCustomInput && update.hasMessage() && update.getMessage().hasText()) {
             handleCustomIntervalInput(user, update.getMessage().getText(), client);
@@ -113,19 +113,18 @@ public class AwaitingPlantFertilizingSetupStateHandler implements StateHandler {
     private void handleCustomRequest(User user, TelegramClient client) {
         userService.setStateData(user, FERTILIZING_AWAITING_INPUT_KEY, "true");
 
-        SendMessage message = SendMessage.builder()
-                .chatId(user.getTelegramChatId().toString())
-                .text("""
-                        ✏️ Введи интервал удобрения в днях.
+        sendText(
+                client,
+                user.getTelegramChatId(),
+                """
+                ✏️ Введи интервал удобрения в днях.
 
-                        Например:
-                        14
-                        21
-                        30
-                        """)
-                .build();
-
-        execute(client, message);
+                Например:
+                14
+                21
+                30
+                """
+        );
     }
 
     private void handleCustomIntervalInput(User user, String text, TelegramClient client) {
@@ -140,7 +139,7 @@ public class AwaitingPlantFertilizingSetupStateHandler implements StateHandler {
             return;
         }
 
-        if (intervalDays < 1 || intervalDays > 365) {
+        if (!PlantService.isValidInterval(intervalDays)) {
             sendText(client, chatId, "❌ Интервал должен быть от 1 до 365 дней.");
             return;
         }
@@ -190,8 +189,10 @@ public class AwaitingPlantFertilizingSetupStateHandler implements StateHandler {
     }
 
     private Plant findPlantFromStateData(User user, TelegramClient client) {
-        Map<String, Object> stateData = user.getStateData();
-        Object plantIdValue = stateData.get(PLANT_ID_KEY);
+        Object plantIdValue = user.getStateData().get(PLANT_ID_KEY);
+
+        log.info("Fertilizing setup stateData={}", user.getStateData());
+        log.info("Fertilizing setup userId={}, chatId={}", user.getId(), user.getTelegramChatId());
 
         if (plantIdValue == null) {
             log.error("plant_id not found in stateData for user {}", user.getTelegramChatId());
@@ -211,26 +212,16 @@ public class AwaitingPlantFertilizingSetupStateHandler implements StateHandler {
             return null;
         }
 
-        return plantRepository.findByUserIdAndIdAndArchivedAtIsNull(
-                        user.getId(),
-                        plantId
-                )
-                .orElseGet(() -> {
-                    log.error(
-                            "Plant {} not found for user {} during fertilizing setup",
-                            plantId,
-                            user.getTelegramChatId()
-                    );
+        Plant plant = plantRepository.findById(plantId).orElse(null);
 
-                    sendText(
-                            client,
-                            user.getTelegramChatId(),
-                            "❌ Растение не найдено. Попробуй добавить его заново."
-                    );
+        if (plant == null) {
+            log.error("Plant {} not found during fertilizing setup for user {}", plantId, user.getTelegramChatId());
+            sendText(client, user.getTelegramChatId(), "❌ Растение не найдено. Попробуй добавить его заново.");
+            userService.resetToIdle(user);
+            return null;
+        }
 
-                    userService.resetToIdle(user);
-                    return null;
-                });
+        return plant;
     }
 
     private void finishCreation(User user, Plant plant, TelegramClient client) {
@@ -268,7 +259,6 @@ public class AwaitingPlantFertilizingSetupStateHandler implements StateHandler {
         execute(client, message);
 
         userService.resetToIdle(user);
-
         mainMenuService.sendMainMenu(user, client);
 
         log.info(
