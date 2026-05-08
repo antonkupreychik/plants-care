@@ -1,6 +1,7 @@
-package com.plantcare.bot.admin.users;
+package com.plantcare.bot.admin.users.controller;
 
 import com.plantcare.bot.admin.config.AdminSecurityConfig;
+import com.plantcare.bot.admin.users.service.AdminUserActionService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.format.annotation.DateTimeFormat;

@@ -1,4 +1,4 @@
-package com.plantcare.bot.admin.users;
+package com.plantcare.bot.admin.users.repository;
 
 import com.plantcare.bot.admin.users.dto.CareHistoryItemDto;
 import com.plantcare.bot.admin.users.dto.NotificationLogItemDto;

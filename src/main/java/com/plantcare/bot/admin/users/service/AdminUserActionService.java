@@ -1,5 +1,6 @@
-package com.plantcare.bot.admin.users;
+package com.plantcare.bot.admin.users.service;
 
+import com.plantcare.bot.admin.users.repository.AdminUserActionRepository;
 import com.plantcare.bot.admin.users.dto.SendMessageResult;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;

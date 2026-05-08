@@ -1,5 +1,6 @@
-package com.plantcare.bot.admin.users;
+package com.plantcare.bot.admin.users.service;
 
+import com.plantcare.bot.admin.users.repository.AdminUserDetailRepository;
 import com.plantcare.bot.admin.users.dto.UserDetailDto;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;

@@ -1,4 +1,4 @@
-package com.plantcare.bot.admin.users;
+package com.plantcare.bot.admin.users.repository;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.EmptyResultDataAccessException;

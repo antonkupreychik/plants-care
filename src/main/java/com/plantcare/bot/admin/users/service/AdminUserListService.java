@@ -1,5 +1,6 @@
-package com.plantcare.bot.admin.users;
+package com.plantcare.bot.admin.users.service;
 
+import com.plantcare.bot.admin.users.repository.AdminUserListRepository;
 import com.plantcare.bot.admin.users.dto.UserListPageDto;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;

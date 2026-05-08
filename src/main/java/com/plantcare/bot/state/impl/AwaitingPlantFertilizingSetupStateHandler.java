@@ -13,6 +13,7 @@ import com.plantcare.bot.state.interfaces.StateHandler;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
 import org.telegram.telegrambots.meta.api.methods.AnswerCallbackQuery;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
 import org.telegram.telegrambots.meta.api.objects.Update;
@@ -44,6 +45,7 @@ public class AwaitingPlantFertilizingSetupStateHandler implements StateHandler {
     }
 
     @Override
+    @Transactional
     public void handle(User user, Update update, TelegramClient client) {
         Map<String, Object> stateData = user.getStateData();
 
@@ -220,7 +222,7 @@ public class AwaitingPlantFertilizingSetupStateHandler implements StateHandler {
             userService.resetToIdle(user);
             return null;
         }
-
+        userService.resetToIdle(user);
         return plant;
     }
 
