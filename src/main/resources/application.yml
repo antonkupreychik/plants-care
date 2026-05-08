@@ -31,9 +31,26 @@ app:
     locations: classpath:db/migration
     baseline-on-migrate: true
 
+admin:
+  username: ${ADMIN_USERNAME:}
+  password-bcrypt-hash: ${ADMIN_PASSWORD_BCRYPT_HASH:}
+  session-timeout-hours: 8
+  rate-limit:
+    max-attempts: 5
+    window-seconds: 60
+
 server:
   # Railway передаёт PORT, локально используем SERVER_PORT/8080
   port: ${PORT:${SERVER_PORT:8080}}
+  # Railway сидит за прокси, X-Forwarded-* нужны для rate-limit по реальному IP
+  forward-headers-strategy: framework
+  servlet:
+    session:
+      timeout: 8h
+      cookie:
+        http-only: true
+        secure: ${COOKIE_SECURE:false}
+        same-site: strict
 
 management:
   endpoints:

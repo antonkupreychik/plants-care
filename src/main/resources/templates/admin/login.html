@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Plants Care — Admin Login</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+               background: #f5f5f5; display: flex; min-height: 100vh; margin: 0;
+               align-items: center; justify-content: center; }
+        .box { background: #fff; padding: 2rem; border-radius: 8px;
+               box-shadow: 0 2px 8px rgba(0,0,0,0.08); width: 320px; }
+        h1 { margin: 0 0 1.5rem; font-size: 1.25rem; color: #2d6a4f; }
+        label { display: block; margin-bottom: 0.25rem; font-size: 0.875rem; color: #444; }
+        input { width: 100%; padding: 0.5rem; margin-bottom: 1rem; border: 1px solid #ccc;
+                border-radius: 4px; box-sizing: border-box; }
+        button { width: 100%; padding: 0.625rem; background: #2d6a4f; color: #fff;
+                 border: none; border-radius: 4px; font-size: 1rem; cursor: pointer; }
+        button:hover { background: #1b4332; }
+        .error { background: #fee; color: #c33; padding: 0.5rem; border-radius: 4px;
+                 margin-bottom: 1rem; font-size: 0.875rem; }
+    </style>
+</head>
+<body>
+<div class="box">
+    <h1>🌿 Plants Care Admin</h1>
+    <div th:if="${error}" class="error" th:text="${error}"></div>
+    <form method="post" th:action="@{/admin/login}">
+        <label for="username">Логин</label>
+        <input type="text" id="username" name="username" required autofocus>
+        <label for="password">Пароль</label>
+        <input type="password" id="password" name="password" required>
+        <button type="submit">Войти</button>
+    </form>
+</div>
+</body>
