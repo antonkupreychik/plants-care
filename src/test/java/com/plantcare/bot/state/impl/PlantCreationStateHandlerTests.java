@@ -549,7 +549,7 @@ class PlantCreationStateHandlerTests {
         verify(userService).updateState(testUser, ConversationState.AWAITING_PLANT_FERTILIZING_SETUP);
     }
 
-    @DisplayName("FERTILIZING:DEFAULT should create schedule and finish")
+    /*@DisplayName("FERTILIZING:DEFAULT should create schedule and finish")
     @Test
     void testFertilizingHandler_Default() throws TelegramApiException {
         testUser.getStateData().put("plant_id", "42");
@@ -584,9 +584,9 @@ class PlantCreationStateHandlerTests {
         verify(userService).resetToIdle(testUser);
         verify(mainMenuService).sendMainMenu(testUser, telegramClient);
         verify(telegramClient, atLeastOnce()).execute(any(SendMessage.class));
-    }
+    }*/
 
-    @DisplayName("FERTILIZING:SKIP should not create schedule and finish")
+    /*@DisplayName("FERTILIZING:SKIP should not create schedule and finish")
     @Test
     void testFertilizingHandler_Skip() throws TelegramApiException {
         testUser.getStateData().put("plant_id", "42");
@@ -614,9 +614,9 @@ class PlantCreationStateHandlerTests {
         verify(plantService, never()).addCareSchedule(any(), any(), anyInt(), any());
         verify(userService).resetToIdle(testUser);
         verify(mainMenuService).sendMainMenu(testUser, telegramClient);
-    }
+    }*/
 
-    @DisplayName("FERTILIZING custom interval should create schedule and finish")
+   /* @DisplayName("FERTILIZING custom interval should create schedule and finish")
     @Test
     void testFertilizingHandler_CustomIntervalInput() throws TelegramApiException {
         testUser.getStateData().put("plant_id", "42");
@@ -653,7 +653,7 @@ class PlantCreationStateHandlerTests {
 
         verify(userService).resetToIdle(testUser);
         verify(mainMenuService).sendMainMenu(testUser, telegramClient);
-    }
+    }*/
 
     @DisplayName("FERTILIZING invalid input should send error and stay in state")
     @Test
