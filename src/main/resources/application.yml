@@ -38,6 +38,9 @@ admin:
   rate-limit:
     max-attempts: 5
     window-seconds: 60
+  dashboard:
+    timezone: Europe/Riga
+    query-executor-pool-size: 8
 
 server:
   # Railway передаёт PORT, локально используем SERVER_PORT/8080

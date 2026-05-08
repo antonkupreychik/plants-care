@@ -17,12 +17,20 @@ public class AdminProperties {
     private final String passwordBcryptHash;
     private final int sessionTimeoutHours;
     private final RateLimit rateLimit;
+    private final Dashboard dashboard;
 
     @Getter
     @RequiredArgsConstructor
     public static class RateLimit {
         private final int maxAttempts;
         private final int windowSeconds;
+    }
+
+    @Getter
+    @RequiredArgsConstructor
+    public static class Dashboard {
+        private final String timezone;
+        private final int queryExecutorPoolSize;
     }
 
     public boolean isEnabled() {
