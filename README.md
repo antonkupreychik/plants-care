@@ -68,6 +68,29 @@ echo 'testcontainers.reuse.enable=true' >> ~/.testcontainers.properties
 - **V1** — основная схема (7 таблиц, индексы, триггеры)
 - **V2** — сидинг 30 популярных видов растений в `species`
 
+## Admin Panel
+
+Админка живёт на `/admin/**`. Логин/пароль из env-переменных:
+
+```bash
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD_BCRYPT_HASH=<bcrypt hash>
+```
+
+Plain password в env запрещён — только bcrypt-хеш cost=12. Сгенерировать:
+
+```bash
+htpasswd -bnBC 12 "" 'mypass' | tr -d ':\n'
+```
+
+Результат (`$2y$12$...`) кладётся в `ADMIN_PASSWORD_BCRYPT_HASH` (без префикса `{bcrypt}` — он добавляется в коде).
+
+Если переменные не заданы — приложение стартует, но `/admin/**` отдаёт `503 Admin panel is disabled`. Это сознательно: в локалке часто нет смысла настраивать админку.
+
+На Railway добавь переменные через Variables. Для prod также установи `COOKIE_SECURE=true`, чтобы session cookie ставился только по HTTPS.
+
+Rate limit: 5 неудачных попыток в минуту с IP → 429 на минуту. CSRF включён по умолчанию для всех POST/PUT/DELETE в `/admin/**`.
+
 Откат миграций — пересоздание БД (`docker compose down -v && docker compose up -d`).
 Для пет-проекта это нормально, для прода понадобятся undo-миграции.
 
