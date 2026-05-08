@@ -1,8 +1,8 @@
 package com.plantcare.bot.domain.enums;
 
 public enum LightPreference {
-    SHADE,    // тень
-    PARTIAL,  // полутень / рассеянный свет
-    BRIGHT,   // яркий рассеянный
-    DIRECT    // прямые солнечные лучи
+    SHADE("Тень"), PARTIAL("Полутень"), BRIGHT("Яркий"), DIRECT("Прямые лучи");
+
+    public final String label;
+    LightPreference(String label) { this.label = label; }
 }
