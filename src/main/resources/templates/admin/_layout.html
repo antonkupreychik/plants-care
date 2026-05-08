@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      xmlns:layout="http://www.ultraq.net.nz/thymeleaf/layout"
+      xmlns:sec="http://www.thymeleaf.org/extras/spring-security"
+      lang="ru" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title layout:title-pattern="$CONTENT_TITLE — Plants Care Admin">Plants Care Admin</title>
+
+    <!-- CSRF метатеги — используются JS-мостом ниже, чтобы HTMX слал X-CSRF-TOKEN -->
+    <meta name="_csrf" th:content="${_csrf.token}"/>
+    <meta name="_csrf_header" th:content="${_csrf.headerName}"/>
+
+    <!-- DaisyUI 4 prebuilt CSS + Tailwind 3 Play CDN (no-build setup) -->
+    <link href="https://cdn.jsdelivr.net/npm/daisyui@4.12.24/dist/full.min.css" rel="stylesheet" type="text/css"/>
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- HTMX -->
+    <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+
+    <!-- HTMX → CSRF: для всех hx-post/put/delete подставляем токен в заголовок -->
+    <script>
+        document.addEventListener('htmx:configRequest', (event) => {
+            const token = document.querySelector('meta[name="_csrf"]')?.content;
+            const header = document.querySelector('meta[name="_csrf_header"]')?.content;
+            if (token && header) {
+                event.detail.headers[header] = token;
+            }
+        });
+    </script>
+</head>
+<body class="bg-base-200 min-h-screen">
+
+<div class="drawer lg:drawer-open">
+    <input id="admin-drawer" type="checkbox" class="drawer-toggle"/>
+
+    <!-- Контент + шапка -->
+    <div class="drawer-content flex flex-col">
+        <header class="navbar bg-base-100 shadow-sm sticky top-0 z-10">
+            <div class="flex-none lg:hidden">
+                <label for="admin-drawer" class="btn btn-square btn-ghost" aria-label="open sidebar">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"
+                         class="inline-block h-6 w-6 stroke-current">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                              d="M4 6h16M4 12h16M4 18h16"/>
+                    </svg>
+                </label>
+            </div>
+            <div class="flex-1 px-2 lg:hidden">
+                <span class="text-lg font-semibold text-primary">🌿 Plants Care</span>
+            </div>
+            <div class="flex-1 hidden lg:block"></div>
+            <div class="flex-none flex items-center gap-2">
+                <span class="text-sm text-base-content/70" sec:authentication="name">admin</span>
+                <form method="post" th:action="@{/admin/logout}" class="inline">
+                    <button type="submit" class="btn btn-ghost btn-sm">Выйти</button>
+                </form>
+            </div>
+        </header>
+
+        <main class="p-6 flex-1">
+            <section layout:fragment="content">
+                <p>Default content — should be overridden by child templates.</p>
+            </section>
+        </main>
+    </div>
+
+    <!-- Сайдбар -->
+    <aside class="drawer-side z-20">
+        <label for="admin-drawer" class="drawer-overlay" aria-label="close sidebar"></label>
+        <nav class="bg-base-100 min-h-full w-64 flex flex-col">
+            <div class="px-4 py-4 border-b border-base-200">
+                <span class="text-lg font-semibold text-primary">🌿 Plants Care</span>
+            </div>
+            <ul class="menu p-4 flex-1 gap-1">
+                <li>
+                    <a th:href="@{/admin}"
+                       th:classappend="${activeMenu == 'dashboard'} ? 'active' : ''">
+                        Dashboard
+                    </a>
+                </li>
+                <li>
+                    <a th:href="@{/admin/users}"
+                       th:classappend="${activeMenu == 'users'} ? 'active' : ''">
+                        Users
+                    </a>
+                </li>
+                <li>
+                    <span class="opacity-50 cursor-not-allowed">
+                        Species <span class="badge badge-ghost badge-xs ml-1">soon</span>
+                    </span>
+                </li>
+                <li>
+                    <span class="opacity-50 cursor-not-allowed">
+                        Stuck <span class="badge badge-ghost badge-xs ml-1">soon</span>
+                    </span>
+                </li>
+                <li>
+                    <span class="opacity-50 cursor-not-allowed">
+                        Scheduler <span class="badge badge-ghost badge-xs ml-1">soon</span>
+                    </span>
+                </li>
+                <li>
+                    <span class="opacity-50 cursor-not-allowed">
+                        Broadcast <span class="badge badge-ghost badge-xs ml-1">soon</span>
+                    </span>
