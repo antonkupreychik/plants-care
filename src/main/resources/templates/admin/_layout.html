@@ -60,6 +60,12 @@
         </header>
 
         <main class="p-6 flex-1">
+            <div th:if="${flash}" class="alert alert-success mb-4" role="alert">
+                <span th:text="${flash}"></span>
+            </div>
+            <div th:if="${flashError}" class="alert alert-error mb-4" role="alert">
+                <span th:text="${flashError}"></span>
+            </div>
             <section layout:fragment="content">
                 <p>Default content — should be overridden by child templates.</p>
             </section>
@@ -82,7 +88,7 @@
                 </li>
                 <li>
                     <a th:href="@{/admin/users}"
-                       th:classappend="${activeMenu == 'users'} ? 'active' : ''">
+                       th:classappend="${activeMenu == 'users'} ? 'active' : ''" >
                         Users
                     </a>
                 </li>
