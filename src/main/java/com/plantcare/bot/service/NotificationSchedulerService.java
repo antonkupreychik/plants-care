@@ -1,5 +1,6 @@
 package com.plantcare.bot.service;
 
+import com.plantcare.bot.client.TelegramClientProvider;
 import com.plantcare.bot.domain.CareSchedule;
 import com.plantcare.bot.domain.NotificationLog;
 import com.plantcare.bot.domain.Plant;
@@ -116,7 +117,7 @@ public class NotificationSchedulerService {
 
     private void sendNotification(User user, Plant plant, CareSchedule schedule) {
         String text = buildNotificationText(plant, schedule.getTaskType());
-        InlineKeyboardMarkup keyboard = buildKeyboard(schedule.getId());
+        InlineKeyboardMarkup keyboard = buildKeyboard(schedule.getId(), schedule.getTaskType());
 
         SendMessage message = SendMessage.builder()
                 .chatId(user.getTelegramChatId().toString())
@@ -152,9 +153,15 @@ public class NotificationSchedulerService {
         };
     }
 
-    private InlineKeyboardMarkup buildKeyboard(Long scheduleId) {
+    private InlineKeyboardMarkup buildKeyboard(Long scheduleId, TaskType taskType) {
+        String doneBtnLabel = switch (taskType) {
+            case WATERING    -> "✅ Полил";
+            case MISTING     -> "✅ Опрыскал";
+            case FERTILIZING -> "✅ Удобрил";
+        };
+
         InlineKeyboardButton doneBtn = InlineKeyboardButton.builder()
-                .text("✅ Полил")
+                .text(doneBtnLabel)
                 .callbackData("v1:done:" + scheduleId)
                 .build();
 

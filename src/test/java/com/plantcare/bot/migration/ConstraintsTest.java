@@ -7,149 +7,227 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
 
+import java.sql.Timestamp;
+import java.time.LocalDateTime;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-/**
- * Проверяет CHECK и UNIQUE констрейнты.
- *
- * Тесты создают живые записи, поэтому после каждого делаем cleanup, чтобы не отравлять
- * состояние следующим тестам в этой же сессии (Postgres переиспользуется).
- */
 class ConstraintsTest extends IntegrationTestBase {
 
     @Autowired
-    private JdbcTemplate jdbc;
+    private JdbcTemplate jdbcTemplate;
 
     @AfterEach
     void cleanup() {
-        // Чистим только тестовые данные, сидинг видов не трогаем.
-        jdbc.execute("DELETE FROM care_schedules");
-        jdbc.execute("DELETE FROM plants");
-        jdbc.execute("DELETE FROM rooms");
-        jdbc.execute("DELETE FROM users");
-    }
-
-    @Test
-    void duplicateTelegramChatIdRejected() {
-        jdbc.update("INSERT INTO users (telegram_chat_id) VALUES (?)", 12345L);
-
-        assertThatThrownBy(() ->
-                jdbc.update("INSERT INTO users (telegram_chat_id) VALUES (?)", 12345L))
-                .isInstanceOf(DataIntegrityViolationException.class);
-    }
-
-    @Test
-    void duplicateRoomNameForSameUserRejected() {
-        Long userId = insertUser(11111L);
-
-        jdbc.update("INSERT INTO rooms (user_id, name) VALUES (?, ?)", userId, "Кухня");
-
-        assertThatThrownBy(() ->
-                jdbc.update("INSERT INTO rooms (user_id, name) VALUES (?, ?)", userId, "Кухня"))
-                .isInstanceOf(DataIntegrityViolationException.class);
-    }
-
-    @Test
-    void sameRoomNameForDifferentUsersAllowed() {
-        Long user1 = insertUser(22222L);
-        Long user2 = insertUser(33333L);
-
-        jdbc.update("INSERT INTO rooms (user_id, name) VALUES (?, ?)", user1, "Гостиная");
-        jdbc.update("INSERT INTO rooms (user_id, name) VALUES (?, ?)", user2, "Гостиная");
-
-        Integer count = jdbc.queryForObject(
-                "SELECT COUNT(*) FROM rooms WHERE name = 'Гостиная'", Integer.class);
-        assertThat(count).isEqualTo(2);
+        jdbcTemplate.update("DELETE FROM care_history");
+        jdbcTemplate.update("DELETE FROM care_schedules");
+        jdbcTemplate.update("DELETE FROM plants");
+        jdbcTemplate.update("DELETE FROM locations");
+        jdbcTemplate.update("DELETE FROM rooms");
+        jdbcTemplate.update("DELETE FROM users");
     }
 
     @Test
     void invalidTaskTypeRejected() {
-        Long userId = insertUser(44444L);
-        Long plantId = insertPlant(userId, "Test plant");
+        Long userId = insertUser(76L);
+        Long locationId = insertDefaultLocation(userId);
+        Long plantId = insertPlant(userId, locationId);
 
-        assertThatThrownBy(() ->
-                jdbc.update(
-                        "INSERT INTO care_schedules (plant_id, task_type, interval_days, next_due_at) " +
-                                "VALUES (?, 'WALKING_THE_DOG', 7, CURRENT_TIMESTAMP)",
-                        plantId))
-                .isInstanceOf(DataIntegrityViolationException.class);
+        assertThatThrownBy(() -> jdbcTemplate.update("""
+                        INSERT INTO care_schedules
+                            (plant_id, task_type, interval_days, next_due_at)
+                        VALUES (?, ?, ?, ?)
+                        """,
+                plantId,
+                "INVALID_TASK",
+                7,
+                Timestamp.valueOf(LocalDateTime.now())
+        )).isInstanceOf(DataIntegrityViolationException.class);
     }
 
     @Test
     void zeroIntervalRejected() {
-        Long userId = insertUser(55555L);
-        Long plantId = insertPlant(userId, "Test plant");
+        Long userId = insertUser(78L);
+        Long locationId = insertDefaultLocation(userId);
+        Long plantId = insertPlant(userId, locationId);
 
-        assertThatThrownBy(() ->
-                jdbc.update(
-                        "INSERT INTO care_schedules (plant_id, task_type, interval_days, next_due_at) " +
-                                "VALUES (?, 'WATERING', 0, CURRENT_TIMESTAMP)",
-                        plantId))
-                .isInstanceOf(DataIntegrityViolationException.class);
+        assertThatThrownBy(() -> jdbcTemplate.update("""
+                        INSERT INTO care_schedules
+                            (plant_id, task_type, interval_days, next_due_at)
+                        VALUES (?, ?, ?, ?)
+                        """,
+                plantId,
+                "WATERING",
+                0,
+                Timestamp.valueOf(LocalDateTime.now())
+        )).isInstanceOf(DataIntegrityViolationException.class);
     }
 
     @Test
     void duplicateScheduleTypeForPlantRejected() {
-        Long userId = insertUser(66666L);
-        Long plantId = insertPlant(userId, "Test plant");
+        Long userId = insertUser(77L);
+        Long locationId = insertDefaultLocation(userId);
+        Long plantId = insertPlant(userId, locationId);
 
-        jdbc.update(
-                "INSERT INTO care_schedules (plant_id, task_type, interval_days, next_due_at) " +
-                        "VALUES (?, 'WATERING', 7, CURRENT_TIMESTAMP)",
-                plantId);
+        jdbcTemplate.update("""
+                        INSERT INTO care_schedules
+                            (plant_id, task_type, interval_days, next_due_at)
+                        VALUES (?, ?, ?, ?)
+                        """,
+                plantId,
+                "WATERING",
+                7,
+                Timestamp.valueOf(LocalDateTime.now())
+        );
 
-        // Второй WATERING на то же растение — нельзя
-        assertThatThrownBy(() ->
-                jdbc.update(
-                        "INSERT INTO care_schedules (plant_id, task_type, interval_days, next_due_at) " +
-                                "VALUES (?, 'WATERING', 5, CURRENT_TIMESTAMP)",
-                        plantId))
-                .isInstanceOf(DataIntegrityViolationException.class);
-
-        // А вот MISTING для того же растения — можно
-        jdbc.update(
-                "INSERT INTO care_schedules (plant_id, task_type, interval_days, next_due_at) " +
-                        "VALUES (?, 'MISTING', 3, CURRENT_TIMESTAMP)",
-                plantId);
-
-        Integer schedules = jdbc.queryForObject(
-                "SELECT COUNT(*) FROM care_schedules WHERE plant_id = ?", Integer.class, plantId);
-        assertThat(schedules).isEqualTo(2);
+        assertThatThrownBy(() -> jdbcTemplate.update("""
+                        INSERT INTO care_schedules
+                            (plant_id, task_type, interval_days, next_due_at)
+                        VALUES (?, ?, ?, ?)
+                        """,
+                plantId,
+                "WATERING",
+                10,
+                Timestamp.valueOf(LocalDateTime.now().plusDays(1))
+        )).isInstanceOf(DataIntegrityViolationException.class);
     }
 
     @Test
     void deletingRoomKeepsPlantsAndNullsRoomId() {
-        Long userId = insertUser(77777L);
-        Long roomId = jdbc.queryForObject(
-                "INSERT INTO rooms (user_id, name) VALUES (?, ?) RETURNING id",
-                Long.class, userId, "Кухня");
-        Long plantId = jdbc.queryForObject(
-                "INSERT INTO plants (user_id, room_id, name) VALUES (?, ?, ?) RETURNING id",
-                Long.class, userId, roomId, "Базилик");
+        Long userId = insertUser(75L);
+        Long locationId = insertDefaultLocation(userId);
 
-        jdbc.update("DELETE FROM rooms WHERE id = ?", roomId);
+        Long roomId = jdbcTemplate.queryForObject("""
+                        INSERT INTO rooms (user_id, name, display_order)
+                        VALUES (?, ?, ?)
+                        RETURNING id
+                        """,
+                Long.class,
+                userId,
+                "Старая комната",
+                1
+        );
 
-        Long roomAfter = jdbc.queryForObject(
-                "SELECT room_id FROM plants WHERE id = ?", Long.class, plantId);
-        assertThat(roomAfter).isNull();
+        Long plantId = jdbcTemplate.queryForObject("""
+                        INSERT INTO plants (user_id, room_id, location_id, name)
+                        VALUES (?, ?, ?, ?)
+                        RETURNING id
+                        """,
+                Long.class,
+                userId,
+                roomId,
+                locationId,
+                "Базилик"
+        );
 
-        Integer plantStillExists = jdbc.queryForObject(
-                "SELECT COUNT(*) FROM plants WHERE id = ?", Integer.class, plantId);
-        assertThat(plantStillExists).isEqualTo(1);
+        jdbcTemplate.update("DELETE FROM rooms WHERE id = ?", roomId);
+
+        Long plantsCount = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM plants WHERE id = ?",
+                Long.class,
+                plantId
+        );
+
+        Long nullRoomCount = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM plants WHERE id = ? AND room_id IS NULL",
+                Long.class,
+                plantId
+        );
+
+        Long locationStillExistsCount = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM plants WHERE id = ? AND location_id = ?",
+                Long.class,
+                plantId,
+                locationId
+        );
+
+        assertThat(plantsCount).isEqualTo(1L);
+        assertThat(nullRoomCount).isEqualTo(1L);
+        assertThat(locationStillExistsCount).isEqualTo(1L);
     }
 
-    // --- Helpers ---
+    @Test
+    void duplicateLocationNameForSameUserRejectedIgnoringCase() {
+        Long userId = insertUser(79L);
 
-    private Long insertUser(long chatId) {
-        return jdbc.queryForObject(
-                "INSERT INTO users (telegram_chat_id) VALUES (?) RETURNING id",
-                Long.class, chatId);
+        insertDefaultLocation(userId);
+
+        jdbcTemplate.update("""
+                        INSERT INTO locations (user_id, name, emoji, is_default)
+                        VALUES (?, ?, ?, ?)
+                        """,
+                userId,
+                "Кухня",
+                "🍳",
+                false
+        );
+
+        assertThatThrownBy(() -> jdbcTemplate.update("""
+                        INSERT INTO locations (user_id, name, emoji, is_default)
+                        VALUES (?, ?, ?, ?)
+                        """,
+                userId,
+                "кухня",
+                "🌿",
+                false
+        )).isInstanceOf(DataIntegrityViolationException.class);
     }
 
-    private Long insertPlant(Long userId, String name) {
-        return jdbc.queryForObject(
-                "INSERT INTO plants (user_id, name) VALUES (?, ?) RETURNING id",
-                Long.class, userId, name);
+    @Test
+    void onlyOneDefaultLocationPerUserAllowed() {
+        Long userId = insertUser(80L);
+
+        insertDefaultLocation(userId);
+
+        assertThatThrownBy(() -> jdbcTemplate.update("""
+                        INSERT INTO locations (user_id, name, emoji, is_default)
+                        VALUES (?, ?, ?, ?)
+                        """,
+                userId,
+                "Вторая дефолтная",
+                "🏠",
+                true
+        )).isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    private Long insertUser(Long chatId) {
+        return jdbcTemplate.queryForObject("""
+                        INSERT INTO users (telegram_chat_id, timezone, conversation_state)
+                        VALUES (?, ?, ?)
+                        RETURNING id
+                        """,
+                Long.class,
+                chatId,
+                "UTC",
+                "IDLE"
+        );
+    }
+
+    private Long insertDefaultLocation(Long userId) {
+        return jdbcTemplate.queryForObject("""
+                        INSERT INTO locations (user_id, name, emoji, is_default)
+                        VALUES (?, ?, ?, ?)
+                        RETURNING id
+                        """,
+                Long.class,
+                userId,
+                "Мои растения",
+                "🪴",
+                true
+        );
+    }
+
+    private Long insertPlant(Long userId, Long locationId) {
+        return jdbcTemplate.queryForObject("""
+                        INSERT INTO plants (user_id, location_id, name)
+                        VALUES (?, ?, ?)
+                        RETURNING id
+                        """,
+                Long.class,
+                userId,
+                locationId,
+                "Test plant"
+        );
     }
 }

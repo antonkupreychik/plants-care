@@ -3,6 +3,7 @@ package com.plantcare.bot.service;
 import com.plantcare.bot.domain.CareHistory;
 import com.plantcare.bot.domain.CareSchedule;
 import com.plantcare.bot.domain.Plant;
+import com.plantcare.bot.domain.enums.TaskType;
 import com.plantcare.bot.repository.CareHistoryRepository;
 import com.plantcare.bot.repository.CareScheduleRepository;
 import lombok.RequiredArgsConstructor;
@@ -110,8 +111,10 @@ public class NotificationCallbackService {
 
                 String timeStr = now.format(TIME_FMT);
                 String nextDateStr = schedule.getNextDueAt().format(DATE_FMT);
-                responseText = "✅ Полил " + plantName + " в " + timeStr
-                        + ". Следующий полив — " + nextDateStr;
+                String doneVerb = doneVerb(schedule.getTaskType());
+                String nextLabel = nextLabel(schedule.getTaskType());
+                responseText = "✅ " + doneVerb + " " + plantName + " в " + timeStr
+                        + ". " + nextLabel + " — " + nextDateStr;
                 alertText = "Отмечено!";
                 log.info("Schedule {} marked as done (on_time={}), next due at {}",
                         scheduleId, wasOnTime, schedule.getNextDueAt());
@@ -180,6 +183,28 @@ public class NotificationCallbackService {
      */
     private boolean isOnTime(LocalDateTime scheduledAt, LocalDateTime now) {
         return !now.isAfter(scheduledAt.plusHours(GRACE_PERIOD_HOURS));
+    }
+
+    /**
+     * Глагол для сообщения "✅ {verb} {plant} в HH:mm"
+     */
+    private String doneVerb(TaskType taskType) {
+        return switch (taskType) {
+            case WATERING    -> "Полил";
+            case MISTING     -> "Опрыскал";
+            case FERTILIZING -> "Удобрил";
+        };
+    }
+
+    /**
+     * Метка следующего события для сообщения "Следующий {label} — dd.MM.yyyy"
+     */
+    private String nextLabel(TaskType taskType) {
+        return switch (taskType) {
+            case WATERING    -> "Следующий полив";
+            case MISTING     -> "Следующее опрыскивание";
+            case FERTILIZING -> "Следующее удобрение";
+        };
     }
 
     private void editMessage(TelegramClient client, Long chatId, Integer messageId, String text) {

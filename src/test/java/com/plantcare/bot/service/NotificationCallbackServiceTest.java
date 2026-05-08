@@ -157,7 +157,7 @@ class NotificationCallbackServiceTest {
         }
 
         @Test
-        @DisplayName("Текст: '✅ Полил {name} в HH:mm. Следующий полив — dd.MM.yyyy'")
+        @DisplayName("Текст done-ответа содержит глагол и метку по типу WATERING")
         void shouldEditMessageWithCorrectFormat() throws TelegramApiException {
             when(callbackQuery.getData()).thenReturn("v1:done:1");
             when(careScheduleRepository.findById(1L)).thenReturn(Optional.of(schedule));
@@ -173,6 +173,42 @@ class NotificationCallbackServiceTest {
             assertThat(edit.getText()).startsWith("✅ Полил Монстера в ");
             assertThat(edit.getText()).contains("Следующий полив —");
             assertThat(edit.getReplyMarkup()).isNull();
+        }
+
+        @Test
+        @DisplayName("Текст done-ответа содержит правильный глагол для MISTING")
+        void shouldEditMessageWithMistingText() throws TelegramApiException {
+            schedule.setTaskType(TaskType.MISTING);
+            when(callbackQuery.getData()).thenReturn("v1:done:1");
+            when(careScheduleRepository.findById(1L)).thenReturn(Optional.of(schedule));
+            when(careHistoryRepository.findFirstByPlantIdAndTaskTypeOrderByDoneAtDesc(any(), any()))
+                    .thenReturn(Optional.empty());
+
+            service.handleCallback(callbackQuery, telegramClient);
+
+            ArgumentCaptor<EditMessageText> captor = ArgumentCaptor.forClass(EditMessageText.class);
+            verify(telegramClient).execute(captor.capture());
+
+            assertThat(captor.getValue().getText()).startsWith("✅ Опрыскал Монстера в ");
+            assertThat(captor.getValue().getText()).contains("Следующее опрыскивание —");
+        }
+
+        @Test
+        @DisplayName("Текст done-ответа содержит правильный глагол для FERTILIZING")
+        void shouldEditMessageWithFertilizingText() throws TelegramApiException {
+            schedule.setTaskType(TaskType.FERTILIZING);
+            when(callbackQuery.getData()).thenReturn("v1:done:1");
+            when(careScheduleRepository.findById(1L)).thenReturn(Optional.of(schedule));
+            when(careHistoryRepository.findFirstByPlantIdAndTaskTypeOrderByDoneAtDesc(any(), any()))
+                    .thenReturn(Optional.empty());
+
+            service.handleCallback(callbackQuery, telegramClient);
+
+            ArgumentCaptor<EditMessageText> captor = ArgumentCaptor.forClass(EditMessageText.class);
+            verify(telegramClient).execute(captor.capture());
+
+            assertThat(captor.getValue().getText()).startsWith("✅ Удобрил Монстера в ");
+            assertThat(captor.getValue().getText()).contains("Следующее удобрение —");
         }
     }
 

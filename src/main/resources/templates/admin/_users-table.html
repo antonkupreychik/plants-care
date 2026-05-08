@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="ru">
+<body>
+<div th:fragment="tableFragment">
+
+    <!-- Filters tabs + search -->
+    <div class="flex flex-col md:flex-row gap-2 mb-4">
+        <div role="tablist" class="tabs tabs-boxed">
+            <button type="button" role="tab" class="tab"
+                    th:classappend="${page.activeFilter == 'all'} ? 'tab-active' : ''"
+                    th:attr="hx-get=@{/admin/users/_fragment(filter='all', search=${page.search})}"
+                    hx-target="#users-table-wrap">Все</button>
+            <button type="button" role="tab" class="tab"
+                    th:classappend="${page.activeFilter == 'active'} ? 'tab-active' : ''"
+                    th:attr="hx-get=@{/admin/users/_fragment(filter='active', search=${page.search})}"
+                    hx-target="#users-table-wrap">Активные</button>
+            <button type="button" role="tab" class="tab"
+                    th:classappend="${page.activeFilter == 'blocked'} ? 'tab-active' : ''"
+                    th:attr="hx-get=@{/admin/users/_fragment(filter='blocked', search=${page.search})}"
+                    hx-target="#users-table-wrap">Заблокированные</button>
+            <button type="button" role="tab" class="tab"
+                    th:classappend="${page.activeFilter == 'paused'} ? 'tab-active' : ''"
+                    th:attr="hx-get=@{/admin/users/_fragment(filter='paused', search=${page.search})}"
+                    hx-target="#users-table-wrap">В отпуске</button>
+            <button type="button" role="tab" class="tab"
+                    th:classappend="${page.activeFilter == 'stuck'} ? 'tab-active' : ''"
+                    th:attr="hx-get=@{/admin/users/_fragment(filter='stuck', search=${page.search})}"
+                    hx-target="#users-table-wrap">Застрявшие</button>
+        </div>
+
+        <input id="user-search" name="search" type="text"
+               placeholder="Поиск по chat_id или username..."
+               class="input input-bordered input-sm flex-1"
+               th:value="${page.search}"
+               th:attr="hx-get=@{/admin/users/_fragment(filter=${page.activeFilter})}"
+               hx-trigger="input changed delay:300ms, search"
+               hx-target="#users-table-wrap"/>
+    </div>
+
+    <!-- Table -->
+    <div class="card bg-base-100 shadow overflow-x-auto">
+        <table class="table table-sm">
+            <thead>
+            <tr>
+                <th><a class="hover:underline cursor-pointer"
+                       th:href="@{/admin/users(filter=${page.activeFilter}, search=${page.search}, sort='chat_id', direction=${page.sort == 'chat_id' ? page.oppositeDirection() : 'asc'})}">chat_id</a></th>
+                <th><a class="hover:underline cursor-pointer"
+                       th:href="@{/admin/users(filter=${page.activeFilter}, search=${page.search}, sort='username', direction=${page.sort == 'username' ? page.oppositeDirection() : 'asc'})}">username</a></th>
+                <th><a class="hover:underline cursor-pointer"
+                       th:href="@{/admin/users(filter=${page.activeFilter}, search=${page.search}, sort='timezone', direction=${page.sort == 'timezone' ? page.oppositeDirection() : 'asc'})}">timezone</a></th>
+                <th><a class="hover:underline cursor-pointer"
+                       th:href="@{/admin/users(filter=${page.activeFilter}, search=${page.search}, sort='plants_count', direction=${page.sort == 'plants_count' ? page.oppositeDirection() : 'desc'})}">растений</a></th>
+                <th><a class="hover:underline cursor-pointer"
+                       th:href="@{/admin/users(filter=${page.activeFilter}, search=${page.search}, sort='last_action', direction=${page.sort == 'last_action' ? page.oppositeDirection() : 'desc'})}">последнее</a></th>
+                <th>статус</th>
+            </tr>
+            </thead>
+            <tbody>
+            <tr th:if="${#lists.isEmpty(page.items)}">
+                <td colspan="6" class="text-center text-base-content/60 py-6">
+                    Нет юзеров, удовлетворяющих критерию
+                </td>
+            </tr>
+            <tr th:each="u : ${page.items}"
+                class="hover cursor-pointer"
+                th:onclick="|location.href='/admin/users/${u.id}'|">
+                <td th:text="${u.telegramChatId}">0</td>
+                <td th:text="${u.username != null} ? '@' + ${u.username} : '—'">—</td>
+                <td th:text="${u.timezone}">UTC</td>
+                <td th:text="${u.plantsCount}">0</td>
+                <td class="text-xs"
+                    th:text="${u.lastActionAt != null} ? ${#temporals.format(u.lastActionAt, 'dd.MM HH:mm')} : '—'">—</td>
+                <td>
+                    <span th:if="${u.blocked}" class="badge badge-error badge-sm">blocked</span>
+                    <span th:if="${u.paused}" class="badge badge-warning badge-sm">paused</span>
+                    <span th:if="${u.stuck}" class="badge badge-info badge-sm" th:title="${u.conversationState}">stuck</span>
+                    <span th:if="${!u.blocked and !u.paused and !u.stuck}"
+                          class="badge badge-success badge-sm">active</span>
+                </td>
+            </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Pagination -->
+    <div class="flex items-center justify-between mt-4 text-sm" th:if="${page.totalPages > 1}">
+        <div class="text-base-content/60">
+            Стр <span th:text="${page.currentPage}">1</span> из <span th:text="${page.totalPages}">1</span>
+            <span class="ml-2">(<span th:text="${page.totalItems}">0</span> юзеров)</span>
+        </div>
+        <div class="join">
+            <a class="join-item btn btn-sm"
+               th:classappend="${not page.hasPrev()} ? 'btn-disabled' : ''"
+               th:href="@{/admin/users(filter=${page.activeFilter}, search=${page.search}, sort=${page.sort}, direction=${page.direction}, page=${page.prevPage})}">«</a>
+            <button type="button" class="join-item btn btn-sm" th:text="${page.currentPage}">1</button>
+            <a class="join-item btn btn-sm"
+               th:classappend="${not page.hasNext()} ? 'btn-disabled' : ''"
+               th:href="@{/admin/users(filter=${page.activeFilter}, search=${page.search}, sort=${page.sort}, direction=${page.direction}, page=${page.nextPage})}">»</a>
+        </div>
+    </div>
+</div>
+</body>
+</html>

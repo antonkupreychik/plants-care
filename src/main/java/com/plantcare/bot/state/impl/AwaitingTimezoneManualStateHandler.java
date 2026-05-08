@@ -7,6 +7,7 @@ import com.plantcare.bot.state.interfaces.StateHandler;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+import org.telegram.telegrambots.meta.api.methods.AnswerCallbackQuery;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
 import org.telegram.telegrambots.meta.api.objects.Update;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.ReplyKeyboardRemove;
@@ -17,6 +18,9 @@ import org.telegram.telegrambots.meta.generics.TelegramClient;
 @Component
 @RequiredArgsConstructor
 public class AwaitingTimezoneManualStateHandler implements StateHandler {
+
+    private static final String SET_TZ_PREFIX = "SET_TZ:";
+
     private final UserService userService;
 
     @Override
@@ -27,31 +31,48 @@ public class AwaitingTimezoneManualStateHandler implements StateHandler {
     @Override
     public void handle(User user, Update update, TelegramClient client) {
         if (update.hasCallbackQuery()) {
-            String callbackData = update.getCallbackQuery().getData();
+            handleCallback(user, update, client);
+            return;
+        }
 
-            if (callbackData.startsWith("SET_TZ:")) {
-                String selectedZone = callbackData.split(":")[1];
-                saveAndFinish(user, selectedZone, client);
-                answerCallback(update.getCallbackQuery().getId(), client);
-            }
-        } else {
-            Long chatId = user.getTelegramChatId();
-            String userText = update.getMessage().getText();
+        if (update.hasMessage() && update.getMessage().hasText()) {
+            handleTextInsteadOfCallback(user, update, client);
+        }
+    }
 
-            log.info("User {} sent text instead of selecting timezone: {}", chatId, userText);
+    private void handleCallback(User user, Update update, TelegramClient client) {
+        String callbackData = update.getCallbackQuery().getData();
 
-            SendMessage reminder = SendMessage.builder()
-                    .chatId(chatId.toString())
-                    .text("Пожалуйста, выбери город из списка выше, нажав на кнопку. \n\n" +
-                            "Если твоего города нет в списке, выбери наиболее подходящий по часовому поясу. " +
-                            "Для отмены нажми /cancel.")
-                    .build();
+        if (callbackData == null || !callbackData.startsWith(SET_TZ_PREFIX)) {
+            answerCallback(update.getCallbackQuery().getId(), client);
+            return;
+        }
 
-            try {
-                client.execute(reminder);
-            } catch (TelegramApiException e) {
-                log.error("Failed to send manual timezone reminder to chatId: {}", chatId, e);
-            }
+        String timezoneId = callbackData.substring(SET_TZ_PREFIX.length());
+
+        saveAndFinish(user, timezoneId, client);
+        answerCallback(update.getCallbackQuery().getId(), client);
+    }
+
+    private void handleTextInsteadOfCallback(User user, Update update, TelegramClient client) {
+        Long chatId = user.getTelegramChatId();
+        String userText = update.getMessage().getText();
+
+        log.info("User {} sent text instead of selecting timezone: {}", chatId, userText);
+
+        SendMessage reminder = SendMessage.builder()
+                .chatId(chatId.toString())
+                .text(
+                        "Пожалуйста, выбери город из списка выше, нажав на кнопку.\n\n" +
+                                "Если твоего города нет в списке, выбери наиболее подходящий по часовому поясу.\n\n" +
+                                "Для отмены нажми /cancel."
+                )
+                .build();
+
+        try {
+            client.execute(reminder);
+        } catch (TelegramApiException e) {
+            log.error("Failed to send manual timezone reminder to chatId: {}", chatId, e);
         }
     }
 
@@ -60,14 +81,16 @@ public class AwaitingTimezoneManualStateHandler implements StateHandler {
 
         log.info("Timezone set to {} for user {}", timezoneId, user.getTelegramChatId());
 
-        userService.updateState(user, ConversationState.AWAITING_PLANT_NAME);
+        userService.updateState(user, ConversationState.IDLE);
 
         SendMessage message = SendMessage.builder()
                 .chatId(user.getTelegramChatId().toString())
-                .text("✅ Часовой пояс установлен: *" + timezoneId + "*.\n\n" +
-                        "Теперь давай добавим твое первое растение. Как оно называется?")
-                .parseMode("Markdown")
-                .replyMarkup(new ReplyKeyboardRemove(true)) // Убираем кнопку локации
+                .text(
+                        "✅ Часовой пояс установлен: " + timezoneId + "\n\n" +
+                                "Теперь я буду напоминать тебе о растениях вовремя 🌱\n\n" +
+                                "Напиши /menu, чтобы открыть главное меню."
+                )
+                .replyMarkup(new ReplyKeyboardRemove(true))
                 .build();
 
         try {
@@ -79,7 +102,7 @@ public class AwaitingTimezoneManualStateHandler implements StateHandler {
 
     private void answerCallback(String callbackQueryId, TelegramClient client) {
         try {
-            client.execute(org.telegram.telegrambots.meta.api.methods.AnswerCallbackQuery.builder()
+            client.execute(AnswerCallbackQuery.builder()
                     .callbackQueryId(callbackQueryId)
                     .build());
         } catch (Exception e) {

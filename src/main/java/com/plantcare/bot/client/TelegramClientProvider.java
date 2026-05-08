@@ -1,4 +1,4 @@
-package com.plantcare.bot.service;
+package com.plantcare.bot.client;
 
 import org.telegram.telegrambots.meta.generics.TelegramClient;
 

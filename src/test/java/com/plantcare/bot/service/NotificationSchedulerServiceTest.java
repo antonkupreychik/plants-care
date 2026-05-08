@@ -1,5 +1,6 @@
 package com.plantcare.bot.service;
 
+import com.plantcare.bot.client.TelegramClientProvider;
 import com.plantcare.bot.domain.CareSchedule;
 import com.plantcare.bot.domain.NotificationLog;
 import com.plantcare.bot.domain.Plant;
@@ -131,7 +132,70 @@ class NotificationSchedulerServiceTest {
         }
 
         @Test
-        @DisplayName("Inline-кнопки содержат done, snooze, skip с правильными callback_data")
+        @DisplayName("Кнопка 'done' содержит правильный глагол по типу задачи")
+        void shouldUseCorrectDoneButtonLabel() throws TelegramApiException {
+            // WATERING → "✅ Полил"
+            when(careScheduleRepository.findDueSchedules(any())).thenReturn(List.of(schedule));
+            when(notificationLogRepository.existsByPlantIdAndTaskTypeAndSentAtAfter(any(), any(), any()))
+                    .thenReturn(false);
+            when(telegramClientProvider.getTelegramClient()).thenReturn(telegramClient);
+
+            service.checkAndSendNotifications();
+
+            ArgumentCaptor<SendMessage> captor = ArgumentCaptor.forClass(SendMessage.class);
+            verify(telegramClient).execute(captor.capture());
+
+            InlineKeyboardMarkup keyboard = (InlineKeyboardMarkup) captor.getValue().getReplyMarkup();
+            List<String> buttonLabels = keyboard.getKeyboard().stream()
+                    .flatMap(Collection::stream)
+                    .map(InlineKeyboardButton::getText)
+                    .toList();
+            assertThat(buttonLabels).contains("✅ Полил");
+        }
+
+        @Test
+        @DisplayName("Кнопка 'done' для MISTING: '✅ Опрыскал'")
+        void shouldUseMistingDoneButtonLabel() throws TelegramApiException {
+            schedule.setTaskType(TaskType.MISTING);
+            when(careScheduleRepository.findDueSchedules(any())).thenReturn(List.of(schedule));
+            when(notificationLogRepository.existsByPlantIdAndTaskTypeAndSentAtAfter(any(), any(), any()))
+                    .thenReturn(false);
+            when(telegramClientProvider.getTelegramClient()).thenReturn(telegramClient);
+
+            service.checkAndSendNotifications();
+
+            ArgumentCaptor<SendMessage> captor = ArgumentCaptor.forClass(SendMessage.class);
+            verify(telegramClient).execute(captor.capture());
+
+            InlineKeyboardMarkup keyboard = (InlineKeyboardMarkup) captor.getValue().getReplyMarkup();
+            List<String> buttonLabels = keyboard.getKeyboard().stream()
+                    .flatMap(Collection::stream)
+                    .map(InlineKeyboardButton::getText)
+                    .toList();
+            assertThat(buttonLabels).contains("✅ Опрыскал");
+        }
+
+        @Test
+        @DisplayName("Кнопка 'done' для FERTILIZING: '✅ Удобрил'")
+        void shouldUseFertilizingDoneButtonLabel() throws TelegramApiException {
+            schedule.setTaskType(TaskType.FERTILIZING);
+            when(careScheduleRepository.findDueSchedules(any())).thenReturn(List.of(schedule));
+            when(notificationLogRepository.existsByPlantIdAndTaskTypeAndSentAtAfter(any(), any(), any()))
+                    .thenReturn(false);
+            when(telegramClientProvider.getTelegramClient()).thenReturn(telegramClient);
+
+            service.checkAndSendNotifications();
+
+            ArgumentCaptor<SendMessage> captor = ArgumentCaptor.forClass(SendMessage.class);
+            verify(telegramClient).execute(captor.capture());
+
+            InlineKeyboardMarkup keyboard = (InlineKeyboardMarkup) captor.getValue().getReplyMarkup();
+            List<String> buttonLabels = keyboard.getKeyboard().stream()
+                    .flatMap(Collection::stream)
+                    .map(InlineKeyboardButton::getText)
+                    .toList();
+            assertThat(buttonLabels).contains("✅ Удобрил");
+        }
         void shouldContainThreeInlineButtons() throws TelegramApiException {
             when(careScheduleRepository.findDueSchedules(any())).thenReturn(List.of(schedule));
             when(notificationLogRepository.existsByPlantIdAndTaskTypeAndSentAtAfter(any(), any(), any()))

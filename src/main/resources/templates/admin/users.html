@@ -1,0 +1,15 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      xmlns:layout="http://www.ultraq.net.nz/thymeleaf/layout"
+      layout:decorate="~{admin/_layout}"
+      lang="ru">
+<head><title>Users</title></head>
+<body>
+<section layout:fragment="content">
+    <h1 class="text-2xl font-bold mb-4">Users</h1>
+    <div id="users-table-wrap">
+        <div th:replace="~{admin/_users-table :: tableFragment}"></div>
+    </div>
+</section>
+</body>
+</html>

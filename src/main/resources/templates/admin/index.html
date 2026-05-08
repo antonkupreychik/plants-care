@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      xmlns:layout="http://www.ultraq.net.nz/thymeleaf/layout"
+      layout:decorate="~{admin/_layout}"
+      lang="ru">
+<head>
+    <title>Dashboard</title>
+</head>
+<body>
+<section layout:fragment="content">
+    <div class="flex items-center justify-between mb-4">
+        <h1 class="text-2xl font-bold">Dashboard</h1>
+        <span class="text-xs text-base-content/60"
+              th:text="'Загружено за ' + ${dashboard.renderTimeMillis} + ' мс'">Loaded</span>
+    </div>
+
+    <!-- Метрики-карточки -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
+        <div class="stats shadow bg-base-100">
+            <div class="stat">
+                <div class="stat-title">Активных юзеров</div>
+                <div class="stat-value text-primary" th:text="${dashboard.activeUsers}">0</div>
+                <div class="stat-desc">не блок, не пауза</div>
+            </div>
+        </div>
+        <div class="stats shadow bg-base-100">
+            <div class="stat">
+                <div class="stat-title">Растений</div>
+                <div class="stat-value" th:text="${dashboard.totalPlants}">0</div>
+                <div class="stat-desc">не архив</div>
+            </div>
+        </div>
+        <div class="stats shadow bg-base-100">
+            <div class="stat">
+                <div class="stat-title">Действий сегодня</div>
+                <div class="stat-value" th:text="${dashboard.careActionsToday}">0</div>
+                <div class="stat-desc">в TZ Europe/Riga</div>
+            </div>
+        </div>
+        <div class="stats shadow bg-base-100">
+            <div class="stat">
+                <div class="stat-title">DAU 24h</div>
+                <div class="stat-value" th:text="${dashboard.dau24h}">0</div>
+                <div class="stat-desc">уникальные юзеры</div>
+            </div>
+        </div>
+        <div class="stats shadow bg-base-100"
+             th:with="h=${dashboard.schedulerHealth}">
+            <div class="stat">
+                <div class="stat-title">Шедулер</div>
+                <div class="stat-value text-2xl"
+                     th:classappend="${h.healthy} ? 'text-success' : (${h.stale} ? 'text-error' : 'text-base-content/50')"
+                     th:text="${h.healthy} ? '✅ ' + ${h.humanAgo()} : (${h.stale} ? '⚠️ ' + ${h.humanAgo()} : '— нет метрики')">—</div>
+                <div class="stat-desc">tick назад</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Stuck users + Recent actions -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <!-- Stuck -->
+        <div class="card bg-base-100 shadow">
+            <div class="card-body">
+                <div class="flex items-center justify-between">
+                    <h2 class="card-title">Застрявшие юзеры</h2>
+                    <a th:href="@{/admin/users(filter='stuck')}" class="link link-primary text-sm">все →</a>
+                </div>
+                <div th:if="${#lists.isEmpty(dashboard.stuckUsers)}"
+                     class="text-base-content/60 text-sm py-4">
+                    Никто не завис — все в IDLE 🎉
+                </div>
+                <div th:unless="${#lists.isEmpty(dashboard.stuckUsers)}" class="overflow-x-auto">
+                    <table class="table table-sm">
+                        <thead>
+                        <tr>
+                            <th>Юзер</th>
+                            <th>State</th>
+                            <th>Завис на</th>
+                        </tr>
+                        </thead>
+                        <tbody>
+                        <tr th:each="u : ${dashboard.stuckUsers}">
+                            <td>
+                                <a th:href="@{|/admin/users/${u.id}|}"
+                                   class="link link-hover"
+                                   th:text="${u.username != null} ? '@' + ${u.username} : ${u.telegramChatId}">user</a>
+                            </td>
+                            <td>
+                                <span class="badge badge-warning badge-sm" th:text="${u.conversationState}">STATE</span>
+                            </td>
+                            <td class="text-xs text-base-content/70"
+                                th:text="${u.hoursSinceUpdate} + ' ч'">0 ч</td>
+                        </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Recent actions -->
+        <div class="card bg-base-100 shadow">
+            <div class="card-body">
+                <h2 class="card-title">Последние действия</h2>
+                <div th:if="${#lists.isEmpty(dashboard.recentActions)}"
+                     class="text-base-content/60 text-sm py-4">
+                    История пустая
+                </div>
+                <div th:unless="${#lists.isEmpty(dashboard.recentActions)}" class="overflow-x-auto">
+                    <table class="table table-sm">
+                        <thead>
+                        <tr>
+                            <th>Когда</th>
+                            <th>Юзер</th>
+                            <th>Растение</th>
+                            <th>Действие</th>
+                        </tr>
+                        </thead>
+                        <tbody>
+                        <tr th:each="a : ${dashboard.recentActions}">
+                            <td class="text-xs text-base-content/70"
+                                th:text="${#temporals.format(a.doneAt, 'dd.MM HH:mm')}">—</td>
+                            <td>
+                                <a th:href="@{|/admin/users/${a.userId}|}"
+                                   class="link link-hover"
+                                   th:text="${a.username != null} ? '@' + ${a.username} : ${a.userId}">user</a>
+                            </td>
+                            <td th:text="${a.plantName}">plant</td>
+                            <td>
+                                <span class="badge badge-sm"
+                                      th:classappend="${a.wasOnTime} ? 'badge-success' : 'badge-warning'"
+                                      th:text="${a.taskType}">TYPE</span>
+                            </td>
+                        </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+</body>
+</html>
