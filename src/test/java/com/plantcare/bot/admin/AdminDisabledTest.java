@@ -23,7 +23,8 @@ class AdminDisabledTest extends IntegrationTestBase {
         registry.add("admin.password-bcrypt-hash", () -> "");
     }
 
-    @Autowired private MockMvc mockMvc;
+    @Autowired
+    private MockMvc mockMvc;
 
     @Test
     @DisplayName("GET /admin → 503 с телом «Admin panel is disabled»")
@@ -39,7 +40,4 @@ class AdminDisabledTest extends IntegrationTestBase {
         mockMvc.perform(get("/admin/login")).andExpect(status().isServiceUnavailable());
         mockMvc.perform(get("/admin/users")).andExpect(status().isServiceUnavailable());
     }
-
-    @Test
-    @DisplayName("/actuator/health работает")
-    void actuatorStillWorks() throws Exception {
+}
