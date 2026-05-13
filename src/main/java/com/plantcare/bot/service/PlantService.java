@@ -613,4 +613,92 @@ public class PlantService {
 
         return new MarkCareDoneResult(false, schedule, history, now);
     }
+
+    // =================================================================
+    // Массовый уход для всей локации (issue #19)
+    // =================================================================
+
+    /**
+     * Результат массовой отметки. Делим обновлённые и пропущенные (deduped) — UI
+     * на их основе решает, что показать: «Готово, обновил для X растений»,
+     * «Уже полито» или «Нечего поливать».
+     *
+     * @param updated      сколько растений реально обновили
+     * @param deduped      сколько пропустили из-за свежей записи (≤ DEDUP_SECONDS назад)
+     * @param locationName имя локации для итогового сообщения
+     */
+    public record BulkCareDoneResult(int updated, int deduped, String locationName) {
+        public int total() {
+            return updated + deduped;
+        }
+    }
+
+    /**
+     * Массовая отметка ухода для всех активных растений в локации одного типа задач.
+     * Используется кнопкой «💧 Полить все растения здесь» в карточке локации.
+     *
+     * Каждое растение обрабатывается индивидуально:
+     *   - проверяется дедуп ({@link #CARE_DEDUP_SECONDS} сек) — если недавно уже было
+     *     «сделано», то для этого растения пропускаем, но другие в локации
+     *     продолжаем обрабатывать (мягкий, а не all-or-none);
+     *   - пишем CareHistory с onTime по тому же 24h grace-правилу;
+     *   - двигаем next_due_at от now на интервал расписания (каждое растение
+     *     получает свой интервал, по полю plant.interval_days).
+     *
+     * Вся операция в одной транзакции — либо все обновления применятся,
+     * либо ни одно (ТЗ #19).
+     *
+     * @param userId     владелец (для ownership-safety в запросе)
+     * @param locationId id комнаты
+     * @param taskType   обычно WATERING, но метод обобщён на любой тип
+     */
+    @Transactional
+    public BulkCareDoneResult markBulkCareDone(Long userId, Long locationId, TaskType taskType) {
+        List<CareSchedule> schedules = careScheduleRepository
+                .findActiveSchedulesInUserLocation(userId, locationId, taskType);
+
+        if (schedules.isEmpty()) {
+            return new BulkCareDoneResult(0, 0, null);
+        }
+
+        // Все растения в выборке гарантированно из одной локации (фильтр в запросе),
+        // поэтому имя локации можно взять у первого.
+        String locationName = schedules.get(0).getPlant().getLocation().getDisplayName();
+
+        LocalDateTime now = LocalDateTime.now();
+        int updated = 0;
+        int deduped = 0;
+
+        for (CareSchedule schedule : schedules) {
+            Plant plant = schedule.getPlant();
+
+            Optional<CareHistory> last = careHistoryRepository
+                    .findFirstByPlantIdAndTaskTypeOrderByDoneAtDesc(plant.getId(), taskType);
+            if (last.isPresent()
+                    && last.get().getDoneAt().plusSeconds(CARE_DEDUP_SECONDS).isAfter(now)) {
+                deduped++;
+                continue;
+            }
+
+            boolean wasOnTime = schedule.getNextDueAt() == null
+                    || !now.isAfter(schedule.getNextDueAt().plusHours(CARE_GRACE_PERIOD_HOURS));
+
+            CareHistory history = CareHistory.builder()
+                    .plant(plant)
+                    .taskType(taskType)
+                    .doneAt(now)
+                    .onTime(wasOnTime)
+                    .build();
+            careHistoryRepository.save(history);
+
+            schedule.rescheduleFrom(now);
+            careScheduleRepository.save(schedule);
+            updated++;
+        }
+
+        log.info("Bulk care done: user={}, location={}, taskType={}, updated={}, deduped={}",
+                userId, locationId, taskType, updated, deduped);
+
+        return new BulkCareDoneResult(updated, deduped, locationName);
+    }
 }

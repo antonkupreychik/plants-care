@@ -3,6 +3,8 @@ package com.plantcare.bot.service;
 import com.plantcare.bot.domain.Location;
 import com.plantcare.bot.domain.Plant;
 import com.plantcare.bot.domain.User;
+import com.plantcare.bot.domain.enums.TaskType;
+import com.plantcare.bot.repository.CareScheduleRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -22,6 +24,7 @@ import java.util.List;
 public class LocationMenuService {
 
     private final LocationService locationService;
+    private final CareScheduleRepository careScheduleRepository;
 
     public void sendLocationsMenu(User user, TelegramClient client) {
         List<Location> locations = locationService.getUserLocations(user.getId());
@@ -82,7 +85,7 @@ public class LocationMenuService {
                 .chatId(user.getTelegramChatId().toString())
                 .text(text.toString())
                 .parseMode("Markdown")
-                .replyMarkup(buildLocationScreenKeyboard(location, plants))
+                .replyMarkup(buildLocationScreenKeyboard(user.getId(), location, plants))
                 .build();
 
         execute(client, message);
@@ -181,7 +184,9 @@ public class LocationMenuService {
                 .build();
     }
 
-    private InlineKeyboardMarkup buildLocationScreenKeyboard(Location location, List<Plant> plants) {
+    private InlineKeyboardMarkup buildLocationScreenKeyboard(
+            Long userId, Location location, List<Plant> plants
+    ) {
         List<InlineKeyboardRow> rows = new ArrayList<>();
 
         for (Plant plant : plants) {
@@ -189,6 +194,19 @@ public class LocationMenuService {
                     InlineKeyboardButton.builder()
                             .text("🌿 " + plant.getName())
                             .callbackData("PLANT:VIEW:" + plant.getId() + ":LOC:" + location.getId())
+                            .build()
+            )));
+        }
+
+        // Массовый полив (issue #19) — показываем только если есть хотя бы одно
+        // активное WATERING-расписание в этой локации. Иначе кнопка вводила бы
+        // в заблуждение («нажал — ничего не произошло»).
+        if (careScheduleRepository.hasActiveSchedulesInUserLocation(
+                userId, location.getId(), TaskType.WATERING)) {
+            rows.add(new InlineKeyboardRow(List.of(
+                    InlineKeyboardButton.builder()
+                            .text("💧 Полить все растения здесь")
+                            .callbackData("v1:bulk_done:" + location.getId())
                             .build()
             )));
         }

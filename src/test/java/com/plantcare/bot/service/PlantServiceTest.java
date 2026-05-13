@@ -1,6 +1,7 @@
 package com.plantcare.bot.service;
 
 import com.plantcare.bot.domain.CareSchedule;
+import com.plantcare.bot.domain.Location;
 import com.plantcare.bot.domain.Plant;
 import com.plantcare.bot.domain.Species;
 import com.plantcare.bot.domain.User;
@@ -32,6 +33,7 @@ class PlantServiceTest extends IntegrationTestBase {
     @Autowired private CareHistoryRepository careHistoryRepository;
     @Autowired private SpeciesRepository speciesRepository;
     @Autowired private UserRepository userRepository;
+    @Autowired private LocationService locationService;
 
     private User testUser;
     private Species monstera;
@@ -607,5 +609,153 @@ class PlantServiceTest extends IntegrationTestBase {
         // может иметь mistingDays — допускаем оба варианта, главное чтобы > 0)
         assertThat(created.getIntervalDays()).isGreaterThan(0).isLessThanOrEqualTo(365);
         assertThat(created.getNextDueAt()).isAfter(LocalDateTime.now().minusMinutes(1));
+    }
+
+    // ==================== markBulkCareDone (issue #19) ====================
+
+    /**
+     * Создать N растений в указанной локации с одинаковым WATERING-расписанием.
+     * nextDueAt ставится в недалёкое будущее — чтобы wasOnTime было true и можно было
+     * наблюдать его в истории.
+     */
+    private List<Plant> bulkSeedPlantsInLocation(Location location, int n, int intervalDays) {
+        LocalDateTime nextDue = LocalDateTime.now().truncatedTo(ChronoUnit.MICROS)
+                .plusDays(intervalDays);
+        List<Plant> created = new java.util.ArrayList<>(n);
+        for (int i = 0; i < n; i++) {
+            created.add(plantService.createPlantWithWateringSchedule(
+                    testUser, monstera.getId(),
+                    "Растение " + (i + 1),
+                    intervalDays,
+                    nextDue,
+                    location.getId()));
+        }
+        return created;
+    }
+
+    @Test
+    @DisplayName("markBulkCareDone: пустая локация — updated=0, deduped=0, locationName=null")
+    void bulkCareDone_emptyLocation_returnsZeros() {
+        Location empty = locationService.createLocation(testUser, "Пустая", "🪴");
+
+        PlantService.BulkCareDoneResult res = plantService.markBulkCareDone(
+                testUser.getId(), empty.getId(), TaskType.WATERING);
+
+        assertThat(res.updated()).isZero();
+        assertThat(res.deduped()).isZero();
+        assertThat(res.total()).isZero();
+        assertThat(res.locationName()).isNull();
+    }
+
+    @Test
+    @DisplayName("markBulkCareDone: 3 растения — все обновляются, история пишется, next_due_at сдвигается")
+    void bulkCareDone_happyPath_updatesAll() {
+        Location living = locationService.createLocation(testUser, "Гостиная", "🛋");
+        List<Plant> plants = bulkSeedPlantsInLocation(living, 3, 7);
+
+        long beforeHistory = careHistoryRepository.count();
+
+        PlantService.BulkCareDoneResult res = plantService.markBulkCareDone(
+                testUser.getId(), living.getId(), TaskType.WATERING);
+
+        assertThat(res.updated()).isEqualTo(3);
+        assertThat(res.deduped()).isZero();
+        assertThat(res.locationName()).contains("Гостиная");
+
+        // По одной записи на каждое растение.
+        assertThat(careHistoryRepository.count() - beforeHistory).isEqualTo(3);
+
+        // next_due_at у каждого расписания должен быть now + interval (≈), а не
+        // старое значение nextDue.
+        for (Plant p : plants) {
+            CareSchedule s = scheduleRepository
+                    .findByPlantIdAndTaskType(p.getId(), TaskType.WATERING).orElseThrow();
+            assertThat(s.getNextDueAt())
+                    .isAfter(LocalDateTime.now().plusDays(6))
+                    .isBefore(LocalDateTime.now().plusDays(8));
+        }
+    }
+
+    @Test
+    @DisplayName("markBulkCareDone: одно растение полито 30 сек назад — оно deduped, остальные updated")
+    void bulkCareDone_partialDedup() {
+        Location living = locationService.createLocation(testUser, "Гостиная", "🛋");
+        List<Plant> plants = bulkSeedPlantsInLocation(living, 3, 7);
+
+        // Эмулируем недавний полив одного из растений (через сервис).
+        plantService.markCareDone(testUser.getId(), plants.get(0).getId(), TaskType.WATERING);
+
+        PlantService.BulkCareDoneResult res = plantService.markBulkCareDone(
+                testUser.getId(), living.getId(), TaskType.WATERING);
+
+        assertThat(res.updated()).isEqualTo(2);
+        assertThat(res.deduped()).isEqualTo(1);
+        assertThat(res.total()).isEqualTo(3);
+    }
+
+    @Test
+    @DisplayName("markBulkCareDone: повторный клик в течение 60 сек — всё deduped, updated=0")
+    void bulkCareDone_doubleClickDedupsAll() {
+        Location living = locationService.createLocation(testUser, "Гостиная", "🛋");
+        bulkSeedPlantsInLocation(living, 3, 7);
+
+        // Первый клик
+        PlantService.BulkCareDoneResult first = plantService.markBulkCareDone(
+                testUser.getId(), living.getId(), TaskType.WATERING);
+        assertThat(first.updated()).isEqualTo(3);
+
+        // Второй сразу же — должны увидеть полный дедуп.
+        PlantService.BulkCareDoneResult second = plantService.markBulkCareDone(
+                testUser.getId(), living.getId(), TaskType.WATERING);
+
+        assertThat(second.updated()).isZero();
+        assertThat(second.deduped()).isEqualTo(3);
+        assertThat(second.total()).isEqualTo(3);
+    }
+
+    @Test
+    @DisplayName("markBulkCareDone: чужая локация — нет данных, нет утечки")
+    void bulkCareDone_otherUsersLocation_returnsEmpty() {
+        Location living = locationService.createLocation(testUser, "Гостиная", "🛋");
+        bulkSeedPlantsInLocation(living, 2, 7);
+
+        // Другой юзер пытается поливать чужую локацию по её id.
+        User otherUser = userRepository.save(User.builder()
+                .telegramChatId(900L)
+                .username("intruder")
+                .build());
+
+        PlantService.BulkCareDoneResult res = plantService.markBulkCareDone(
+                otherUser.getId(), living.getId(), TaskType.WATERING);
+
+        assertThat(res.updated()).isZero();
+        assertThat(res.deduped()).isZero();
+        assertThat(res.locationName()).isNull();
+
+        // И настоящие растения остались с прежним nextDueAt (в будущем, ≈+7 дней).
+        for (Plant p : plantRepository.findAllByUserIdAndLocationIdAndArchivedAtIsNullOrderByNameAsc(
+                testUser.getId(), living.getId())) {
+            CareSchedule s = scheduleRepository
+                    .findByPlantIdAndTaskType(p.getId(), TaskType.WATERING).orElseThrow();
+            assertThat(s.getNextDueAt())
+                    .as("чужая попытка не должна была сдвинуть расписания")
+                    .isAfter(LocalDateTime.now().plusDays(6));
+        }
+    }
+
+    @Test
+    @DisplayName("markBulkCareDone: неактивное расписание не задевается, история не пишется")
+    void bulkCareDone_skipsInactiveSchedules() {
+        Location living = locationService.createLocation(testUser, "Гостиная", "🛋");
+        List<Plant> plants = bulkSeedPlantsInLocation(living, 2, 7);
+
+        // Выключаем у первого WATERING — он должен быть пропущен в bulk.
+        plantService.toggleSchedule(testUser.getId(), plants.get(0).getId(), TaskType.WATERING);
+
+        PlantService.BulkCareDoneResult res = plantService.markBulkCareDone(
+                testUser.getId(), living.getId(), TaskType.WATERING);
+
+        assertThat(res.updated()).isEqualTo(1);   // только второй
+        assertThat(res.deduped()).isZero();
     }
 }

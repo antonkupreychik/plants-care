@@ -268,9 +268,41 @@ class MenuCallbackServiceTest {
     }
 
     @Test
-    @DisplayName("PLANT:PHOTO:<id> делегирует sendPlantPhoto, не трогает карточку")
-    void shouldSendPlantPhoto() {
+    @DisplayName("PLANT:PHOTO:<id> — если фото ушло, карточка дублируется новым сообщением вниз")
+    void shouldRefreshCardAfterPhotoSent() {
         when(callbackQuery.getData()).thenReturn("PLANT:PHOTO:7");
+        when(plantCardService.sendPlantPhoto(testUser, 7L, "cb-1", telegramClient))
+                .thenReturn(true);
+
+        service.handleCallback(callbackQuery, telegramClient, testUser);
+
+        verify(plantCardService).sendPlantPhoto(testUser, 7L, "cb-1", telegramClient);
+        // messageId=null — карточка новым сообщением, не правит старое
+        verify(plantCardService).showPlantCard(
+                testUser, 7L, null, PlantCardService.BACK_TO_LIST, telegramClient);
+    }
+
+    @Test
+    @DisplayName("PLANT:PHOTO:<id>:LOC:<locId> — back-context в комнату сохраняется при повторной карточке")
+    void shouldPreserveLocationBackContextAfterPhoto() {
+        when(callbackQuery.getData()).thenReturn("PLANT:PHOTO:7:LOC:9");
+        when(plantCardService.sendPlantPhoto(testUser, 7L, "cb-1", telegramClient))
+                .thenReturn(true);
+
+        service.handleCallback(callbackQuery, telegramClient, testUser);
+
+        verify(plantCardService).showPlantCard(
+                testUser, 7L, null,
+                PlantCardService.BACK_TO_LOCATION_PREFIX + "9",
+                telegramClient);
+    }
+
+    @Test
+    @DisplayName("PLANT:PHOTO:<id> — если фото не отправилось (не загружено/ошибка), карточку не дублируем")
+    void shouldNotRefreshCardWhenPhotoFails() {
+        when(callbackQuery.getData()).thenReturn("PLANT:PHOTO:7");
+        when(plantCardService.sendPlantPhoto(testUser, 7L, "cb-1", telegramClient))
+                .thenReturn(false);
 
         service.handleCallback(callbackQuery, telegramClient, testUser);
 

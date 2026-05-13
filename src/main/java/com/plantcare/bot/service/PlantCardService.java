@@ -639,20 +639,28 @@ public class PlantCardService {
      * Отправить фото растения отдельным сообщением (по кнопке "📷 Фото").
      * Карточка остаётся прежней, фото просто "выскакивает" под ней.
      * Если фото нет — отвечаем callback'ом без отдельного сообщения.
+     *
+     * @return {@code true}, если фото реально ушло в чат — вызывающий код может
+     *         использовать этот сигнал, чтобы дослать пользователю свежую
+     *         карточку растения после фото (issue: после просмотра фото
+     *         юзеру нужно вернуть меню вниз чата, чтобы продолжить).
+     *         {@code false} — фото не было отправлено (растение не найдено,
+     *         file_id пуст, или Telegram API ошибка). В этом случае дополнительные
+     *         сообщения слать не нужно — alert callback'а уже достаточен.
      */
     @Transactional(readOnly = true)
-    public void sendPlantPhoto(User user, Long plantId, String callbackId, TelegramClient client) {
+    public boolean sendPlantPhoto(User user, Long plantId, String callbackId, TelegramClient client) {
         Plant plant = plantRepository.findByUserIdAndIdAndArchivedAtIsNull(user.getId(), plantId)
                 .orElse(null);
 
         if (plant == null) {
             answerCallback(client, callbackId, "❌ Растение не найдено");
-            return;
+            return false;
         }
 
         if (plant.getPhotoFileId() == null || plant.getPhotoFileId().isBlank()) {
             answerCallback(client, callbackId, "Фото ещё не загружено");
-            return;
+            return false;
         }
 
         SendPhoto photo = SendPhoto.builder()
@@ -664,9 +672,11 @@ public class PlantCardService {
         try {
             client.execute(photo);
             answerCallback(client, callbackId, "");
+            return true;
         } catch (TelegramApiException e) {
             log.error("Failed to send plant photo (plant={}): {}", plant.getId(), e.getMessage());
             answerCallback(client, callbackId, "❌ Не удалось отправить фото");
+            return false;
         }
     }
 
@@ -912,7 +922,7 @@ public class PlantCardService {
         if (plant.getPhotoFileId() != null && !plant.getPhotoFileId().isBlank()) {
             auxRow.add(InlineKeyboardButton.builder()
                     .text("📷 Фото")
-                    .callbackData("PLANT:PHOTO:" + plant.getId())
+                    .callbackData("PLANT:PHOTO:" + plant.getId() + backSuffix(backTarget))
                     .build());
         }
         auxRow.add(InlineKeyboardButton.builder()

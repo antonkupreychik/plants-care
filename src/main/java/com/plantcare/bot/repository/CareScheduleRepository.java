@@ -59,4 +59,45 @@ public interface CareScheduleRepository extends JpaRepository<CareSchedule, Long
         ORDER BY p.name ASC, s.taskType ASC
         """)
     List<CareSchedule> findActiveSchedulesByUserId(@Param("userId") Long userId);
+
+    /**
+     * Все активные расписания указанного типа в комнате юзера (issue #19, bulk care).
+     * JOIN FETCH plant + location, фильтр по user.id обеспечивает ownership-safety:
+     * чужой/несуществующий locationId вернёт пустой список без раскрытия деталей.
+     */
+    @Query("""
+        SELECT s FROM CareSchedule s
+        JOIN FETCH s.plant p
+        JOIN FETCH p.location l
+        WHERE p.user.id = :userId
+          AND p.location.id = :locationId
+          AND p.archivedAt IS NULL
+          AND s.active = true
+          AND s.taskType = :taskType
+        ORDER BY p.name ASC
+        """)
+    List<CareSchedule> findActiveSchedulesInUserLocation(
+            @Param("userId") Long userId,
+            @Param("locationId") Long locationId,
+            @Param("taskType") TaskType taskType
+    );
+
+    /**
+     * Existence-проверка для решения «показывать ли кнопку Полить-все» в карточке локации.
+     * Те же фильтры, что у bulk-метода — гарантируют 1-to-1 соответствие между видимостью
+     * кнопки и тем, что bulk-операция реально что-то сделает.
+     */
+    @Query("""
+        SELECT COUNT(s) > 0 FROM CareSchedule s
+        WHERE s.plant.user.id = :userId
+          AND s.plant.location.id = :locationId
+          AND s.plant.archivedAt IS NULL
+          AND s.active = true
+          AND s.taskType = :taskType
+        """)
+    boolean hasActiveSchedulesInUserLocation(
+            @Param("userId") Long userId,
+            @Param("locationId") Long locationId,
+            @Param("taskType") TaskType taskType
+    );
 }

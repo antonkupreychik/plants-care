@@ -433,17 +433,29 @@ public class MenuCallbackService {
             return;
         }
 
-        // Просмотр фото отдельным сообщением.
+        // Просмотр фото отдельным сообщением. После успешной отправки фото
+        // дублируем карточку растения новым сообщением вниз чата, чтобы юзеру
+        // не пришлось скроллить наверх для следующих действий (отметить уход,
+        // открыть настройки и т.д.).
+        // Формат: PLANT:PHOTO:<id>[:LOC:<locId>]
         if (data.startsWith("PLANT:PHOTO:")) {
+            String[] parts = data.substring("PLANT:PHOTO:".length()).split(":");
             Long plantId;
             try {
-                plantId = Long.parseLong(data.substring("PLANT:PHOTO:".length()));
+                plantId = Long.parseLong(parts[0]);
             } catch (NumberFormatException e) {
                 answerCallback(client, callbackId, "❌ Неверный ID");
                 return;
             }
+            String backTarget = parseBackTarget(parts, 1);
 
-            plantCardService.sendPlantPhoto(user, plantId, callbackId, client);
+            boolean photoSent = plantCardService.sendPlantPhoto(user, plantId, callbackId, client);
+            if (photoSent) {
+                // messageId=null → карточка приходит новым сообщением, а не правит
+                // старое (то самое, по кнопке которого юзер кликнул) — оно так и
+                // останется выше в истории.
+                plantCardService.showPlantCard(user, plantId, null, backTarget, client);
+            }
             return;
         }
 
