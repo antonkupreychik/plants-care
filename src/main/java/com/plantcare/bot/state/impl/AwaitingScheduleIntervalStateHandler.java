@@ -65,7 +65,6 @@ public class AwaitingScheduleIntervalStateHandler implements StateHandler {
 
         Map<String, Object> stateData = user.getStateData();
         Long plantId = EditStateData.plantId(stateData);
-        Integer messageId = EditStateData.messageId(stateData);
         String backTarget = EditStateData.backTarget(stateData);
         TaskType taskType = EditStateData.taskType(stateData);
 
@@ -87,11 +86,14 @@ public class AwaitingScheduleIntervalStateHandler implements StateHandler {
 
         userService.resetToIdle(user);
 
-        // Возвращаемся именно на экран редактирования этого расписания
-        // (не в общие настройки), чтобы юзер видел результат и мог сразу
-        // подвинуть «следующее» если нужно.
+        sendHint(client, user.getTelegramChatId(),
+                "✅ Интервал обновлён: каждые " + days + " дн.");
+
+        // messageId=null: пришлём свежий экран расписания новым сообщением вниз,
+        // чтобы юзер сразу видел результат и мог продолжить (например, сдвинуть
+        // ближайшее или вернуться к настройкам).
         plantCardService.showScheduleEditByType(
-                user, plantId, taskType, messageId, backTarget, client);
+                user, plantId, taskType, null, backTarget, client);
     }
 
     private void sendHint(TelegramClient client, Long chatId, String text) {

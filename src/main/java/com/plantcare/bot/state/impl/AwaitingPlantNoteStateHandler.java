@@ -56,7 +56,6 @@ public class AwaitingPlantNoteStateHandler implements StateHandler {
 
         Map<String, Object> stateData = user.getStateData();
         Long plantId = EditStateData.plantId(stateData);
-        Integer messageId = EditStateData.messageId(stateData);
         String backTarget = EditStateData.backTarget(stateData);
 
         if (plantId == null) {
@@ -76,7 +75,9 @@ public class AwaitingPlantNoteStateHandler implements StateHandler {
         }
 
         userService.resetToIdle(user);
-        plantCardService.showSettingsScreen(user, plantId, messageId, backTarget, client);
+        sendHint(client, user.getTelegramChatId(), "✅ Заметка сохранена");
+        // Свежее меню новым сообщением вниз — чтобы юзер продолжил редактировать.
+        plantCardService.showSettingsScreen(user, plantId, null, backTarget, client);
     }
 
     private void sendHint(TelegramClient client, Long chatId, String text) {

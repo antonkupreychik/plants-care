@@ -64,7 +64,6 @@ public class AwaitingPlantPhotoEditStateHandler implements StateHandler {
 
         Map<String, Object> stateData = user.getStateData();
         Long plantId = EditStateData.plantId(stateData);
-        Integer messageId = EditStateData.messageId(stateData);
         String backTarget = EditStateData.backTarget(stateData);
 
         if (plantId == null) {
@@ -86,7 +85,9 @@ public class AwaitingPlantPhotoEditStateHandler implements StateHandler {
         }
 
         userService.resetToIdle(user);
-        plantCardService.showSettingsScreen(user, plantId, messageId, backTarget, client);
+        sendHint(client, user.getTelegramChatId(), "✅ Фото обновлено");
+        // Свежее меню новым сообщением вниз — чтобы юзер продолжил редактировать.
+        plantCardService.showSettingsScreen(user, plantId, null, backTarget, client);
     }
 
     private int safeSize(Integer size) {

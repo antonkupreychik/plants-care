@@ -68,15 +68,23 @@ class AwaitingPlantRenameStateHandlerTest {
     }
 
     @Test
-    @DisplayName("Валидное имя — переименовывает, сбрасывает state, рендерит настройки")
-    void happyPath_renamesAndReturnsToSettings() {
+    @DisplayName("Валидное имя — переименовывает, шлёт подтверждение в чат, сбрасывает state, рендерит настройки")
+    void happyPath_renamesAndReturnsToSettings() throws TelegramApiException {
         Update update = textUpdate("New Plant Name");
 
         handler.handle(user, update, client);
 
         verify(plantService).renamePlant(7L, 42L, "New Plant Name");
         verify(userService).resetToIdle(user);
-        verify(plantCardService).showSettingsScreen(user, 42L, 100, "LIST", client);
+        // Новый messageId=null → свежее меню приходит новым сообщением вниз чата,
+        // а не редактирует старое (его юзер не видит — оно ушло вверх при скролле).
+        verify(plantCardService).showSettingsScreen(user, 42L, null, "LIST", client);
+
+        // Подтверждение в чат — пользователь видит «✅ Имя обновлено: …» сразу после своего ввода.
+        ArgumentCaptor<SendMessage> cap = ArgumentCaptor.forClass(SendMessage.class);
+        verify(client).execute(cap.capture());
+        assertThat(cap.getValue().getText())
+                .contains("✅").contains("New Plant Name");
     }
 
     @Test

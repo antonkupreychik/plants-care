@@ -60,7 +60,6 @@ public class AwaitingPlantRenameStateHandler implements StateHandler {
 
         Map<String, Object> stateData = user.getStateData();
         Long plantId = EditStateData.plantId(stateData);
-        Integer messageId = EditStateData.messageId(stateData);
         String backTarget = EditStateData.backTarget(stateData);
 
         if (plantId == null) {
@@ -80,7 +79,11 @@ public class AwaitingPlantRenameStateHandler implements StateHandler {
         }
 
         userService.resetToIdle(user);
-        plantCardService.showSettingsScreen(user, plantId, messageId, backTarget, client);
+        sendHint(client, user.getTelegramChatId(), "✅ Имя обновлено: " + newName);
+        // messageId=null → пришлём свежие настройки новым сообщением вниз чата,
+        // чтобы юзер мог сразу продолжить редактировать без скроллинга вверх.
+        // Старое сообщение с настройками останется как есть (немного устаревшим), это ок.
+        plantCardService.showSettingsScreen(user, plantId, null, backTarget, client);
     }
 
     private void sendHint(TelegramClient client, Long chatId, String text) {
