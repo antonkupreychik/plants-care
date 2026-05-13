@@ -60,7 +60,7 @@ public class AwaitingPlantLocationEmojiStateHandler implements StateHandler {
             return;
         }
 
-        if (!EmojiValidator.isValidEmoji(emoji)) {
+        if (EmojiValidator.isValidEmoji(emoji)) {
             sendText(
                     client,
                     user.getTelegramChatId(),

@@ -29,6 +29,7 @@ public class PlantsCareBot implements LongPollingSingleThreadUpdateConsumer, Tel
     private static final String MENU_CALLBACK_PREFIX = "MENU:";
     private static final String LOCATION_CALLBACK_PREFIX = "LOCATION:";
     private static final String PLANT_CALLBACK_PREFIX = "PLANT:";
+    private static final String CALENDAR_CALLBACK_PREFIX = "cal:";
 
     private final TelegramClient telegramClient;
     private final CommandContainer commandContainer;
@@ -87,9 +88,10 @@ public class PlantsCareBot implements LongPollingSingleThreadUpdateConsumer, Tel
                 }
 
                 if (data != null && (
-                        data.startsWith(MENU_CALLBACK_PREFIX)
-                                || data.startsWith(LOCATION_CALLBACK_PREFIX)
-                                || data.startsWith(PLANT_CALLBACK_PREFIX)
+                        data.startsWith(MENU_CALLBACK_PREFIX) ||
+                                data.startsWith(LOCATION_CALLBACK_PREFIX) ||
+                                data.startsWith(PLANT_CALLBACK_PREFIX) ||
+                                data.startsWith(CALENDAR_CALLBACK_PREFIX)
                 )) {
                     String userName = getUserName(update);
                     User user = userService.findOrCreate(chatId, userName);

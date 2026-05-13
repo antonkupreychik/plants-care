@@ -1,12 +1,10 @@
 package com.plantcare.bot.state.impl;
 
-import com.plantcare.bot.domain.CareSchedule;
 import com.plantcare.bot.domain.Plant;
 import com.plantcare.bot.domain.User;
 import com.plantcare.bot.domain.enums.ConversationState;
 import com.plantcare.bot.domain.enums.TaskType;
 import com.plantcare.bot.repository.PlantRepository;
-import com.plantcare.bot.service.MainMenuService;
 import com.plantcare.bot.service.PlantService;
 import com.plantcare.bot.service.UserService;
 import com.plantcare.bot.state.interfaces.StateHandler;
@@ -17,12 +15,14 @@ import org.springframework.transaction.annotation.Transactional;
 import org.telegram.telegrambots.meta.api.methods.AnswerCallbackQuery;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
 import org.telegram.telegrambots.meta.api.objects.Update;
+import org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMarkup;
+import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardButton;
+import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardRow;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 import org.telegram.telegrambots.meta.generics.TelegramClient;
 
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
-import java.util.List;
 import java.util.Map;
 
 @Slf4j
@@ -37,7 +37,6 @@ public class AwaitingPlantFertilizingSetupStateHandler implements StateHandler {
     private final UserService userService;
     private final PlantService plantService;
     private final PlantRepository plantRepository;
-    private final MainMenuService mainMenuService;
 
     @Override
     public ConversationState getSupportedState() {
@@ -109,7 +108,7 @@ public class AwaitingPlantFertilizingSetupStateHandler implements StateHandler {
                 DEFAULT_FERTILIZING_INTERVAL_DAYS
         );
 
-        finishCreation(user, plant, client);
+        proceedToPhotoStep(user, plant, client);
     }
 
     private void handleCustomRequest(User user, TelegramClient client) {
@@ -171,7 +170,7 @@ public class AwaitingPlantFertilizingSetupStateHandler implements StateHandler {
                 intervalDays
         );
 
-        finishCreation(user, plant, client);
+        proceedToPhotoStep(user, plant, client);
     }
 
     private void handleSkip(User user, TelegramClient client) {
@@ -187,14 +186,11 @@ public class AwaitingPlantFertilizingSetupStateHandler implements StateHandler {
                 plant.getId()
         );
 
-        finishCreation(user, plant, client);
+        proceedToPhotoStep(user, plant, client);
     }
 
     private Plant findPlantFromStateData(User user, TelegramClient client) {
         Object plantIdValue = user.getStateData().get(PLANT_ID_KEY);
-
-        log.info("Fertilizing setup stateData={}", user.getStateData());
-        log.info("Fertilizing setup userId={}, chatId={}", user.getId(), user.getTelegramChatId());
 
         if (plantIdValue == null) {
             log.error("plant_id not found in stateData for user {}", user.getTelegramChatId());
@@ -214,7 +210,8 @@ public class AwaitingPlantFertilizingSetupStateHandler implements StateHandler {
             return null;
         }
 
-        Plant plant = plantRepository.findById(plantId).orElse(null);
+        Plant plant = plantRepository.findByUserIdAndIdAndArchivedAtIsNull(user.getId(), plantId)
+                .orElse(null);
 
         if (plant == null) {
             log.error("Plant {} not found during fertilizing setup for user {}", plantId, user.getTelegramChatId());
@@ -222,60 +219,41 @@ public class AwaitingPlantFertilizingSetupStateHandler implements StateHandler {
             userService.resetToIdle(user);
             return null;
         }
-        userService.resetToIdle(user);
+
         return plant;
     }
 
-    private void finishCreation(User user, Plant plant, TelegramClient client) {
-        List<CareSchedule> schedules = plantService.getActiveSchedules(plant.getId());
+    /**
+     * Переход к шагу загрузки фото.
+     * Финализация создания (карточка + reset state + главное меню) выполняется уже в
+     * {@link AwaitingPlantPhotoStateHandler}.
+     */
+    private void proceedToPhotoStep(User user, Plant plant, TelegramClient client) {
+        userService.updateState(user, ConversationState.AWAITING_PLANT_PHOTO);
 
-        StringBuilder text = new StringBuilder();
-
-        text.append("✅ Растение добавлено!\n\n");
-        text.append("🌿 *").append(plant.getName()).append("*\n");
-
-        if (plant.getLocation() != null) {
-            text.append("📍 Комната: ")
-                    .append(plant.getLocation().getDisplayName())
-                    .append("\n");
-        }
-
-        if (!schedules.isEmpty()) {
-            text.append("\n📅 Напоминания:\n");
-
-            for (CareSchedule schedule : schedules) {
-                text.append("• ")
-                        .append(formatTaskType(schedule.getTaskType()))
-                        .append(" каждые ")
-                        .append(schedule.getIntervalDays())
-                        .append(" дн.\n");
-            }
-        }
+        InlineKeyboardMarkup keyboard = InlineKeyboardMarkup.builder()
+                .keyboardRow(new InlineKeyboardRow(
+                        InlineKeyboardButton.builder()
+                                .text("⏭ Пропустить")
+                                .callbackData("PHOTO:SKIP")
+                                .build()
+                ))
+                .build();
 
         SendMessage message = SendMessage.builder()
                 .chatId(user.getTelegramChatId().toString())
-                .text(text.toString())
+                .text("📸 Пришли фото *" + plant.getName() + "* — оно будет показываться "
+                        + "в карточке растения.\n\n"
+                        + "Можно пропустить — добавишь позже из карточки растения.")
                 .parseMode("Markdown")
+                .replyMarkup(keyboard)
                 .build();
 
-        execute(client, message);
-
-        userService.resetToIdle(user);
-        mainMenuService.sendMainMenu(user, client);
-
-        log.info(
-                "Plant creation completed for user {}, plant={}",
-                user.getTelegramChatId(),
-                plant.getId()
-        );
-    }
-
-    private String formatTaskType(TaskType taskType) {
-        return switch (taskType) {
-            case WATERING -> "💧 Полив";
-            case MISTING -> "💨 Опрыскивание";
-            case FERTILIZING -> "🌿 Удобрение";
-        };
+        try {
+            client.execute(message);
+        } catch (TelegramApiException e) {
+            log.error("Failed to send photo upload prompt", e);
+        }
     }
 
     private void sendText(TelegramClient client, Long chatId, String text) {

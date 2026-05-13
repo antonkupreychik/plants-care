@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<body>
+
+<!--
+  Inline-edit ячеек таблицы видов через HTMX.
+
+  Два фрагмента:
+    editableCell  — input/select для редактирования
+    readonlyCell  — обычная ячейка с актуальным значением
+
+  Поток:
+    клик на td (readonly) → GET /cell?field=X        → editableCell
+    Enter / blur / change  → PATCH /admin/species/{id} → readonlyCell
+    Escape                 → GET /cell?field=X&mode=view → readonlyCell
+                             (через onkeydown — функция cancelEditOnEsc
+                              должна быть определена в admin/_layout)
+-->
+
+<!-- ============================================================== editableCell -->
+<td th:fragment="editableCell"
+    th:id="'cell-' + ${field} + '-' + ${species.id}"
+    th:attr="data-cancel-url='/admin/species/' + ${species.id} + '/cell?field=' + ${field} + '&amp;mode=view'">
+
+    <th:block th:switch="${field}">
+
+        <input th:case="'name'"
+               type="text" name="value" autofocus maxlength="100"
+               class="input input-bordered input-sm w-full"
+               th:value="${species.name}"
+               th:attr="hx-patch='/admin/species/' + ${species.id},
+                         hx-vals=|{&quot;field&quot;:&quot;name&quot;}|,
+                         hx-target='#cell-name-' + ${species.id},
+                         hx-swap='outerHTML'"
+               hx-trigger="keyup[key=='Enter'] from:this, blur from:this"
+               onkeydown="cancelEditOnEsc(event)"/>
+
+        <input th:case="'latinName'"
+               type="text" name="value" autofocus maxlength="150"
+               class="input input-bordered input-sm w-full"
+               th:value="${species.latinName}"
+               th:attr="hx-patch='/admin/species/' + ${species.id},
+                         hx-vals=|{&quot;field&quot;:&quot;latinName&quot;}|,
+                         hx-target='#cell-latinName-' + ${species.id},
+                         hx-swap='outerHTML'"
+               hx-trigger="keyup[key=='Enter'] from:this, blur from:this"
+               onkeydown="cancelEditOnEsc(event)"/>
+
+        <input th:case="'wateringDays'"
+               type="number" name="value" autofocus min="1" max="365"
+               class="input input-bordered input-sm w-24"
+               th:value="${species.wateringDays}"
+               th:attr="hx-patch='/admin/species/' + ${species.id},
+                         hx-vals=|{&quot;field&quot;:&quot;wateringDays&quot;}|,
+                         hx-target='#cell-wateringDays-' + ${species.id},
+                         hx-swap='outerHTML'"
+               hx-trigger="keyup[key=='Enter'] from:this, blur from:this"
+               onkeydown="cancelEditOnEsc(event)"/>
+
+        <input th:case="'mistingDays'"
+               type="number" name="value" autofocus min="1" max="365"
+               class="input input-bordered input-sm w-24"
+               th:value="${species.mistingDays}"
+               th:attr="hx-patch='/admin/species/' + ${species.id},
+                         hx-vals=|{&quot;field&quot;:&quot;mistingDays&quot;}|,
+                         hx-target='#cell-mistingDays-' + ${species.id},
+                         hx-swap='outerHTML'"
+               hx-trigger="keyup[key=='Enter'] from:this, blur from:this"
+               onkeydown="cancelEditOnEsc(event)"/>
+
+        <input th:case="'fertilizingDays'"
+               type="number" name="value" autofocus min="1" max="365"
+               class="input input-bordered input-sm w-24"
+               th:value="${species.fertilizingDays}"
+               th:attr="hx-patch='/admin/species/' + ${species.id},
+                         hx-vals=|{&quot;field&quot;:&quot;fertilizingDays&quot;}|,
+                         hx-target='#cell-fertilizingDays-' + ${species.id},
+                         hx-swap='outerHTML'"
+               hx-trigger="keyup[key=='Enter'] from:this, blur from:this"
+               onkeydown="cancelEditOnEsc(event)"/>
+
+        <input th:case="'popularity'"
+               type="number" name="value" autofocus min="0" max="100"
+               class="input input-bordered input-sm w-24"
+               th:value="${species.popularity}"
+               th:attr="hx-patch='/admin/species/' + ${species.id},
+                         hx-vals=|{&quot;field&quot;:&quot;popularity&quot;}|,
+                         hx-target='#cell-popularity-' + ${species.id},
+                         hx-swap='outerHTML'"
+               hx-trigger="keyup[key=='Enter'] from:this, blur from:this"
+               onkeydown="cancelEditOnEsc(event)"/>
+
+        <select th:case="'lightPreference'"
+                name="value" autofocus
+                class="select select-bordered select-sm w-full"
+                th:attr="hx-patch='/admin/species/' + ${species.id},
+                          hx-vals=|{&quot;field&quot;:&quot;lightPreference&quot;}|,
+                          hx-target='#cell-lightPreference-' + ${species.id},
+                          hx-swap='outerHTML'"
+                hx-trigger="change">
+            <option value="">— не указано —</option>
+            <option th:each="lp : ${lightPreferences}"
+                    th:value="${lp.name()}"
+                    th:text="${lightPreferenceLabels.get(lp)}"
+                    th:selected="${species.lightPreference == lp}"></option>
+        </select>
+
+        <select th:case="'careDifficulty'"
+                name="value" autofocus
+                class="select select-bordered select-sm w-full"
+                th:attr="hx-patch='/admin/species/' + ${species.id},
+                          hx-vals=|{&quot;field&quot;:&quot;careDifficulty&quot;}|,
+                          hx-target='#cell-careDifficulty-' + ${species.id},
+                          hx-swap='outerHTML'"
+                hx-trigger="change">
+            <option value="">— не указано —</option>
+            <option th:each="cd : ${careDifficulties}"
+                    th:value="${cd.name()}"
+                    th:text="${careDifficultyLabels.get(cd)}"
+                    th:selected="${species.careDifficulty == cd}"></option>
+        </select>
+
+    </th:block>
+</td>
+
+
+<!-- ============================================================== readonlyCell -->
+<td th:fragment="readonlyCell"
+    th:id="'cell-' + ${field} + '-' + ${species.id}"
+    th:attr="hx-get='/admin/species/' + ${species.id} + '/cell?field=' + ${field}"
+    hx-trigger="click" hx-target="this" hx-swap="outerHTML"
+    class="cursor-pointer">
+
+    <th:block th:switch="${field}">
+        <span th:case="'name'"            class="font-medium" th:text="${species.name}"></span>
+        <span th:case="'latinName'"       class="italic text-base-content/70" th:text="${species.latinName}"></span>
+        <span th:case="'wateringDays'"    th:text="${species.wateringDays}"></span>
+        <span th:case="'mistingDays'"     th:text="${species.mistingDays}"></span>
+        <span th:case="'fertilizingDays'" th:text="${species.fertilizingDays}"></span>
+        <span th:case="'popularity'"      th:text="${species.popularity}"></span>
+        <span th:case="'lightPreference'">
+            <span th:switch="${species.lightPreference?.name()}">
+                <span th:case="'SHADE'"   class="badge badge-ghost badge-sm">Тень</span>
+                <span th:case="'PARTIAL'" class="badge badge-ghost badge-sm">Полутень</span>
+                <span th:case="'BRIGHT'"  class="badge badge-warning badge-sm">Яркий</span>
+                <span th:case="'DIRECT'"  class="badge badge-error badge-sm">Прямые лучи</span>
+                <span th:case="*"         class="text-base-content/40">—</span>
+            </span>
+        </span>
+        <span th:case="'careDifficulty'">
+            <span th:switch="${species.careDifficulty?.name()}">
+                <span th:case="'EASY'"   class="badge badge-success badge-sm">Лёгкое</span>
+                <span th:case="'MEDIUM'" class="badge badge-warning badge-sm">Среднее</span>
+                <span th:case="'HARD'"   class="badge badge-error badge-sm">Сложное</span>
+                <span th:case="*"        class="text-base-content/40">—</span>
+            </span>
+        </span>
+    </th:block>
+</td>
+
+</body>
+</html>

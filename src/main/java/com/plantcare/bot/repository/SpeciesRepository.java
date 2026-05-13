@@ -2,6 +2,8 @@ package com.plantcare.bot.repository;
 
 import com.plantcare.bot.domain.Species;
 import org.springframework.data.domain.Limit;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -38,4 +40,21 @@ public interface SpeciesRepository extends JpaRepository<Species, Long> {
         LIMIT :maxResults
         """, nativeQuery = true)
     List<Species> searchByQuery(@Param("query") String query, @Param("maxResults") int maxResults);
+
+
+    /**
+     * Поиск по name, latin_name и search_tags (case-insensitive).
+     */
+    @Query("""
+            SELECT s FROM Species s
+            WHERE LOWER(s.name) LIKE LOWER(CONCAT('%', :q, '%'))
+               OR LOWER(s.latinName) LIKE LOWER(CONCAT('%', :q, '%'))
+               OR LOWER(s.searchTags) LIKE LOWER(CONCAT('%', :q, '%'))
+            """)
+    Page<Species> findBySearch(@Param("q") String query, Pageable pageable);
+
+    /**
+     * Нужен для проверки уникальности имени при create/update.
+     */
+    Optional<Species> findByNameIgnoreCase(String name);
 }

@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      xmlns:layout="http://www.ultraq.net.nz/thymeleaf/layout"
+      layout:decorate="~{admin/_layout}"
+      lang="ru">
+<head>
+    <title>Виды растений — Админ</title>
+</head>
+<body>
+<section layout:fragment="content">
+
+    <!-- Flash -->
+    <div th:if="${flashSuccess}" role="alert" class="alert alert-success mb-4">
+        <span th:text="${flashSuccess}"></span>
+    </div>
+
+    <div class="flex items-center justify-between mb-4">
+        <h1 class="text-2xl font-bold">Виды растений</h1>
+        <a href="/admin/species/new" class="btn btn-primary btn-sm">+ Добавить вид</a>
+    </div>
+
+    <!-- Поиск -->
+    <div class="form-control mb-4">
+        <input type="search" name="q" th:value="${q}"
+               placeholder="Поиск по названию, латыни, тегам…"
+               class="input input-bordered w-full"
+               hx-get="/admin/species"
+               hx-trigger="input changed delay:300ms, search"
+               hx-target="#species-table-wrapper"
+               hx-push-url="true"
+               hx-include="[name='q']"/>
+    </div>
+
+    <!-- Таблица + пагинация (фрагмент для HTMX) -->
+    <div id="species-table-wrapper" th:fragment="tableWrapper">
+
+        <div class="card bg-base-100 shadow">
+            <div class="card-body p-0">
+                <div class="overflow-x-auto">
+                    <table class="table table-sm">
+                        <thead>
+                        <tr>
+                            <th th:each="col : ${ {'name','latinName','wateringDays','mistingDays','fertilizingDays','lightPreference','careDifficulty','popularity'} }">
+                                <a th:href="@{/admin/species(q=${q},sort=${col},dir=${sort == col ? reverseDir : 'asc'})}"
+                                   class="link link-hover flex items-center gap-1">
+                                    <span th:switch="${col}">
+                                        <span th:case="'name'">Название</span>
+                                        <span th:case="'latinName'">Латынь</span>
+                                        <span th:case="'wateringDays'">Полив</span>
+                                        <span th:case="'mistingDays'">Опрыск.</span>
+                                        <span th:case="'fertilizingDays'">Удобр.</span>
+                                        <span th:case="'lightPreference'">Свет</span>
+                                        <span th:case="'careDifficulty'">Сложность</span>
+                                        <span th:case="'popularity'">Популярность</span>
+                                    </span>
+                                    <span th:if="${sort == col}"
+                                          th:text="${dir == 'asc' ? '▲' : '▼'}"
+                                          class="text-xs"></span>
+                                </a>
+                            </th>
+                            <th>Действия</th>
+                        </tr>
+                        </thead>
+                        <tbody>
+                        <tr th:each="sp : ${speciesPage.content}" th:id="'row-' + ${sp.id}" class="hover">
+
+                            <td th:id="'cell-name-' + ${sp.id}"
+                                th:attr="hx-get='/admin/species/' + ${sp.id} + '/cell?field=name'"
+                                hx-trigger="click" hx-target="this" hx-swap="outerHTML"
+                                class="cursor-pointer font-medium"
+                                title="Нажмите для редактирования"
+                                th:text="${sp.name}"></td>
+
+                            <td th:id="'cell-latinName-' + ${sp.id}"
+                                th:attr="hx-get='/admin/species/' + ${sp.id} + '/cell?field=latinName'"
+                                hx-trigger="click" hx-target="this" hx-swap="outerHTML"
+                                class="cursor-pointer italic text-base-content/70"
+                                th:text="${sp.latinName}"></td>
+
+                            <td th:id="'cell-wateringDays-' + ${sp.id}"
+                                th:attr="hx-get='/admin/species/' + ${sp.id} + '/cell?field=wateringDays'"
+                                hx-trigger="click" hx-target="this" hx-swap="outerHTML"
+                                class="cursor-pointer" th:text="${sp.wateringDays}"></td>
+
+                            <td th:id="'cell-mistingDays-' + ${sp.id}"
+                                th:attr="hx-get='/admin/species/' + ${sp.id} + '/cell?field=mistingDays'"
+                                hx-trigger="click" hx-target="this" hx-swap="outerHTML"
+                                class="cursor-pointer" th:text="${sp.mistingDays}"></td>
+
+                            <td th:id="'cell-fertilizingDays-' + ${sp.id}"
+                                th:attr="hx-get='/admin/species/' + ${sp.id} + '/cell?field=fertilizingDays'"
+                                hx-trigger="click" hx-target="this" hx-swap="outerHTML"
+                                class="cursor-pointer" th:text="${sp.fertilizingDays}"></td>
+
+                            <td th:id="'cell-lightPreference-' + ${sp.id}"
+                                th:attr="hx-get='/admin/species/' + ${sp.id} + '/cell?field=lightPreference'"
+                                hx-trigger="click" hx-target="this" hx-swap="outerHTML"
+                                class="cursor-pointer">
+                                <span th:switch="${sp.lightPreference?.name()}">
+                                    <span th:case="'SHADE'"   class="badge badge-ghost badge-sm">Тень</span>
+                                    <span th:case="'PARTIAL'" class="badge badge-ghost badge-sm">Полутень</span>
+                                    <span th:case="'BRIGHT'"  class="badge badge-warning badge-sm">Яркий</span>
+                                    <span th:case="'DIRECT'"  class="badge badge-error badge-sm">Прямые лучи</span>
+                                    <span th:case="*"         class="text-base-content/40">—</span>
+                                </span>
+                            </td>
+
+                            <td th:id="'cell-careDifficulty-' + ${sp.id}"
+                                th:attr="hx-get='/admin/species/' + ${sp.id} + '/cell?field=careDifficulty'"
+                                hx-trigger="click" hx-target="this" hx-swap="outerHTML"
+                                class="cursor-pointer">
+                                <span th:switch="${sp.careDifficulty?.name()}">
+                                    <span th:case="'EASY'"   class="badge badge-success badge-sm">Лёгкое</span>
+                                    <span th:case="'MEDIUM'" class="badge badge-warning badge-sm">Среднее</span>
+                                    <span th:case="'HARD'"   class="badge badge-error badge-sm">Сложное</span>
+                                    <span th:case="*"        class="text-base-content/40">—</span>
+                                </span>
+                            </td>
+
+                            <td th:id="'cell-popularity-' + ${sp.id}"
+                                th:attr="hx-get='/admin/species/' + ${sp.id} + '/cell?field=popularity'"
+                                hx-trigger="click" hx-target="this" hx-swap="outerHTML"
+                                class="cursor-pointer" th:text="${sp.popularity}"></td>
+
+                            <!-- Действия -->
+                            <td class="whitespace-nowrap">
+                                <div class="flex gap-1">
+                                    <a th:href="@{/admin/species/{id}/edit(id=${sp.id})}"
+                                       class="btn btn-ghost btn-xs">Edit</a>
+                                    <button class="btn btn-error btn-xs"
+                                            th:attr="hx-delete='/admin/species/' + ${sp.id},
+                                                     hx-target='#row-' + ${sp.id},
+                                                     hx-swap='outerHTML',
+                                                     hx-confirm=${sp.linkedPlantsCount() > 0}
+                                                         ? |${sp.linkedPlantsCount()} растений используют этот вид. При удалении они станут «без шаблона». Удалить?|
+                                                         : 'Удалить вид «' + ${sp.name()} + '»?'">
+                                        Delete
+                                    </button>
+                                </div>
+                            </td>
+                        </tr>
+                        <tr th:if="${speciesPage.empty}">
+                            <td colspan="9" class="text-center text-base-content/60 py-8">Виды не найдены</td>
+                        </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Пагинация -->
+        <div th:if="${speciesPage.totalPages > 1}" class="flex justify-center mt-4">
+            <div class="join">
+                <a th:href="@{/admin/species(q=${q},page=${speciesPage.number - 1},sort=${sort},dir=${dir})}"
+                   class="join-item btn btn-sm"
+                   th:classappend="${speciesPage.first} ? 'btn-disabled'">«</a>
+                <a th:each="i : ${#numbers.sequence(0, speciesPage.totalPages - 1)}"
+                   th:href="@{/admin/species(q=${q},page=${i},sort=${sort},dir=${dir})}"
+                   class="join-item btn btn-sm"
+                   th:classappend="${i == speciesPage.number} ? 'btn-active'"
+                   th:text="${i + 1}"></a>
+                <a th:href="@{/admin/species(q=${q},page=${speciesPage.number + 1},sort=${sort},dir=${dir})}"
+                   class="join-item btn btn-sm"
+                   th:classappend="${speciesPage.last} ? 'btn-disabled'">»</a>
+            </div>
+        </div>
+
+    </div>
+
+</section>
+</body>
+</html>

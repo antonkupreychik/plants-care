@@ -45,7 +45,7 @@ class BotCommandsRegistrarTest {
                 .toList();
 
         assertThat(commandNames).containsExactlyInAnyOrder(
-                "/start", "/menu", "/add", "/cancel", "/help"
+                "/start", "/menu", "/add", "/cancel", "/help", "/calendar"
         );
     }
 

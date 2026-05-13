@@ -28,6 +28,7 @@ public class BotCommandsRegistrar {
                 new BotCommand("/start", "Начать / перезапустить бота"),
                 new BotCommand("/menu", "Главное меню"),
                 new BotCommand("/add", "Добавить растение"),
+                new BotCommand("/calendar", "Календарь ухода на неделю"),
                 new BotCommand("/cancel", "Отменить текущее действие"),
                 new BotCommand("/help", "Помощь")
         );

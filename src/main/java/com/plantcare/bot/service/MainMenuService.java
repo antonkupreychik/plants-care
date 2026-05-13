@@ -33,6 +33,7 @@ public class MainMenuService {
     private final PlantRepository plantRepository;
     private final CareScheduleRepository careScheduleRepository;
     private final LocationService locationService;
+    private final CareHistoryService careHistoryService;
 
     public void sendMainMenu(User user, TelegramClient client) {
         long plantCount = plantRepository.countByUserIdAndArchivedAtIsNull(user.getId());
@@ -46,9 +47,13 @@ public class MainMenuService {
 
         List<Location> locations = locationService.getUserLocations(user.getId());
 
+        // Стрик показываем только если ≥ MIN_USER_STREAK_TO_SHOW (3) дней —
+        // короткие серии не должны давить на эго в духе "ваш стрик 1 день".
+        int userStreak = careHistoryService.computeUserStreak(user.getId(), user.getTimezone());
+
         SendMessage message = SendMessage.builder()
                 .chatId(user.getTelegramChatId().toString())
-                .text(buildMenuText(plantCount, todaySchedules, locations))
+                .text(buildMenuText(plantCount, todaySchedules, locations, userStreak))
                 .parseMode("Markdown")
                 .replyMarkup(buildMenuKeyboard())
                 .build();
@@ -64,11 +69,18 @@ public class MainMenuService {
     private String buildMenuText(
             long plantCount,
             List<CareSchedule> todaySchedules,
-            List<Location> locations
+            List<Location> locations,
+            int userStreak
     ) {
         StringBuilder sb = new StringBuilder();
 
         sb.append("🏠 *Главное меню*\n\n");
+
+        if (userStreak >= CareHistoryService.MIN_USER_STREAK_TO_SHOW) {
+            sb.append("🔥 Твой стрик: ").append(userStreak).append(" ")
+                    .append(pluralizeDays(userStreak)).append("\n");
+        }
+
         sb.append("🌿 Растений: ").append(plantCount).append("\n\n");
 
         if (todaySchedules.isEmpty()) {
@@ -85,6 +97,17 @@ public class MainMenuService {
 
         appendGroupedTasks(sb, todaySchedules, locations);
         return sb.toString();
+    }
+
+    /**
+     * Русское склонение: 1 день, 2 дня, 5 дней. Достаточно для UI меню.
+     */
+    private String pluralizeDays(int n) {
+        int mod10 = n % 10;
+        int mod100 = n % 100;
+        if (mod10 == 1 && mod100 != 11) return "день";
+        if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return "дня";
+        return "дней";
     }
 
     private void appendFlatTasks(StringBuilder sb, List<CareSchedule> schedules) {
@@ -184,6 +207,10 @@ public class MainMenuService {
                                 .build()
                 )))
                 .keyboardRow(new InlineKeyboardRow(List.of(
+                        InlineKeyboardButton.builder()
+                                .text("📅 Календарь")
+                                .callbackData("MENU:CALENDAR")
+                                .build(),
                         InlineKeyboardButton.builder()
                                 .text("⚙️ Настройки")
                                 .callbackData("MENU:SETTINGS")
