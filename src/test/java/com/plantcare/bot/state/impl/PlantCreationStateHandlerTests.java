@@ -667,8 +667,7 @@ class PlantCreationStateHandlerTests {
                 new AwaitingPlantFertilizingSetupStateHandler(
                         userService,
                         plantService,
-                        plantRepository,
-                        mainMenuService
+                        plantRepository
                 );
 
         Update update = createTextMessageUpdate("abc");
