@@ -10,7 +10,6 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.mock.mockito.MockBean;
-import org.telegram.telegrambots.meta.api.methods.botapimethods.BotApiMethod;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
 import org.telegram.telegrambots.meta.api.objects.Update;
 import org.telegram.telegrambots.meta.api.objects.location.Location;
@@ -18,7 +17,6 @@ import org.telegram.telegrambots.meta.api.objects.message.Message;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 import org.telegram.telegrambots.meta.generics.TelegramClient;
 
-import java.io.Serializable;
 import java.time.ZoneId;
 import java.util.Optional;
 
@@ -26,7 +24,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
-@DisplayName("Тесты основного обработчика таймзоны (локация/выбор)")
+@DisplayName("Тесты основного обработчика таймзоны")
 class AwaitingTimezoneStateHandlerTest extends IntegrationTestBase {
 
     @Autowired
@@ -42,102 +40,94 @@ class AwaitingTimezoneStateHandlerTest extends IntegrationTestBase {
     private TimeZoneEngine timeZoneEngine;
 
     private User testUser;
+
     private final Long chatId = 555L;
 
     @BeforeEach
     void setUp() {
         testUser = userService.findOrCreate(chatId, "location_user");
         userService.updateState(testUser, ConversationState.AWAITING_TIMEZONE);
+        reset(telegramClient, timeZoneEngine);
     }
 
     @Test
-    @DisplayName("Успешное определение таймзоны по локации")
-    void shouldSetTimezoneWhenLocationReceived() throws TelegramApiException {
-        // GIVEN
-        double lat = 56.9496; // Рига
-        double lon = 24.1052;
-        String zoneId = "Europe/Riga";
+    @DisplayName("Успешное определение таймзоны по локации возвращает пользователя в IDLE")
+    void shouldSetTimezoneAndReturnToIdleWhenLocationReceived() throws TelegramApiException {
+        double lat = 53.9006;
+        double lon = 27.5590;
+        String zoneId = "Europe/Minsk";
 
         Update update = mock(Update.class);
         Message message = mock(Message.class);
         Location location = mock(Location.class);
 
         when(update.hasMessage()).thenReturn(true);
-        when(message.hasLocation()).thenReturn(true);
         when(update.getMessage()).thenReturn(message);
+        when(message.hasLocation()).thenReturn(true);
         when(message.getLocation()).thenReturn(location);
         when(location.getLatitude()).thenReturn(lat);
         when(location.getLongitude()).thenReturn(lon);
-
-        // Мокаем TimeShape
         when(timeZoneEngine.query(lat, lon)).thenReturn(Optional.of(ZoneId.of(zoneId)));
 
-        // WHEN
         handler.handle(testUser, update, telegramClient);
 
-        // THEN
-        assertThat(testUser.getTimezone()).isEqualTo(zoneId);
-        assertThat(testUser.getConversationState()).isEqualTo(ConversationState.AWAITING_PLANT_NAME);
-        
-        verify(telegramClient).execute((BotApiMethod<Serializable>) argThat(msg -> {
-            if (msg instanceof SendMessage sm) {
-                return sm.getText().contains("установлен: *Europe/Riga*");
-            }
-            return false;
-        }));
+        User reloadedUser = userService.findByChatId(chatId).orElseThrow();
+
+        assertThat(reloadedUser.getTimezone()).isEqualTo(zoneId);
+        assertThat(reloadedUser.getConversationState()).isEqualTo(ConversationState.IDLE);
+
+        verify(telegramClient).execute(argThat((SendMessage msg) ->
+                msg.getText().contains("Часовой пояс обновлён")
+                        && msg.getText().contains(zoneId)
+                        && msg.getText().contains("/menu")
+        ));
     }
 
     @Test
-    @DisplayName("Переход в ручной режим при нажатии кнопки")
+    @DisplayName("Переход в ручной выбор таймзоны")
     void shouldTransitionToManualModeOnButtonClick() throws TelegramApiException {
-        // GIVEN
         Update update = mock(Update.class);
         Message message = mock(Message.class);
+
         when(update.hasMessage()).thenReturn(true);
         when(update.getMessage()).thenReturn(message);
+        when(message.hasLocation()).thenReturn(false);
+        when(message.hasText()).thenReturn(true);
         when(message.getText()).thenReturn("⌨️ Выбрать вручную");
 
-        // WHEN
         handler.handle(testUser, update, telegramClient);
 
-        // THEN
-        assertThat(testUser.getConversationState()).isEqualTo(ConversationState.AWAITING_TIMEZONE_MANUAL);
-        
-        // Должна быть отправлена инлайн-клавиатура
-        verify(telegramClient).execute((BotApiMethod<Serializable>) argThat(msg -> {
-            if (msg instanceof SendMessage sm) {
-                return sm.getText().contains("Выбери свой город");
-            }
-            return false;
-        }));
+        User reloadedUser = userService.findByChatId(chatId).orElseThrow();
+
+        assertThat(reloadedUser.getConversationState()).isEqualTo(ConversationState.AWAITING_TIMEZONE_MANUAL);
+
+        verify(telegramClient).execute(argThat((SendMessage msg) ->
+                msg.getText().contains("Выбери свой регион")
+                        || msg.getText().contains("Выбери свой город")
+        ));
     }
 
     @Test
-    @DisplayName("Обработка ошибки, когда координаты не найдены")
+    @DisplayName("Если таймзона по координатам не найдена, показывается ручной выбор")
     void shouldSendErrorWhenLocationNotFound() throws TelegramApiException {
-        // GIVEN
         Update update = mock(Update.class);
         Message message = mock(Message.class);
         Location location = mock(Location.class);
 
         when(update.hasMessage()).thenReturn(true);
-        when(message.hasLocation()).thenReturn(true);
         when(update.getMessage()).thenReturn(message);
+        when(message.hasLocation()).thenReturn(true);
         when(message.getLocation()).thenReturn(location);
         when(location.getLatitude()).thenReturn(0.0);
         when(location.getLongitude()).thenReturn(0.0);
-
-        // Таймзона не найдена
         when(timeZoneEngine.query(0.0, 0.0)).thenReturn(Optional.empty());
 
-        // WHEN
         handler.handle(testUser, update, telegramClient);
 
-        // THEN
-        // Состояние не должно измениться на PLANT_NAME, юзер остается в онбординге
-        assertThat(testUser.getConversationState()).isNotEqualTo(ConversationState.AWAITING_PLANT_NAME);
+        User reloadedUser = userService.findByChatId(chatId).orElseThrow();
 
-        // Должна быть ошибка и следом за ней — выбор вручную
+        assertThat(reloadedUser.getConversationState()).isEqualTo(ConversationState.AWAITING_TIMEZONE);
+
         verify(telegramClient, times(2)).execute(any(SendMessage.class));
     }
 }

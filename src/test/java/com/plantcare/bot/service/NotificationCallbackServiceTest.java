@@ -30,6 +30,7 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -39,6 +40,8 @@ class NotificationCallbackServiceTest {
 
     @Mock private CareScheduleRepository careScheduleRepository;
     @Mock private CareHistoryRepository careHistoryRepository;
+    @Mock private PlantService plantService;
+    @Mock private UserService userService;
     @Mock private TelegramClient telegramClient;
     @Mock private CallbackQuery callbackQuery;
     @Mock private Message message;
@@ -473,6 +476,138 @@ class NotificationCallbackServiceTest {
             ArgumentCaptor<AnswerCallbackQuery> captor = ArgumentCaptor.forClass(AnswerCallbackQuery.class);
             verify(telegramClient).execute(captor.capture());
             assertThat(captor.getValue().getText()).contains("❌");
+        }
+    }
+
+    @Nested
+    @DisplayName("Действие: bulk_done (issue #19)")
+    class BulkDoneAction {
+
+        private User user;
+
+        @org.junit.jupiter.api.BeforeEach
+        void seedUser() {
+            user = User.builder().telegramChatId(100L).timezone("UTC").build();
+            // user.id выставляем рефлексией — в production его генерит БД, в моках не нужен,
+            // но handler передаёт его в plantService.markBulkCareDone, поэтому ловим any().
+            when(userService.findByChatId(100L)).thenReturn(Optional.of(user));
+        }
+
+        @Test
+        @DisplayName("3 растения обновились — присылаем итоговое сообщение и алёрт 'Готово!'")
+        void shouldSendResultMessageOnSuccess() throws TelegramApiException {
+            when(callbackQuery.getData()).thenReturn("v1:bulk_done:5");
+            when(plantService.markBulkCareDone(any(), eq(5L), eq(TaskType.WATERING)))
+                    .thenReturn(new PlantService.BulkCareDoneResult(3, 0, "🛋 Гостиная"));
+
+            service.handleCallback(callbackQuery, telegramClient);
+
+            ArgumentCaptor<org.telegram.telegrambots.meta.api.methods.send.SendMessage> sendCap =
+                    ArgumentCaptor.forClass(
+                            org.telegram.telegrambots.meta.api.methods.send.SendMessage.class);
+            verify(telegramClient).execute(sendCap.capture());
+            assertThat(sendCap.getValue().getText())
+                    .contains("Готово")
+                    .contains("3")
+                    .contains("🛋 Гостиная");
+
+            ArgumentCaptor<AnswerCallbackQuery> alertCap = ArgumentCaptor.forClass(AnswerCallbackQuery.class);
+            verify(telegramClient).execute(alertCap.capture());
+            assertThat(alertCap.getValue().getText()).contains("Готово");
+
+            // Карточку локации НЕ редактируем (по ТЗ).
+            verify(telegramClient, never()).execute(any(EditMessageText.class));
+        }
+
+        @Test
+        @DisplayName("Double-click: всё deduped — алёрт 'Уже полито', сообщение не шлётся")
+        void shouldShowAlreadyDoneOnFullDedup() throws TelegramApiException {
+            when(callbackQuery.getData()).thenReturn("v1:bulk_done:5");
+            when(plantService.markBulkCareDone(any(), eq(5L), eq(TaskType.WATERING)))
+                    .thenReturn(new PlantService.BulkCareDoneResult(0, 3, "🛋 Гостиная"));
+
+            service.handleCallback(callbackQuery, telegramClient);
+
+            ArgumentCaptor<AnswerCallbackQuery> cap = ArgumentCaptor.forClass(AnswerCallbackQuery.class);
+            verify(telegramClient).execute(cap.capture());
+            assertThat(cap.getValue().getText()).contains("Уже полито");
+
+            verify(telegramClient, never()).execute(
+                    any(org.telegram.telegrambots.meta.api.methods.send.SendMessage.class));
+        }
+
+        @Test
+        @DisplayName("Пустая локация — алёрт 'нечего поливать'")
+        void shouldShowEmptyLocationAlert() throws TelegramApiException {
+            when(callbackQuery.getData()).thenReturn("v1:bulk_done:5");
+            when(plantService.markBulkCareDone(any(), eq(5L), eq(TaskType.WATERING)))
+                    .thenReturn(new PlantService.BulkCareDoneResult(0, 0, null));
+
+            service.handleCallback(callbackQuery, telegramClient);
+
+            ArgumentCaptor<AnswerCallbackQuery> cap = ArgumentCaptor.forClass(AnswerCallbackQuery.class);
+            verify(telegramClient).execute(cap.capture());
+            assertThat(cap.getValue().getText()).contains("нечего поливать");
+
+            verify(telegramClient, never()).execute(
+                    any(org.telegram.telegrambots.meta.api.methods.send.SendMessage.class));
+        }
+
+        @Test
+        @DisplayName("Битый locationId — алёрт об ошибке, plantService не дёргается")
+        void shouldRejectMalformedLocationId() throws TelegramApiException {
+            when(callbackQuery.getData()).thenReturn("v1:bulk_done:abc");
+
+            service.handleCallback(callbackQuery, telegramClient);
+
+            ArgumentCaptor<AnswerCallbackQuery> cap = ArgumentCaptor.forClass(AnswerCallbackQuery.class);
+            verify(telegramClient).execute(cap.capture());
+            assertThat(cap.getValue().getText()).contains("❌");
+
+            verify(plantService, never()).markBulkCareDone(any(), any(), any());
+        }
+
+        @Test
+        @DisplayName("Неизвестный chatId — алёрт 'Сначала /start', plantService не дёргается")
+        void shouldHandleUnknownUser() throws TelegramApiException {
+            when(callbackQuery.getData()).thenReturn("v1:bulk_done:5");
+            when(userService.findByChatId(100L)).thenReturn(Optional.empty());
+
+            service.handleCallback(callbackQuery, telegramClient);
+
+            ArgumentCaptor<AnswerCallbackQuery> cap = ArgumentCaptor.forClass(AnswerCallbackQuery.class);
+            verify(telegramClient).execute(cap.capture());
+            assertThat(cap.getValue().getText()).contains("/start");
+
+            verify(plantService, never()).markBulkCareDone(any(), any(), any());
+        }
+
+        @Test
+        @DisplayName("Pluralization: 1 → 'растения', 5 → 'растений', 21 → 'растения'")
+        void shouldPluralizeCorrectly() throws TelegramApiException {
+            // 1 → "растения"
+            when(callbackQuery.getData()).thenReturn("v1:bulk_done:5");
+            when(plantService.markBulkCareDone(any(), eq(5L), eq(TaskType.WATERING)))
+                    .thenReturn(new PlantService.BulkCareDoneResult(1, 0, "🛋 Гостиная"));
+            service.handleCallback(callbackQuery, telegramClient);
+
+            // 5 → "растений"
+            when(plantService.markBulkCareDone(any(), eq(5L), eq(TaskType.WATERING)))
+                    .thenReturn(new PlantService.BulkCareDoneResult(5, 0, "🛋 Гостиная"));
+            service.handleCallback(callbackQuery, telegramClient);
+
+            // 21 → "растения"
+            when(plantService.markBulkCareDone(any(), eq(5L), eq(TaskType.WATERING)))
+                    .thenReturn(new PlantService.BulkCareDoneResult(21, 0, "🛋 Гостиная"));
+            service.handleCallback(callbackQuery, telegramClient);
+
+            ArgumentCaptor<org.telegram.telegrambots.meta.api.methods.send.SendMessage> cap =
+                    ArgumentCaptor.forClass(
+                            org.telegram.telegrambots.meta.api.methods.send.SendMessage.class);
+            verify(telegramClient, times(3)).execute(cap.capture());
+            assertThat(cap.getAllValues().get(0).getText()).contains("1 растения");
+            assertThat(cap.getAllValues().get(1).getText()).contains("5 растений");
+            assertThat(cap.getAllValues().get(2).getText()).contains("21 растения");
         }
     }
 }

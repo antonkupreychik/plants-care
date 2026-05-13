@@ -19,8 +19,9 @@ public interface UserRepository extends JpaRepository<User, Long> {
     @Modifying
     @Query(value = """
         INSERT INTO users (telegram_chat_id, username, timezone, conversation_state, is_blocked)
-        VALUES (:chatId, :username, 'UTC', 'IDLE', false)
+        VALUES (:chatId, :username, 'Europe/Minsk', 'IDLE', false)
         ON CONFLICT (telegram_chat_id) DO NOTHING
         """, nativeQuery = true)
     void insertOrIgnore(@Param("chatId") Long chatId, @Param("username") String username);
 }
+

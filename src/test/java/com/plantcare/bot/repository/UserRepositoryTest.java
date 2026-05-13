@@ -33,7 +33,7 @@ class UserRepositoryTest extends IntegrationTestBase {
         Optional<User> loaded = userRepository.findById(saved.getId());
 
         assertThat(loaded).isPresent();
-        assertThat(loaded.get().getTimezone()).isEqualTo("UTC");
+        assertThat(loaded.get().getTimezone()).isEqualTo("Europe/Minsk");
         assertThat(loaded.get().getConversationState()).isEqualTo(ConversationState.IDLE);
         assertThat(loaded.get().isBlocked()).isFalse();
         assertThat(loaded.get().getCreatedAt()).isNotNull();

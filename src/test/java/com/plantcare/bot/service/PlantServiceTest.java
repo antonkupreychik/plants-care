@@ -1,10 +1,12 @@
 package com.plantcare.bot.service;
 
 import com.plantcare.bot.domain.CareSchedule;
+import com.plantcare.bot.domain.Location;
 import com.plantcare.bot.domain.Plant;
 import com.plantcare.bot.domain.Species;
 import com.plantcare.bot.domain.User;
 import com.plantcare.bot.domain.enums.TaskType;
+import com.plantcare.bot.repository.CareHistoryRepository;
 import com.plantcare.bot.repository.CareScheduleRepository;
 import com.plantcare.bot.repository.PlantRepository;
 import com.plantcare.bot.repository.SpeciesRepository;
@@ -28,8 +30,10 @@ class PlantServiceTest extends IntegrationTestBase {
     @Autowired private PlantService plantService;
     @Autowired private PlantRepository plantRepository;
     @Autowired private CareScheduleRepository scheduleRepository;
+    @Autowired private CareHistoryRepository careHistoryRepository;
     @Autowired private SpeciesRepository speciesRepository;
     @Autowired private UserRepository userRepository;
+    @Autowired private LocationService locationService;
 
     private User testUser;
     private Species monstera;
@@ -47,6 +51,7 @@ class PlantServiceTest extends IntegrationTestBase {
 
     @AfterEach
     void cleanup() {
+        careHistoryRepository.deleteAll();
         scheduleRepository.deleteAll();
         plantRepository.deleteAll();
         userRepository.deleteAll();
@@ -355,5 +360,402 @@ class PlantServiceTest extends IntegrationTestBase {
         assertThat(PlantService.isValidInterval(0)).isFalse();
         assertThat(PlantService.isValidInterval(-1)).isFalse();
         assertThat(PlantService.isValidInterval(366)).isFalse();
+    }
+
+    // ==================== markCareDone (issue #26) ====================
+
+    @Test
+    @DisplayName("markCareDone: пишет CareHistory и сдвигает next_due_at от now")
+    void markCareDone_writesHistoryAndReschedules() {
+        LocalDateTime initialDue = LocalDateTime.now().truncatedTo(ChronoUnit.MICROS).plusDays(7);
+        Plant plant = plantService.createPlantWithWateringSchedule(
+                testUser, monstera.getId(), "Монстера", 7, initialDue);
+
+        PlantService.MarkCareDoneResult result = plantService.markCareDone(
+                testUser.getId(), plant.getId(), TaskType.WATERING);
+
+        assertThat(result).isNotNull();
+        assertThat(result.wasDuplicate()).isFalse();
+        assertThat(result.schedule().getNextDueAt()).isAfter(initialDue.minusSeconds(1));
+
+        // CareHistory должен появиться
+        assertThat(careHistoryRepository.findFirstByPlantIdAndTaskTypeOrderByDoneAtDesc(
+                plant.getId(), TaskType.WATERING)).isPresent();
+    }
+
+    @Test
+    @DisplayName("markCareDone: повторное нажатие в течение 60с — дубликат, история не пишется заново")
+    void markCareDone_deduplicatesRapidPresses() {
+        LocalDateTime initialDue = LocalDateTime.now().truncatedTo(ChronoUnit.MICROS).plusDays(7);
+        Plant plant = plantService.createPlantWithWateringSchedule(
+                testUser, monstera.getId(), "Монстера", 7, initialDue);
+
+        plantService.markCareDone(testUser.getId(), plant.getId(), TaskType.WATERING);
+        long historyAfterFirst = careHistoryRepository.count();
+
+        PlantService.MarkCareDoneResult second = plantService.markCareDone(
+                testUser.getId(), plant.getId(), TaskType.WATERING);
+
+        assertThat(second).isNotNull();
+        assertThat(second.wasDuplicate()).isTrue();
+        assertThat(careHistoryRepository.count()).isEqualTo(historyAfterFirst);
+    }
+
+    @Test
+    @DisplayName("markCareDone: без активного расписания этого типа — возвращает null")
+    void markCareDone_returnsNullWhenNoSchedule() {
+        LocalDateTime initialDue = LocalDateTime.now().truncatedTo(ChronoUnit.MICROS).plusDays(7);
+        Plant plant = plantService.createPlantWithWateringSchedule(
+                testUser, monstera.getId(), "Монстера", 7, initialDue);
+
+        // У растения создан только WATERING — MISTING не настроен
+        PlantService.MarkCareDoneResult result = plantService.markCareDone(
+                testUser.getId(), plant.getId(), TaskType.MISTING);
+
+        assertThat(result).isNull();
+        assertThat(careHistoryRepository.count()).isZero();
+    }
+
+    @Test
+    @DisplayName("markCareDone: чужое растение → IllegalArgumentException")
+    void markCareDone_rejectsForeignPlant() {
+        Plant plant = plantService.createPlantWithWateringSchedule(
+                testUser, monstera.getId(), "Монстера", 7,
+                LocalDateTime.now().truncatedTo(ChronoUnit.MICROS).plusDays(7));
+
+        User otherUser = userRepository.save(User.builder()
+                .telegramChatId(900L)
+                .username("other_user")
+                .build());
+
+        try {
+            plantService.markCareDone(otherUser.getId(), plant.getId(), TaskType.WATERING);
+            org.assertj.core.api.Assertions.fail("Should have thrown IllegalArgumentException");
+        } catch (IllegalArgumentException expected) {
+            assertThat(expected.getMessage()).contains("не найдено");
+        }
+    }
+
+    // ==================== edit mode (issue #27) ====================
+
+    private Plant createTestPlant(String name) {
+        LocalDateTime nextDue = LocalDateTime.now().truncatedTo(ChronoUnit.MICROS).plusDays(7);
+        return plantService.createPlantWithWateringSchedule(
+                testUser, monstera.getId(), name, 7, nextDue);
+    }
+
+    @Test
+    @DisplayName("renamePlant: новое имя сохраняется")
+    void renamePlant_savesNewName() {
+        Plant plant = createTestPlant("Original");
+        plantService.renamePlant(testUser.getId(), plant.getId(), "  New name  ");
+
+        Plant reloaded = plantRepository.findById(plant.getId()).orElseThrow();
+        assertThat(reloaded.getName()).isEqualTo("New name");
+    }
+
+    @Test
+    @DisplayName("renamePlant: пустое имя → IllegalArgumentException")
+    void renamePlant_rejectsEmpty() {
+        Plant plant = createTestPlant("X");
+        try {
+            plantService.renamePlant(testUser.getId(), plant.getId(), "  ");
+            org.assertj.core.api.Assertions.fail("Should have thrown");
+        } catch (IllegalArgumentException expected) {
+            // ok
+        }
+    }
+
+    @Test
+    @DisplayName("updateNotes: текст и очистка работают")
+    void updateNotes_setAndClear() {
+        Plant plant = createTestPlant("X");
+
+        plantService.updateNotes(testUser.getId(), plant.getId(), "Поливает соседка пока в отпуске");
+        assertThat(plantRepository.findById(plant.getId()).orElseThrow().getNotes())
+                .isEqualTo("Поливает соседка пока в отпуске");
+
+        plantService.updateNotes(testUser.getId(), plant.getId(), null);
+        assertThat(plantRepository.findById(plant.getId()).orElseThrow().getNotes()).isNull();
+
+        plantService.updateNotes(testUser.getId(), plant.getId(), "   ");
+        assertThat(plantRepository.findById(plant.getId()).orElseThrow().getNotes()).isNull();
+    }
+
+    @Test
+    @DisplayName("updateNotes: слишком длинная заметка → IllegalArgumentException")
+    void updateNotes_rejectsTooLong() {
+        Plant plant = createTestPlant("X");
+        String overLimit = "a".repeat(PlantService.NOTE_MAX_LENGTH + 1);
+        try {
+            plantService.updateNotes(testUser.getId(), plant.getId(), overLimit);
+            org.assertj.core.api.Assertions.fail("Should have thrown");
+        } catch (IllegalArgumentException expected) {
+            // ok
+        }
+    }
+
+    @Test
+    @DisplayName("archivePlant: ставит archived_at, потом не находится как активное")
+    void archivePlant_marksArchived() {
+        Plant plant = createTestPlant("X");
+        plantService.archivePlant(testUser.getId(), plant.getId());
+
+        assertThat(plantRepository.findByUserIdAndIdAndArchivedAtIsNull(
+                testUser.getId(), plant.getId())).isEmpty();
+        assertThat(plantRepository.findById(plant.getId()).orElseThrow().getArchivedAt()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("updateScheduleInterval: меняет interval_days, не трогает next_due_at")
+    void updateScheduleInterval_changesIntervalOnly() {
+        Plant plant = createTestPlant("X");
+        LocalDateTime originalNext = scheduleRepository
+                .findByPlantIdAndTaskType(plant.getId(), TaskType.WATERING)
+                .orElseThrow().getNextDueAt();
+
+        plantService.updateScheduleInterval(
+                testUser.getId(), plant.getId(), TaskType.WATERING, 14);
+
+        CareSchedule s = scheduleRepository
+                .findByPlantIdAndTaskType(plant.getId(), TaskType.WATERING).orElseThrow();
+        assertThat(s.getIntervalDays()).isEqualTo(14);
+        assertThat(s.getNextDueAt()).isEqualTo(originalNext);
+    }
+
+    @Test
+    @DisplayName("updateScheduleInterval: невалидный интервал → IllegalArgumentException")
+    void updateScheduleInterval_rejectsBadInterval() {
+        Plant plant = createTestPlant("X");
+        try {
+            plantService.updateScheduleInterval(
+                    testUser.getId(), plant.getId(), TaskType.WATERING, 0);
+            org.assertj.core.api.Assertions.fail("Should have thrown");
+        } catch (IllegalArgumentException expected) { /* ok */ }
+    }
+
+    @Test
+    @DisplayName("updateScheduleInterval: расписание не настроено → IllegalArgumentException")
+    void updateScheduleInterval_rejectsMissingSchedule() {
+        Plant plant = createTestPlant("X");
+        try {
+            // MISTING не настроен у тестового растения
+            plantService.updateScheduleInterval(
+                    testUser.getId(), plant.getId(), TaskType.MISTING, 5);
+            org.assertj.core.api.Assertions.fail("Should have thrown");
+        } catch (IllegalArgumentException expected) { /* ok */ }
+    }
+
+    @Test
+    @DisplayName("rescheduleSchedule: новое значение next_due_at применяется")
+    void rescheduleSchedule_setsNewDate() {
+        Plant plant = createTestPlant("X");
+        LocalDateTime newNext = LocalDateTime.now().truncatedTo(ChronoUnit.MICROS).plusDays(2);
+
+        plantService.rescheduleSchedule(
+                testUser.getId(), plant.getId(), TaskType.WATERING, newNext);
+
+        CareSchedule s = scheduleRepository
+                .findByPlantIdAndTaskType(plant.getId(), TaskType.WATERING).orElseThrow();
+        assertThat(s.getNextDueAt()).isEqualTo(newNext);
+    }
+
+    @Test
+    @DisplayName("toggleSchedule: выключает активное расписание")
+    void toggleSchedule_disablesActive() {
+        Plant plant = createTestPlant("X");
+
+        CareSchedule s = plantService.toggleSchedule(
+                testUser.getId(), plant.getId(), TaskType.WATERING);
+
+        assertThat(s.isActive()).isFalse();
+        assertThat(scheduleRepository.findByPlantIdAndTaskType(
+                plant.getId(), TaskType.WATERING).orElseThrow().isActive()).isFalse();
+    }
+
+    @Test
+    @DisplayName("toggleSchedule: включает снова и подвигает next_due_at если оно в прошлом")
+    void toggleSchedule_reactivatesAndFixesPastDue() {
+        Plant plant = createTestPlant("X");
+        // Выключаем
+        plantService.toggleSchedule(testUser.getId(), plant.getId(), TaskType.WATERING);
+
+        // Принудительно делаем next_due_at в прошлом и сохраняем
+        CareSchedule s = scheduleRepository
+                .findByPlantIdAndTaskType(plant.getId(), TaskType.WATERING).orElseThrow();
+        s.setNextDueAt(LocalDateTime.now().minusDays(30));
+        scheduleRepository.save(s);
+
+        // Включаем — должен сдвинуть на now + interval
+        CareSchedule reactivated = plantService.toggleSchedule(
+                testUser.getId(), plant.getId(), TaskType.WATERING);
+
+        assertThat(reactivated.isActive()).isTrue();
+        assertThat(reactivated.getNextDueAt()).isAfter(LocalDateTime.now().minusMinutes(1));
+    }
+
+    @Test
+    @DisplayName("toggleSchedule: для несуществующего расписания создаёт новое с дефолтным интервалом")
+    void toggleSchedule_createsFreshScheduleWithDefaults() {
+        Plant plant = createTestPlant("X");
+        // MISTING ещё не существует у этого растения
+
+        CareSchedule created = plantService.toggleSchedule(
+                testUser.getId(), plant.getId(), TaskType.MISTING);
+
+        assertThat(created.isActive()).isTrue();
+        assertThat(created.getTaskType()).isEqualTo(TaskType.MISTING);
+        // Дефолт для misting = 3 дн (если у вида не задано — Monstera в seed-данных
+        // может иметь mistingDays — допускаем оба варианта, главное чтобы > 0)
+        assertThat(created.getIntervalDays()).isGreaterThan(0).isLessThanOrEqualTo(365);
+        assertThat(created.getNextDueAt()).isAfter(LocalDateTime.now().minusMinutes(1));
+    }
+
+    // ==================== markBulkCareDone (issue #19) ====================
+
+    /**
+     * Создать N растений в указанной локации с одинаковым WATERING-расписанием.
+     * nextDueAt ставится в недалёкое будущее — чтобы wasOnTime было true и можно было
+     * наблюдать его в истории.
+     */
+    private List<Plant> bulkSeedPlantsInLocation(Location location, int n, int intervalDays) {
+        LocalDateTime nextDue = LocalDateTime.now().truncatedTo(ChronoUnit.MICROS)
+                .plusDays(intervalDays);
+        List<Plant> created = new java.util.ArrayList<>(n);
+        for (int i = 0; i < n; i++) {
+            created.add(plantService.createPlantWithWateringSchedule(
+                    testUser, monstera.getId(),
+                    "Растение " + (i + 1),
+                    intervalDays,
+                    nextDue,
+                    location.getId()));
+        }
+        return created;
+    }
+
+    @Test
+    @DisplayName("markBulkCareDone: пустая локация — updated=0, deduped=0, locationName=null")
+    void bulkCareDone_emptyLocation_returnsZeros() {
+        Location empty = locationService.createLocation(testUser, "Пустая", "🪴");
+
+        PlantService.BulkCareDoneResult res = plantService.markBulkCareDone(
+                testUser.getId(), empty.getId(), TaskType.WATERING);
+
+        assertThat(res.updated()).isZero();
+        assertThat(res.deduped()).isZero();
+        assertThat(res.total()).isZero();
+        assertThat(res.locationName()).isNull();
+    }
+
+    @Test
+    @DisplayName("markBulkCareDone: 3 растения — все обновляются, история пишется, next_due_at сдвигается")
+    void bulkCareDone_happyPath_updatesAll() {
+        Location living = locationService.createLocation(testUser, "Гостиная", "🛋");
+        List<Plant> plants = bulkSeedPlantsInLocation(living, 3, 7);
+
+        long beforeHistory = careHistoryRepository.count();
+
+        PlantService.BulkCareDoneResult res = plantService.markBulkCareDone(
+                testUser.getId(), living.getId(), TaskType.WATERING);
+
+        assertThat(res.updated()).isEqualTo(3);
+        assertThat(res.deduped()).isZero();
+        assertThat(res.locationName()).contains("Гостиная");
+
+        // По одной записи на каждое растение.
+        assertThat(careHistoryRepository.count() - beforeHistory).isEqualTo(3);
+
+        // next_due_at у каждого расписания должен быть now + interval (≈), а не
+        // старое значение nextDue.
+        for (Plant p : plants) {
+            CareSchedule s = scheduleRepository
+                    .findByPlantIdAndTaskType(p.getId(), TaskType.WATERING).orElseThrow();
+            assertThat(s.getNextDueAt())
+                    .isAfter(LocalDateTime.now().plusDays(6))
+                    .isBefore(LocalDateTime.now().plusDays(8));
+        }
+    }
+
+    @Test
+    @DisplayName("markBulkCareDone: одно растение полито 30 сек назад — оно deduped, остальные updated")
+    void bulkCareDone_partialDedup() {
+        Location living = locationService.createLocation(testUser, "Гостиная", "🛋");
+        List<Plant> plants = bulkSeedPlantsInLocation(living, 3, 7);
+
+        // Эмулируем недавний полив одного из растений (через сервис).
+        plantService.markCareDone(testUser.getId(), plants.get(0).getId(), TaskType.WATERING);
+
+        PlantService.BulkCareDoneResult res = plantService.markBulkCareDone(
+                testUser.getId(), living.getId(), TaskType.WATERING);
+
+        assertThat(res.updated()).isEqualTo(2);
+        assertThat(res.deduped()).isEqualTo(1);
+        assertThat(res.total()).isEqualTo(3);
+    }
+
+    @Test
+    @DisplayName("markBulkCareDone: повторный клик в течение 60 сек — всё deduped, updated=0")
+    void bulkCareDone_doubleClickDedupsAll() {
+        Location living = locationService.createLocation(testUser, "Гостиная", "🛋");
+        bulkSeedPlantsInLocation(living, 3, 7);
+
+        // Первый клик
+        PlantService.BulkCareDoneResult first = plantService.markBulkCareDone(
+                testUser.getId(), living.getId(), TaskType.WATERING);
+        assertThat(first.updated()).isEqualTo(3);
+
+        // Второй сразу же — должны увидеть полный дедуп.
+        PlantService.BulkCareDoneResult second = plantService.markBulkCareDone(
+                testUser.getId(), living.getId(), TaskType.WATERING);
+
+        assertThat(second.updated()).isZero();
+        assertThat(second.deduped()).isEqualTo(3);
+        assertThat(second.total()).isEqualTo(3);
+    }
+
+    @Test
+    @DisplayName("markBulkCareDone: чужая локация — нет данных, нет утечки")
+    void bulkCareDone_otherUsersLocation_returnsEmpty() {
+        Location living = locationService.createLocation(testUser, "Гостиная", "🛋");
+        bulkSeedPlantsInLocation(living, 2, 7);
+
+        // Другой юзер пытается поливать чужую локацию по её id.
+        User otherUser = userRepository.save(User.builder()
+                .telegramChatId(900L)
+                .username("intruder")
+                .build());
+
+        PlantService.BulkCareDoneResult res = plantService.markBulkCareDone(
+                otherUser.getId(), living.getId(), TaskType.WATERING);
+
+        assertThat(res.updated()).isZero();
+        assertThat(res.deduped()).isZero();
+        assertThat(res.locationName()).isNull();
+
+        // И настоящие растения остались с прежним nextDueAt (в будущем, ≈+7 дней).
+        for (Plant p : plantRepository.findAllByUserIdAndLocationIdAndArchivedAtIsNullOrderByNameAsc(
+                testUser.getId(), living.getId())) {
+            CareSchedule s = scheduleRepository
+                    .findByPlantIdAndTaskType(p.getId(), TaskType.WATERING).orElseThrow();
+            assertThat(s.getNextDueAt())
+                    .as("чужая попытка не должна была сдвинуть расписания")
+                    .isAfter(LocalDateTime.now().plusDays(6));
+        }
+    }
+
+    @Test
+    @DisplayName("markBulkCareDone: неактивное расписание не задевается, история не пишется")
+    void bulkCareDone_skipsInactiveSchedules() {
+        Location living = locationService.createLocation(testUser, "Гостиная", "🛋");
+        List<Plant> plants = bulkSeedPlantsInLocation(living, 2, 7);
+
+        // Выключаем у первого WATERING — он должен быть пропущен в bulk.
+        plantService.toggleSchedule(testUser.getId(), plants.get(0).getId(), TaskType.WATERING);
+
+        PlantService.BulkCareDoneResult res = plantService.markBulkCareDone(
+                testUser.getId(), living.getId(), TaskType.WATERING);
+
+        assertThat(res.updated()).isEqualTo(1);   // только второй
+        assertThat(res.deduped()).isZero();
     }
 }

@@ -312,7 +312,7 @@ public class LocationService {
     }
 
     private void validateEmoji(String emoji) {
-        if (!EmojiValidator.isValidEmoji(emoji)) {
+        if (EmojiValidator.isValidEmoji(emoji)) {
             throw new IllegalArgumentException("Emoji должен быть одним emoji-символом");
         }
     }

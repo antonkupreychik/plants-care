@@ -41,6 +41,9 @@ class MainMenuServiceTest {
     private LocationService locationService;
 
     @Mock
+    private CareHistoryService careHistoryService;
+
+    @Mock
     private TelegramClient telegramClient;
 
     private MainMenuService mainMenuService;
@@ -52,8 +55,12 @@ class MainMenuServiceTest {
         mainMenuService = new MainMenuService(
                 plantRepository,
                 careScheduleRepository,
-                locationService
+                locationService,
+                careHistoryService
         );
+
+        // По умолчанию стрик 0 — не появится в шапке меню.
+        lenient().when(careHistoryService.computeUserStreak(any(), any())).thenReturn(0);
 
         testUser = User.builder()
                 .telegramChatId(123L)
@@ -213,5 +220,63 @@ class MainMenuServiceTest {
         mainMenuService.sendMainMenu(testUser, telegramClient);
 
         verify(telegramClient).execute(any(SendMessage.class));
+    }
+
+    @Test
+    @DisplayName("Стрик ≥ 3 дня — показывается в шапке меню")
+    void shouldShowStreakWhenAtLeastThreeDays() throws TelegramApiException {
+        when(plantRepository.countByUserIdAndArchivedAtIsNull(any())).thenReturn(2L);
+        when(careScheduleRepository.findUserSchedulesDueBefore(any(), any())).thenReturn(List.of());
+        when(careHistoryService.computeUserStreak(any(), any())).thenReturn(5);
+
+        mainMenuService.sendMainMenu(testUser, telegramClient);
+
+        ArgumentCaptor<SendMessage> captor = ArgumentCaptor.forClass(SendMessage.class);
+        verify(telegramClient).execute(captor.capture());
+
+        assertThat(captor.getValue().getText())
+                .contains("🔥 Твой стрик: 5 дней");
+    }
+
+    @Test
+    @DisplayName("Стрик < 3 дней — не показывается")
+    void shouldHideStreakWhenBelowThreshold() throws TelegramApiException {
+        when(plantRepository.countByUserIdAndArchivedAtIsNull(any())).thenReturn(2L);
+        when(careScheduleRepository.findUserSchedulesDueBefore(any(), any())).thenReturn(List.of());
+        when(careHistoryService.computeUserStreak(any(), any())).thenReturn(2);
+
+        mainMenuService.sendMainMenu(testUser, telegramClient);
+
+        ArgumentCaptor<SendMessage> captor = ArgumentCaptor.forClass(SendMessage.class);
+        verify(telegramClient).execute(captor.capture());
+
+        assertThat(captor.getValue().getText()).doesNotContain("Твой стрик");
+    }
+
+    @Test
+    @DisplayName("Склонение 'день' для разных значений стрика")
+    void shouldPluralizeDaysCorrectly() throws TelegramApiException {
+        when(plantRepository.countByUserIdAndArchivedAtIsNull(any())).thenReturn(0L);
+        when(careScheduleRepository.findUserSchedulesDueBefore(any(), any())).thenReturn(List.of());
+
+        // 21 → "день"
+        when(careHistoryService.computeUserStreak(any(), any())).thenReturn(21);
+        mainMenuService.sendMainMenu(testUser, telegramClient);
+
+        // 22 → "дня"
+        when(careHistoryService.computeUserStreak(any(), any())).thenReturn(22);
+        mainMenuService.sendMainMenu(testUser, telegramClient);
+
+        // 25 → "дней"
+        when(careHistoryService.computeUserStreak(any(), any())).thenReturn(25);
+        mainMenuService.sendMainMenu(testUser, telegramClient);
+
+        ArgumentCaptor<SendMessage> captor = ArgumentCaptor.forClass(SendMessage.class);
+        verify(telegramClient, times(3)).execute(captor.capture());
+
+        List<SendMessage> sent = captor.getAllValues();
+        assertThat(sent.get(0).getText()).contains("21 день");
+        assertThat(sent.get(1).getText()).contains("22 дня");
+        assertThat(sent.get(2).getText()).contains("25 дней");
     }
 }

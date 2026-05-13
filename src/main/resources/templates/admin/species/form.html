@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      xmlns:layout="http://www.ultraq.net.nz/thymeleaf/layout"
+      layout:decorate="~{admin/_layout}"
+      lang="ru">
+<head>
+    <title th:text="${pageTitle} + ' — Виды'">Вид — Админ</title>
+</head>
+<body>
+<section layout:fragment="content">
+
+    <div class="flex items-center justify-between mb-4">
+        <h1 class="text-2xl font-bold" th:text="${pageTitle}">Вид</h1>
+        <a href="/admin/species" class="btn btn-ghost btn-sm">← К списку</a>
+    </div>
+
+    <div class="card bg-base-100 shadow max-w-3xl">
+        <div class="card-body">
+            <form th:action="${formAction}" th:object="${speciesForm}" method="post" novalidate
+                  class="space-y-4">
+
+                <!-- name -->
+                <div class="form-control">
+                    <label class="label" for="name">
+                        <span class="label-text">Название <span class="text-error">*</span></span>
+                    </label>
+                    <input type="text" id="name" th:field="*{name}"
+                           class="input input-bordered w-full"
+                           th:classappend="${#fields.hasErrors('name')} ? 'input-error'"
+                           placeholder="Монстера делициоза" maxlength="100"/>
+                    <label class="label" th:if="${#fields.hasErrors('name')}">
+                        <span class="label-text-alt text-error" th:errors="*{name}"></span>
+                    </label>
+                </div>
+
+                <!-- latinName -->
+                <div class="form-control">
+                    <label class="label" for="latinName">
+                        <span class="label-text">Латинское название</span>
+                    </label>
+                    <input type="text" id="latinName" th:field="*{latinName}"
+                           class="input input-bordered w-full"
+                           th:classappend="${#fields.hasErrors('latinName')} ? 'input-error'"
+                           placeholder="Monstera deliciosa" maxlength="150"/>
+                    <label class="label" th:if="${#fields.hasErrors('latinName')}">
+                        <span class="label-text-alt text-error" th:errors="*{latinName}"></span>
+                    </label>
+                </div>
+
+                <!-- Числовые поля -->
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div class="form-control">
+                        <label class="label" for="wateringDays">
+                            <span class="label-text">Полив (дней)</span>
+                        </label>
+                        <input type="number" id="wateringDays" th:field="*{wateringDays}"
+                               class="input input-bordered w-full"
+                               th:classappend="${#fields.hasErrors('wateringDays')} ? 'input-error'"
+                               min="1" max="365" placeholder="7"/>
+                        <label class="label" th:if="${#fields.hasErrors('wateringDays')}">
+                            <span class="label-text-alt text-error" th:errors="*{wateringDays}"></span>
+                        </label>
+                    </div>
+                    <div class="form-control">
+                        <label class="label" for="mistingDays">
+                            <span class="label-text">Опрыскивание (дней)</span>
+                        </label>
+                        <input type="number" id="mistingDays" th:field="*{mistingDays}"
+                               class="input input-bordered w-full"
+                               th:classappend="${#fields.hasErrors('mistingDays')} ? 'input-error'"
+                               min="1" max="365" placeholder="3"/>
+                        <label class="label" th:if="${#fields.hasErrors('mistingDays')}">
+                            <span class="label-text-alt text-error" th:errors="*{mistingDays}"></span>
+                        </label>
+                    </div>
+                    <div class="form-control">
+                        <label class="label" for="fertilizingDays">
+                            <span class="label-text">Удобрение (дней)</span>
+                        </label>
+                        <input type="number" id="fertilizingDays" th:field="*{fertilizingDays}"
+                               class="input input-bordered w-full"
+                               th:classappend="${#fields.hasErrors('fertilizingDays')} ? 'input-error'"
+                               min="1" max="365" placeholder="30"/>
+                        <label class="label" th:if="${#fields.hasErrors('fertilizingDays')}">
+                            <span class="label-text-alt text-error" th:errors="*{fertilizingDays}"></span>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Селекты -->
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div class="form-control">
+                        <label class="label" for="lightPreference">
+                            <span class="label-text">Освещение</span>
+                        </label>
+                        <select id="lightPreference" th:field="*{lightPreference}"
+                                class="select select-bordered w-full">
+                            <option value="">— не указано —</option>
+                            <option th:each="lp : ${lightPreferences}"
+                                    th:value="${lp.name()}"
+                                    th:text="${lightPreferenceLabels.get(lp)}"></option>
+                        </select>
+                    </div>
+                    <div class="form-control">
+                        <label class="label" for="careDifficulty">
+                            <span class="label-text">Сложность ухода</span>
+                        </label>
+                        <select id="careDifficulty" th:field="*{careDifficulty}"
+                                class="select select-bordered w-full">
+                            <option value="">— не указано —</option>
+                            <option th:each="cd : ${careDifficulties}"
+                                    th:value="${cd.name()}"
+                                    th:text="${careDifficultyLabels.get(cd)}"></option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- popularity -->
+                <div class="form-control max-w-xs">
+                    <label class="label" for="popularity">
+                        <span class="label-text">Популярность (0–100)</span>
+                    </label>
+                    <input type="number" id="popularity" th:field="*{popularity}"
+                           class="input input-bordered w-full"
+                           th:classappend="${#fields.hasErrors('popularity')} ? 'input-error'"
+                           min="0" max="100"/>
+                    <label class="label" th:if="${#fields.hasErrors('popularity')}">
+                        <span class="label-text-alt text-error" th:errors="*{popularity}"></span>
+                    </label>
+                </div>
+
+                <!-- description -->
+                <div class="form-control">
+                    <label class="label" for="description">
+                        <span class="label-text">Описание</span>
+                    </label>
+                    <textarea id="description" th:field="*{description}"
+                              class="textarea textarea-bordered w-full" rows="4"
+                              placeholder="Краткое описание вида…"></textarea>
+                </div>
+
+                <!-- searchTags -->
+                <div class="form-control">
+                    <label class="label" for="searchTags">
+                        <span class="label-text">Теги поиска</span>
+                    </label>
+                    <input type="text" id="searchTags" th:field="*{searchTags}"
+                           class="input input-bordered w-full"
+                           placeholder="через запятую: монстера, monstera, лиана"/>
+                    <label class="label">
+                        <span class="label-text-alt text-base-content/60">Используются при поиске вида пользователем.</span>
+                    </label>
+                </div>
+
+                <div class="flex gap-2 pt-2">
+                    <button type="submit" class="btn btn-primary">Сохранить</button>
+                    <a href="/admin/species" class="btn btn-ghost">Отмена</a>
+                </div>
+            </form>
+        </div>
+    </div>
+
+</section>
+</body>
+</html>

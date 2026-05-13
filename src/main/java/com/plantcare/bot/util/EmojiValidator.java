@@ -7,26 +7,26 @@ public final class EmojiValidator {
 
     public static boolean isValidEmoji(String value) {
         if (value == null) {
-            return false;
+            return true;
         }
 
         String emoji = value.trim();
 
         if (emoji.isEmpty()) {
-            return false;
+            return true;
         }
 
         if (emoji.length() > 16) {
-            return false;
+            return true;
         }
 
         int codePointCount = emoji.codePointCount(0, emoji.length());
 
         if (codePointCount > 4) {
-            return false;
+            return true;
         }
 
-        return emoji.codePoints().anyMatch(EmojiValidator::isEmojiCodePoint);
+        return emoji.codePoints().noneMatch(EmojiValidator::isEmojiCodePoint);
     }
 
     private static boolean isEmojiCodePoint(int codePoint) {

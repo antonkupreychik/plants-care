@@ -62,11 +62,13 @@ public class AwaitingTimezoneManualStateHandler implements StateHandler {
 
         SendMessage reminder = SendMessage.builder()
                 .chatId(chatId.toString())
-                .text(
-                        "Пожалуйста, выбери город из списка выше, нажав на кнопку.\n\n" +
-                                "Если твоего города нет в списке, выбери наиболее подходящий по часовому поясу.\n\n" +
-                                "Для отмены нажми /cancel."
-                )
+                .text("""
+                        Пожалуйста, выбери регион из списка выше, нажав на кнопку.
+                        
+                        Если твоего города нет в списке, выбери ближайший по часовому поясу.
+                        
+                        Для отмены нажми /cancel.
+                        """)
                 .build();
 
         try {
@@ -78,25 +80,26 @@ public class AwaitingTimezoneManualStateHandler implements StateHandler {
 
     private void saveAndFinish(User user, String timezoneId, TelegramClient client) {
         user.setTimezone(timezoneId);
+        userService.updateState(user, ConversationState.IDLE);
 
         log.info("Timezone set to {} for user {}", timezoneId, user.getTelegramChatId());
 
-        userService.updateState(user, ConversationState.IDLE);
-
         SendMessage message = SendMessage.builder()
                 .chatId(user.getTelegramChatId().toString())
-                .text(
-                        "✅ Часовой пояс установлен: " + timezoneId + "\n\n" +
-                                "Теперь я буду напоминать тебе о растениях вовремя 🌱\n\n" +
-                                "Напиши /menu, чтобы открыть главное меню."
-                )
+                .text("""
+                        ✅ Часовой пояс обновлён: %s
+                        
+                        Теперь напоминания будут приходить по выбранному времени.
+                        
+                        Напиши /menu, чтобы открыть главное меню.
+                        """.formatted(timezoneId))
                 .replyMarkup(new ReplyKeyboardRemove(true))
                 .build();
 
         try {
             client.execute(message);
         } catch (TelegramApiException e) {
-            log.error("Failed to send success message in onboarding", e);
+            log.error("Failed to send timezone success message", e);
         }
     }
 
@@ -105,8 +108,8 @@ public class AwaitingTimezoneManualStateHandler implements StateHandler {
             client.execute(AnswerCallbackQuery.builder()
                     .callbackQueryId(callbackQueryId)
                     .build());
-        } catch (Exception e) {
-            log.error("Failed to answer callback", e);
+        } catch (TelegramApiException e) {
+            log.error("Failed to answer timezone callback", e);
         }
     }
 }

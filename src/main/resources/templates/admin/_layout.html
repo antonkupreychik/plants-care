@@ -93,9 +93,10 @@
                     </a>
                 </li>
                 <li>
-                    <span class="opacity-50 cursor-not-allowed">
-                        Species <span class="badge badge-ghost badge-xs ml-1">soon</span>
-                    </span>
+                    <a th:href="@{/admin/species}"
+                       th:classappend="${activeMenu == 'species'} ? 'active' : ''" >
+                        Species
+                    </a>
                 </li>
                 <li>
                     <span class="opacity-50 cursor-not-allowed">
