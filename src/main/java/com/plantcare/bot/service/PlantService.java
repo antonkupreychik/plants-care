@@ -255,6 +255,31 @@ public class PlantService {
     }
 
     /**
+     * Сохранить telegram file_id фото растения.
+     * Сами файлы на сервер не скачиваем — Telegram хранит фото у себя,
+     * нам достаточно file_id для последующих sendPhoto.
+     *
+     * @param userId  владелец растения (защита от обращения к чужому растению)
+     * @param plantId ID растения
+     * @param fileId  file_id из Telegram API (берём самый большой PhotoSize)
+     * @return обновлённое растение
+     */
+    @Transactional
+    public Plant updatePhotoFileId(Long userId, Long plantId, String fileId) {
+        Plant plant = plantRepository.findByUserIdAndIdAndArchivedAtIsNull(userId, plantId)
+                .orElseThrow(() -> new IllegalStateException(
+                        "Plant " + plantId + " not found for user " + userId
+                ));
+
+        plant.setPhotoFileId(fileId);
+        Plant saved = plantRepository.save(plant);
+
+        log.info("Updated photo_file_id for plant {} (user {})", plantId, userId);
+
+        return saved;
+    }
+
+    /**
      * Валидация имени растения.
      */
     public static boolean isValidPlantName(String name) {
