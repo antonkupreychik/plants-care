@@ -209,16 +209,64 @@ public class PlantCardService {
             return;
         }
 
-        String text = "⚙️ *Настройки растения*\n\n🌿 " + escapeMd(plant.getName())
-                + "\n\n_Полный режим редактирования появится в следующих обновлениях._";
+        List<CareSchedule> schedules = plantService.getActiveSchedules(plant.getId());
+
+        StringBuilder text = new StringBuilder();
+        text.append("⚙️ *Настройки растения*\n\n");
+        text.append("🌿 ").append(escapeMd(plant.getName())).append("\n");
+        if (plant.getLocation() != null) {
+            text.append("📍 ").append(escapeMd(plant.getLocation().getDisplayName())).append("\n");
+        }
 
         List<InlineKeyboardRow> rows = new ArrayList<>();
+
         rows.add(new InlineKeyboardRow(List.of(
                 InlineKeyboardButton.builder()
-                        .text("📦 Переместить в другую комнату")
+                        .text("✏️ Переименовать")
+                        .callbackData("PLANT:EDIT:NAME:" + plant.getId() + backSuffix(backTarget))
+                        .build()
+        )));
+        rows.add(new InlineKeyboardRow(List.of(
+                InlineKeyboardButton.builder()
+                        .text("📝 Заметка")
+                        .callbackData("PLANT:EDIT:NOTE:" + plant.getId() + backSuffix(backTarget))
+                        .build(),
+                InlineKeyboardButton.builder()
+                        .text("📷 Фото")
+                        .callbackData("PLANT:EDIT:PHOTO:" + plant.getId() + backSuffix(backTarget))
+                        .build()
+        )));
+        rows.add(new InlineKeyboardRow(List.of(
+                InlineKeyboardButton.builder()
+                        .text("📦 Переместить")
                         .callbackData("PLANT:MOVE:" + plant.getId())
                         .build()
         )));
+
+        // Расписания — если есть хотя бы одно активное, даём «Ближайшее».
+        // Управление вкл/выкл всех трёх — отдельной страницей.
+        if (!schedules.isEmpty()) {
+            rows.add(new InlineKeyboardRow(List.of(
+                    InlineKeyboardButton.builder()
+                            .text("⏰ Ближайшее напоминание")
+                            .callbackData("PLANT:SCHED:NEAREST:" + plant.getId() + backSuffix(backTarget))
+                            .build()
+            )));
+        }
+        rows.add(new InlineKeyboardRow(List.of(
+                InlineKeyboardButton.builder()
+                        .text("🔔 Типы ухода")
+                        .callbackData("PLANT:CARE_TYPES:" + plant.getId() + backSuffix(backTarget))
+                        .build()
+        )));
+
+        rows.add(new InlineKeyboardRow(List.of(
+                InlineKeyboardButton.builder()
+                        .text("🗑 Удалить растение")
+                        .callbackData("PLANT:EDIT:DELETE:" + plant.getId() + backSuffix(backTarget))
+                        .build()
+        )));
+
         rows.add(new InlineKeyboardRow(List.of(
                 InlineKeyboardButton.builder()
                         .text("⬅️ К карточке")
@@ -227,7 +275,359 @@ public class PlantCardService {
         )));
 
         InlineKeyboardMarkup keyboard = InlineKeyboardMarkup.builder().keyboard(rows).build();
+        sendOrEditText(user.getTelegramChatId(), messageId, text.toString(), keyboard, client);
+    }
+
+    /**
+     * Экран редактирования ближайшего напоминания (одного, того, что наступит первым).
+     */
+    @Transactional(readOnly = true)
+    public void showNearestScheduleScreen(
+            User user,
+            Long plantId,
+            Integer messageId,
+            String backTarget,
+            TelegramClient client
+    ) {
+        Plant plant = plantRepository.findByUserIdAndIdAndArchivedAtIsNull(user.getId(), plantId)
+                .orElse(null);
+        if (plant == null) {
+            sendTextMessage(user.getTelegramChatId(),
+                    "❌ Растение не найдено.", client);
+            return;
+        }
+
+        CareSchedule nearest = plantService.getActiveSchedules(plant.getId()).stream()
+                .min(Comparator.comparing(CareSchedule::getNextDueAt))
+                .orElse(null);
+
+        if (nearest == null) {
+            // Нет активных расписаний — отправляем на страницу типов ухода
+            showCareTypesScreen(user, plantId, messageId, backTarget, client);
+            return;
+        }
+
+        showScheduleEditScreen(user, plant, nearest, messageId, backTarget, client);
+    }
+
+    /**
+     * Экран редактирования конкретного типа ухода (для случая, когда юзер пришёл
+     * не из «ближайшее», а из таблицы типов).
+     */
+    @Transactional(readOnly = true)
+    public void showScheduleEditByType(
+            User user,
+            Long plantId,
+            TaskType taskType,
+            Integer messageId,
+            String backTarget,
+            TelegramClient client
+    ) {
+        Plant plant = plantRepository.findByUserIdAndIdAndArchivedAtIsNull(user.getId(), plantId)
+                .orElse(null);
+        if (plant == null) {
+            sendTextMessage(user.getTelegramChatId(),
+                    "❌ Растение не найдено.", client);
+            return;
+        }
+
+        CareSchedule schedule = plantService.getActiveSchedules(plant.getId()).stream()
+                .filter(s -> s.getTaskType() == taskType)
+                .findFirst()
+                .orElse(null);
+
+        if (schedule == null) {
+            // Расписание этого типа неактивно/не существует — возвращаем на страницу типов
+            showCareTypesScreen(user, plantId, messageId, backTarget, client);
+            return;
+        }
+
+        showScheduleEditScreen(user, plant, schedule, messageId, backTarget, client);
+    }
+
+    private void showScheduleEditScreen(
+            User user,
+            Plant plant,
+            CareSchedule schedule,
+            Integer messageId,
+            String backTarget,
+            TelegramClient client
+    ) {
+        StringBuilder text = new StringBuilder();
+        text.append(taskEmoji(schedule.getTaskType())).append(" *")
+                .append(taskName(schedule.getTaskType())).append("*\n\n");
+        text.append("🌿 ").append(escapeMd(plant.getName())).append("\n");
+        text.append("📅 Каждые ").append(schedule.getIntervalDays()).append(" дн.\n");
+        text.append("⏰ Следующий: ")
+                .append(schedule.getNextDueAt().toLocalDate().format(DATE_FMT))
+                .append("\n");
+
+        String taskCode = schedule.getTaskType().name();
+        String back = backSuffix(backTarget);
+
+        List<InlineKeyboardRow> rows = new ArrayList<>();
+        rows.add(new InlineKeyboardRow(List.of(
+                InlineKeyboardButton.builder()
+                        .text("📅 Изменить интервал")
+                        .callbackData("PLANT:SCHED:INTERVAL:" + plant.getId() + ":" + taskCode + back)
+                        .build()
+        )));
+        rows.add(new InlineKeyboardRow(List.of(
+                InlineKeyboardButton.builder()
+                        .text("⏭ Сегодня")
+                        .callbackData("PLANT:SCHED:POSTPONE:" + plant.getId() + ":" + taskCode + ":0" + back)
+                        .build(),
+                InlineKeyboardButton.builder()
+                        .text("⏭ Завтра")
+                        .callbackData("PLANT:SCHED:POSTPONE:" + plant.getId() + ":" + taskCode + ":1" + back)
+                        .build()
+        )));
+        rows.add(new InlineKeyboardRow(List.of(
+                InlineKeyboardButton.builder()
+                        .text("⏭ +3 дня")
+                        .callbackData("PLANT:SCHED:POSTPONE:" + plant.getId() + ":" + taskCode + ":3" + back)
+                        .build(),
+                InlineKeyboardButton.builder()
+                        .text("⏭ +7 дней")
+                        .callbackData("PLANT:SCHED:POSTPONE:" + plant.getId() + ":" + taskCode + ":7" + back)
+                        .build()
+        )));
+        rows.add(new InlineKeyboardRow(List.of(
+                InlineKeyboardButton.builder()
+                        .text("⬅️ К настройкам")
+                        .callbackData("PLANT:SETTINGS:" + plant.getId() + backSuffix(backTarget))
+                        .build()
+        )));
+
+        InlineKeyboardMarkup keyboard = InlineKeyboardMarkup.builder().keyboard(rows).build();
+        sendOrEditText(user.getTelegramChatId(), messageId, text.toString(), keyboard, client);
+    }
+
+    /**
+     * Экран управления типами ухода: вкл/выкл каждого из трёх (включая создание расписания,
+     * если его раньше не было).
+     */
+    @Transactional(readOnly = true)
+    public void showCareTypesScreen(
+            User user,
+            Long plantId,
+            Integer messageId,
+            String backTarget,
+            TelegramClient client
+    ) {
+        Plant plant = plantRepository.findByUserIdAndIdAndArchivedAtIsNull(user.getId(), plantId)
+                .orElse(null);
+        if (plant == null) {
+            sendTextMessage(user.getTelegramChatId(),
+                    "❌ Растение не найдено.", client);
+            return;
+        }
+
+        // Карта существующих расписаний по типу.
+        java.util.Map<TaskType, CareSchedule> byType = new java.util.EnumMap<>(TaskType.class);
+        for (CareSchedule s : plantService.getAllSchedules(plant.getId())) {
+            byType.put(s.getTaskType(), s);
+        }
+
+        StringBuilder text = new StringBuilder();
+        text.append("🔔 *Типы ухода*\n\n");
+        text.append("🌿 ").append(escapeMd(plant.getName())).append("\n\n");
+
+        for (TaskType type : TaskType.values()) {
+            CareSchedule s = byType.get(type);
+            text.append(taskEmoji(type)).append(" ").append(taskName(type)).append(": ");
+            if (s != null && s.isActive()) {
+                text.append("✅ каждые ").append(s.getIntervalDays()).append(" дн.\n");
+            } else if (s != null) {
+                text.append("❌ выключено (было каждые ").append(s.getIntervalDays()).append(" дн.)\n");
+            } else {
+                text.append("➖ не настроено\n");
+            }
+        }
+
+        List<InlineKeyboardRow> rows = new ArrayList<>();
+        for (TaskType type : TaskType.values()) {
+            CareSchedule s = byType.get(type);
+            boolean activeNow = s != null && s.isActive();
+            String label = (activeNow ? "❌ Выключить " : "✅ Включить ") + taskName(type);
+            rows.add(new InlineKeyboardRow(List.of(
+                    InlineKeyboardButton.builder()
+                            .text(label)
+                            .callbackData("PLANT:SCHED:TOGGLE:" + plant.getId() + ":" + type.name()
+                                    + backSuffix(backTarget))
+                            .build()
+            )));
+        }
+
+        rows.add(new InlineKeyboardRow(List.of(
+                InlineKeyboardButton.builder()
+                        .text("⬅️ К настройкам")
+                        .callbackData("PLANT:SETTINGS:" + plant.getId() + backSuffix(backTarget))
+                        .build()
+        )));
+
+        InlineKeyboardMarkup keyboard = InlineKeyboardMarkup.builder().keyboard(rows).build();
+        sendOrEditText(user.getTelegramChatId(), messageId, text.toString(), keyboard, client);
+    }
+
+    /**
+     * Экран подтверждения удаления (архивирования) растения.
+     */
+    @Transactional(readOnly = true)
+    public void showDeleteConfirmScreen(
+            User user,
+            Long plantId,
+            Integer messageId,
+            String backTarget,
+            TelegramClient client
+    ) {
+        Plant plant = plantRepository.findByUserIdAndIdAndArchivedAtIsNull(user.getId(), plantId)
+                .orElse(null);
+        if (plant == null) {
+            sendTextMessage(user.getTelegramChatId(),
+                    "❌ Растение не найдено.", client);
+            return;
+        }
+
+        String text = "🗑 *Удалить растение?*\n\n"
+                + "🌿 " + escapeMd(plant.getName()) + "\n\n"
+                + "_Все его напоминания тоже отключатся._";
+
+        InlineKeyboardMarkup keyboard = InlineKeyboardMarkup.builder()
+                .keyboardRow(new InlineKeyboardRow(List.of(
+                        InlineKeyboardButton.builder()
+                                .text("✅ Да, удалить")
+                                .callbackData("PLANT:EDIT:DELETE_CONFIRM:" + plant.getId())
+                                .build()
+                )))
+                .keyboardRow(new InlineKeyboardRow(List.of(
+                        InlineKeyboardButton.builder()
+                                .text("⬅️ Отмена")
+                                .callbackData("PLANT:SETTINGS:" + plant.getId() + backSuffix(backTarget))
+                                .build()
+                )))
+                .build();
+
         sendOrEditText(user.getTelegramChatId(), messageId, text, keyboard, client);
+    }
+
+    /**
+     * Сообщение с подсказкой "введи новое имя" + кнопка отмены.
+     * Возвращает messageId настроек, которое нужно сохранить в stateData,
+     * чтобы по завершении ввода вернуться именно в него.
+     */
+    public void promptForNewName(User user, Long plantId, Integer settingsMessageId,
+                                 String backTarget, TelegramClient client) {
+        String text = "✏️ Введи новое имя растения.\n\n"
+                + "Например: «Монстера у окна»\n\n"
+                + "_От 1 до 100 символов. /cancel — отменить._";
+
+        InlineKeyboardMarkup keyboard = cancelEditKeyboard(plantId, settingsMessageId, backTarget);
+        sendTextWithKeyboard(user.getTelegramChatId(), text, keyboard, client);
+    }
+
+    public void promptForNote(User user, Plant plant, Integer settingsMessageId,
+                              String backTarget, TelegramClient client) {
+        StringBuilder text = new StringBuilder();
+        text.append("📝 Введи новую заметку для *").append(escapeMd(plant.getName())).append("*.\n\n");
+        if (plant.getNotes() != null && !plant.getNotes().isBlank()) {
+            text.append("_Сейчас: ").append(escapeMd(plant.getNotes())).append("_\n\n");
+        }
+        text.append("До ").append(PlantService.NOTE_MAX_LENGTH)
+                .append(" символов. /cancel — отменить.");
+
+        List<InlineKeyboardRow> rows = new ArrayList<>();
+        if (plant.getNotes() != null && !plant.getNotes().isBlank()) {
+            rows.add(new InlineKeyboardRow(List.of(
+                    InlineKeyboardButton.builder()
+                            .text("🗑 Очистить заметку")
+                            .callbackData("PLANT:EDIT:NOTE_CLEAR:" + plant.getId() + backSuffix(backTarget))
+                            .build()
+            )));
+        }
+        rows.add(new InlineKeyboardRow(List.of(
+                InlineKeyboardButton.builder()
+                        .text("Отмена")
+                        .callbackData("PLANT:SETTINGS:" + plant.getId() + backSuffix(backTarget))
+                        .build()
+        )));
+
+        InlineKeyboardMarkup keyboard = InlineKeyboardMarkup.builder().keyboard(rows).build();
+        sendMessageWithMarkdownAndKeyboard(user.getTelegramChatId(), text.toString(), keyboard, client);
+    }
+
+    public void promptForPhotoEdit(User user, Long plantId, Integer settingsMessageId,
+                                   String backTarget, TelegramClient client) {
+        String text = "📷 Пришли новое фото растения.\n\n"
+                + "_Старое фото будет заменено. /cancel — отменить._";
+
+        InlineKeyboardMarkup keyboard = cancelEditKeyboard(plantId, settingsMessageId, backTarget);
+        sendTextWithKeyboard(user.getTelegramChatId(), text, keyboard, client);
+    }
+
+    public void promptForNewInterval(User user, Long plantId, TaskType taskType,
+                                     Integer settingsMessageId, String backTarget,
+                                     TelegramClient client) {
+        String text = "📅 Введи новый интервал для "
+                + taskEmoji(taskType) + " " + taskName(taskType).toLowerCase()
+                + " в днях (от 1 до 365).\n\n"
+                + "Например: 7 — раз в неделю.\n\n"
+                + "_/cancel — отменить._";
+
+        InlineKeyboardMarkup keyboard = cancelEditKeyboard(plantId, settingsMessageId, backTarget);
+        sendTextWithKeyboard(user.getTelegramChatId(), text, keyboard, client);
+    }
+
+    private InlineKeyboardMarkup cancelEditKeyboard(Long plantId, Integer settingsMessageId,
+                                                    String backTarget) {
+        return InlineKeyboardMarkup.builder()
+                .keyboardRow(new InlineKeyboardRow(List.of(
+                        InlineKeyboardButton.builder()
+                                .text("Отмена")
+                                .callbackData("PLANT:SETTINGS:" + plantId + backSuffix(backTarget))
+                                .build()
+                )))
+                .build();
+    }
+
+    private void sendTextWithKeyboard(Long chatId, String text, InlineKeyboardMarkup keyboard,
+                                      TelegramClient client) {
+        SendMessage message = SendMessage.builder()
+                .chatId(chatId.toString())
+                .text(text)
+                .replyMarkup(keyboard)
+                .build();
+        try {
+            client.execute(message);
+        } catch (TelegramApiException e) {
+            log.error("Failed to send prompt message", e);
+        }
+    }
+
+    private void sendMessageWithMarkdownAndKeyboard(Long chatId, String text,
+                                                    InlineKeyboardMarkup keyboard,
+                                                    TelegramClient client) {
+        SendMessage message = SendMessage.builder()
+                .chatId(chatId.toString())
+                .text(text)
+                .parseMode("Markdown")
+                .replyMarkup(keyboard)
+                .build();
+        try {
+            client.execute(message);
+        } catch (TelegramApiException e) {
+            log.error("Failed to send markdown prompt message", e);
+        }
+    }
+
+    /**
+     * Хвост callback-data для сохранения back-контекста: пусто или ":LOC:<id>".
+     */
+    private String backSuffix(String backTarget) {
+        if (backTarget != null && backTarget.startsWith(BACK_TO_LOCATION_PREFIX)) {
+            return ":" + backTarget;
+        }
+        return "";
     }
 
     /**

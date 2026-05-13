@@ -15,7 +15,9 @@ import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKe
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 import org.telegram.telegrambots.meta.generics.TelegramClient;
 
+import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 
 @Service
@@ -297,6 +299,13 @@ public class MenuCallbackService {
         answerCallback(client, callbackId, "❌ Неизвестная команда");
     }
 
+    private static final java.util.EnumSet<ConversationState> EDIT_MODE_STATES = java.util.EnumSet.of(
+            ConversationState.AWAITING_PLANT_RENAME,
+            ConversationState.AWAITING_PLANT_NOTE,
+            ConversationState.AWAITING_PLANT_PHOTO_EDIT,
+            ConversationState.AWAITING_NEW_INTERVAL
+    );
+
     private void handlePlantCallback(
             String data,
             String callbackId,
@@ -304,6 +313,14 @@ public class MenuCallbackService {
             TelegramClient client,
             User user
     ) {
+        // Любой callback на «PLANT:*» во время activе edit-режима означает выход из него
+        // (либо в Cancel, либо в новый edit, либо в другую часть навигации).
+        // resetToIdle очищает stateData; если callback ниже запускает новый edit,
+        // он повторно положит туда контекст.
+        if (EDIT_MODE_STATES.contains(user.getConversationState())) {
+            userService.resetToIdle(user);
+        }
+
         // Возврат к списку «Мои растения» из карточки — редактируем то же сообщение.
         if ("PLANT:LIST".equals(data)) {
             plantMenuService.sendMyPlantsList(user, messageId, client);
@@ -462,7 +479,269 @@ public class MenuCallbackService {
             return;
         }
 
+        // ============== Edit mode (issue #27) ==============
+
+        // Старт текстовых/фото-сценариев редактирования.
+        if (data.startsWith("PLANT:EDIT:NAME:")) {
+            handleEditStart(data, "PLANT:EDIT:NAME:",
+                    ConversationState.AWAITING_PLANT_RENAME,
+                    callbackId, messageId, client, user,
+                    (u, plantId, msgId, backTarget) ->
+                            plantCardService.promptForNewName(u, plantId, msgId, backTarget, client));
+            return;
+        }
+
+        if (data.startsWith("PLANT:EDIT:NOTE_CLEAR:")) {
+            // Очистка без перехода в state — сразу применяем и возвращаем экран настроек.
+            String[] parts = data.substring("PLANT:EDIT:NOTE_CLEAR:".length()).split(":");
+            Long plantId;
+            try {
+                plantId = Long.parseLong(parts[0]);
+            } catch (NumberFormatException e) {
+                answerCallback(client, callbackId, "❌ Неверный ID");
+                return;
+            }
+            String backTarget = parseBackTarget(parts, 1);
+            try {
+                plantService.updateNotes(user.getId(), plantId, null);
+            } catch (IllegalArgumentException e) {
+                answerCallback(client, callbackId, "❌ " + e.getMessage());
+                return;
+            }
+            // Сообщение с промптом и кнопкой «очистить» больше не нужно — просто пересоберём
+            // экран настроек новым сообщением (messageId сообщения-промпта тут).
+            plantCardService.showSettingsScreen(user, plantId, null, backTarget, client);
+            answerCallback(client, callbackId, "Заметка очищена");
+            return;
+        }
+
+        if (data.startsWith("PLANT:EDIT:NOTE:")) {
+            handleEditStart(data, "PLANT:EDIT:NOTE:",
+                    ConversationState.AWAITING_PLANT_NOTE,
+                    callbackId, messageId, client, user,
+                    (u, plantId, msgId, backTarget) -> {
+                        // Достаём растение, чтобы показать текущую заметку в промпте.
+                        plantService.getPlantForUser(u.getId(), plantId).ifPresent(plant ->
+                                plantCardService.promptForNote(u, plant, msgId, backTarget, client)
+                        );
+                    });
+            return;
+        }
+
+        if (data.startsWith("PLANT:EDIT:PHOTO:")) {
+            handleEditStart(data, "PLANT:EDIT:PHOTO:",
+                    ConversationState.AWAITING_PLANT_PHOTO_EDIT,
+                    callbackId, messageId, client, user,
+                    (u, plantId, msgId, backTarget) ->
+                            plantCardService.promptForPhotoEdit(u, plantId, msgId, backTarget, client));
+            return;
+        }
+
+        if (data.startsWith("PLANT:EDIT:DELETE_CONFIRM:")) {
+            Long plantId;
+            try {
+                plantId = Long.parseLong(data.substring("PLANT:EDIT:DELETE_CONFIRM:".length()));
+            } catch (NumberFormatException e) {
+                answerCallback(client, callbackId, "❌ Неверный ID");
+                return;
+            }
+            try {
+                plantService.archivePlant(user.getId(), plantId);
+            } catch (IllegalArgumentException e) {
+                answerCallback(client, callbackId, "❌ " + e.getMessage());
+                return;
+            }
+            // После архивирования карточки больше нет — возвращаем список «Мои растения»
+            // в том же сообщении.
+            plantMenuService.sendMyPlantsList(user, messageId, client);
+            answerCallback(client, callbackId, "🗑 Растение удалено");
+            return;
+        }
+
+        if (data.startsWith("PLANT:EDIT:DELETE:")) {
+            String[] parts = data.substring("PLANT:EDIT:DELETE:".length()).split(":");
+            Long plantId;
+            try {
+                plantId = Long.parseLong(parts[0]);
+            } catch (NumberFormatException e) {
+                answerCallback(client, callbackId, "❌ Неверный ID");
+                return;
+            }
+            String backTarget = parseBackTarget(parts, 1);
+            plantCardService.showDeleteConfirmScreen(user, plantId, messageId, backTarget, client);
+            answerCallback(client, callbackId, "");
+            return;
+        }
+
+        if (data.startsWith("PLANT:CARE_TYPES:")) {
+            String[] parts = data.substring("PLANT:CARE_TYPES:".length()).split(":");
+            Long plantId;
+            try {
+                plantId = Long.parseLong(parts[0]);
+            } catch (NumberFormatException e) {
+                answerCallback(client, callbackId, "❌ Неверный ID");
+                return;
+            }
+            String backTarget = parseBackTarget(parts, 1);
+            plantCardService.showCareTypesScreen(user, plantId, messageId, backTarget, client);
+            answerCallback(client, callbackId, "");
+            return;
+        }
+
+        if (data.startsWith("PLANT:SCHED:NEAREST:")) {
+            String[] parts = data.substring("PLANT:SCHED:NEAREST:".length()).split(":");
+            Long plantId;
+            try {
+                plantId = Long.parseLong(parts[0]);
+            } catch (NumberFormatException e) {
+                answerCallback(client, callbackId, "❌ Неверный ID");
+                return;
+            }
+            String backTarget = parseBackTarget(parts, 1);
+            plantCardService.showNearestScheduleScreen(user, plantId, messageId, backTarget, client);
+            answerCallback(client, callbackId, "");
+            return;
+        }
+
+        if (data.startsWith("PLANT:SCHED:INTERVAL:")) {
+            // PLANT:SCHED:INTERVAL:<id>:<type>[:LOC:<locId>]
+            String[] parts = data.substring("PLANT:SCHED:INTERVAL:".length()).split(":");
+            if (parts.length < 2) {
+                answerCallback(client, callbackId, "❌ Неверная команда");
+                return;
+            }
+            Long plantId;
+            TaskType taskType;
+            try {
+                plantId = Long.parseLong(parts[0]);
+                taskType = TaskType.valueOf(parts[1]);
+            } catch (IllegalArgumentException e) {
+                answerCallback(client, callbackId, "❌ Неверная команда");
+                return;
+            }
+            String backTarget = parseBackTarget(parts, 2);
+
+            // Регистрируем edit-контекст и переключаемся в AWAITING_NEW_INTERVAL.
+            userService.updateState(user, ConversationState.AWAITING_NEW_INTERVAL);
+            userService.setStateData(user, "edit_plant_id", String.valueOf(plantId));
+            if (messageId != null) {
+                userService.setStateData(user, "edit_message_id", String.valueOf(messageId));
+            }
+            userService.setStateData(user, "edit_back_target", backTarget);
+            userService.setStateData(user, "edit_task_type", taskType.name());
+
+            plantCardService.promptForNewInterval(user, plantId, taskType, messageId, backTarget, client);
+            answerCallback(client, callbackId, "");
+            return;
+        }
+
+        if (data.startsWith("PLANT:SCHED:POSTPONE:")) {
+            // PLANT:SCHED:POSTPONE:<id>:<type>:<offsetDays>[:LOC:<locId>]
+            String[] parts = data.substring("PLANT:SCHED:POSTPONE:".length()).split(":");
+            if (parts.length < 3) {
+                answerCallback(client, callbackId, "❌ Неверная команда");
+                return;
+            }
+            Long plantId;
+            TaskType taskType;
+            int offsetDays;
+            try {
+                plantId = Long.parseLong(parts[0]);
+                taskType = TaskType.valueOf(parts[1]);
+                offsetDays = Integer.parseInt(parts[2]);
+            } catch (IllegalArgumentException e) {
+                answerCallback(client, callbackId, "❌ Неверная команда");
+                return;
+            }
+            String backTarget = parseBackTarget(parts, 3);
+
+            try {
+                LocalDateTime newNext = LocalDateTime.now()
+                        .truncatedTo(ChronoUnit.MICROS)
+                        .plusDays(offsetDays);
+                plantService.rescheduleSchedule(user.getId(), plantId, taskType, newNext);
+            } catch (IllegalArgumentException e) {
+                answerCallback(client, callbackId, "❌ " + e.getMessage());
+                return;
+            }
+            plantCardService.showScheduleEditByType(user, plantId, taskType, messageId, backTarget, client);
+            answerCallback(client, callbackId, "✅ Перенесено");
+            return;
+        }
+
+        if (data.startsWith("PLANT:SCHED:TOGGLE:")) {
+            // PLANT:SCHED:TOGGLE:<id>:<type>[:LOC:<locId>]
+            String[] parts = data.substring("PLANT:SCHED:TOGGLE:".length()).split(":");
+            if (parts.length < 2) {
+                answerCallback(client, callbackId, "❌ Неверная команда");
+                return;
+            }
+            Long plantId;
+            TaskType taskType;
+            try {
+                plantId = Long.parseLong(parts[0]);
+                taskType = TaskType.valueOf(parts[1]);
+            } catch (IllegalArgumentException e) {
+                answerCallback(client, callbackId, "❌ Неверная команда");
+                return;
+            }
+            String backTarget = parseBackTarget(parts, 2);
+
+            try {
+                var saved = plantService.toggleSchedule(user.getId(), plantId, taskType);
+                plantCardService.showCareTypesScreen(user, plantId, messageId, backTarget, client);
+                answerCallback(client, callbackId,
+                        saved.isActive() ? "✅ Включено" : "❌ Выключено");
+            } catch (IllegalArgumentException e) {
+                answerCallback(client, callbackId, "❌ " + e.getMessage());
+            }
+            return;
+        }
+
         answerCallback(client, callbackId, "❌ Неизвестная команда");
+    }
+
+    /**
+     * Универсальный «старт» сценария редактирования с текстовым/фото-вводом:
+     *   1) парсим plantId и back-target из callback-data вида PLANT:EDIT:XXX:<id>[:LOC:<locId>]
+     *   2) кладём контекст в stateData
+     *   3) переводим юзера в нужное state
+     *   4) показываем кастомный промпт (см. promptFn)
+     */
+    private void handleEditStart(
+            String data,
+            String prefix,
+            ConversationState targetState,
+            String callbackId,
+            Integer messageId,
+            TelegramClient client,
+            User user,
+            EditPromptCallback promptFn
+    ) {
+        String[] parts = data.substring(prefix.length()).split(":");
+        Long plantId;
+        try {
+            plantId = Long.parseLong(parts[0]);
+        } catch (NumberFormatException e) {
+            answerCallback(client, callbackId, "❌ Неверный ID");
+            return;
+        }
+        String backTarget = parseBackTarget(parts, 1);
+
+        userService.updateState(user, targetState);
+        userService.setStateData(user, "edit_plant_id", String.valueOf(plantId));
+        if (messageId != null) {
+            userService.setStateData(user, "edit_message_id", String.valueOf(messageId));
+        }
+        userService.setStateData(user, "edit_back_target", backTarget);
+
+        promptFn.run(user, plantId, messageId, backTarget);
+        answerCallback(client, callbackId, "");
+    }
+
+    @FunctionalInterface
+    private interface EditPromptCallback {
+        void run(User user, Long plantId, Integer messageId, String backTarget);
     }
 
     /**

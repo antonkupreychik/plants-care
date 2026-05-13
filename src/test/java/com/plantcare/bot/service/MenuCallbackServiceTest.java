@@ -274,4 +274,104 @@ class MenuCallbackServiceTest {
                 telegramClient
         );
     }
+
+    // ==================== Edit mode (issue #27) ====================
+
+    @Test
+    @DisplayName("PLANT:EDIT:NAME:<id> — переводит в AWAITING_PLANT_RENAME и пишет stateData")
+    void shouldStartRenameFlow() {
+        when(callbackQuery.getData()).thenReturn("PLANT:EDIT:NAME:7");
+
+        service.handleCallback(callbackQuery, telegramClient, testUser);
+
+        verify(userService).updateState(testUser, ConversationState.AWAITING_PLANT_RENAME);
+        verify(userService).setStateData(testUser, "edit_plant_id", "7");
+        verify(userService).setStateData(testUser, "edit_message_id", "42");
+        verify(plantCardService).promptForNewName(
+                testUser, 7L, 42, PlantCardService.BACK_TO_LIST, telegramClient
+        );
+    }
+
+    @Test
+    @DisplayName("PLANT:EDIT:NOTE_CLEAR:<id> — очищает заметку и сразу шлёт экран настроек")
+    void shouldClearNoteImmediately() {
+        when(callbackQuery.getData()).thenReturn("PLANT:EDIT:NOTE_CLEAR:7");
+
+        service.handleCallback(callbackQuery, telegramClient, testUser);
+
+        verify(plantService).updateNotes(testUser.getId(), 7L, null);
+        verify(plantCardService).showSettingsScreen(
+                testUser, 7L, null, PlantCardService.BACK_TO_LIST, telegramClient
+        );
+        verify(userService, never()).updateState(any(), any());
+    }
+
+    @Test
+    @DisplayName("PLANT:EDIT:DELETE_CONFIRM — архивирует и возвращает на список")
+    void shouldArchiveOnDeleteConfirm() {
+        when(callbackQuery.getData()).thenReturn("PLANT:EDIT:DELETE_CONFIRM:7");
+
+        service.handleCallback(callbackQuery, telegramClient, testUser);
+
+        verify(plantService).archivePlant(testUser.getId(), 7L);
+        verify(plantMenuService).sendMyPlantsList(testUser, 42, telegramClient);
+    }
+
+    @Test
+    @DisplayName("PLANT:SCHED:POSTPONE:<id>:<type>:<offset> — переносит и обновляет экран")
+    void shouldPostponeSchedule() {
+        when(callbackQuery.getData()).thenReturn("PLANT:SCHED:POSTPONE:7:WATERING:3");
+
+        service.handleCallback(callbackQuery, telegramClient, testUser);
+
+        ArgumentCaptor<java.time.LocalDateTime> dtCap =
+                ArgumentCaptor.forClass(java.time.LocalDateTime.class);
+        verify(plantService).rescheduleSchedule(
+                org.mockito.ArgumentMatchers.eq(testUser.getId()),
+                org.mockito.ArgumentMatchers.eq(7L),
+                org.mockito.ArgumentMatchers.eq(com.plantcare.bot.domain.enums.TaskType.WATERING),
+                dtCap.capture()
+        );
+        // +3 дня от сейчас (с некоторым допуском)
+        assertThat(dtCap.getValue()).isAfter(java.time.LocalDateTime.now().plusDays(2));
+        assertThat(dtCap.getValue()).isBefore(java.time.LocalDateTime.now().plusDays(4));
+
+        verify(plantCardService).showScheduleEditByType(
+                testUser, 7L, com.plantcare.bot.domain.enums.TaskType.WATERING,
+                42, PlantCardService.BACK_TO_LIST, telegramClient
+        );
+    }
+
+    @Test
+    @DisplayName("PLANT:SCHED:TOGGLE:<id>:<type> — тоглит и шлёт экран care-types")
+    void shouldToggleSchedule() {
+        when(callbackQuery.getData()).thenReturn("PLANT:SCHED:TOGGLE:7:MISTING");
+
+        com.plantcare.bot.domain.CareSchedule afterToggle =
+                com.plantcare.bot.domain.CareSchedule.builder()
+                        .active(true).build();
+        when(plantService.toggleSchedule(any(), any(), any())).thenReturn(afterToggle);
+
+        service.handleCallback(callbackQuery, telegramClient, testUser);
+
+        verify(plantService).toggleSchedule(
+                testUser.getId(), 7L, com.plantcare.bot.domain.enums.TaskType.MISTING);
+        verify(plantCardService).showCareTypesScreen(
+                testUser, 7L, 42, PlantCardService.BACK_TO_LIST, telegramClient
+        );
+    }
+
+    @Test
+    @DisplayName("Callback во время edit-режима — сбрасывает state перед обработкой")
+    void shouldResetEditStateOnAnyPlantCallback() {
+        // Пользователь застрял в edit-режиме (например, передумал что-то вводить)
+        testUser.setConversationState(ConversationState.AWAITING_PLANT_RENAME);
+
+        when(callbackQuery.getData()).thenReturn("PLANT:LIST");
+
+        service.handleCallback(callbackQuery, telegramClient, testUser);
+
+        verify(userService).resetToIdle(testUser);
+        verify(plantMenuService).sendMyPlantsList(testUser, 42, telegramClient);
+    }
 }

@@ -250,6 +250,34 @@ public class PlantService {
     }
 
     /**
+     * Получить все расписания растения (включая неактивные).
+     * Используется на экране управления типами ухода — пользователь видит,
+     * какие расписания вообще существуют, чтобы их включить/выключить.
+     */
+    @Transactional(readOnly = true)
+    public List<CareSchedule> getAllSchedules(Long plantId) {
+        return careScheduleRepository.findAllByPlantId(plantId);
+    }
+
+    /**
+     * Получить растение пользователя (не архивное) для нужд UI-сервисов:
+     * например, чтобы показать текущую заметку в промпте редактирования.
+     * Также инициализирует lazy-ассоциации, которые могут понадобиться вне транзакции.
+     */
+    @Transactional(readOnly = true)
+    public Optional<Plant> getPlantForUser(Long userId, Long plantId) {
+        Optional<Plant> opt = plantRepository.findByUserIdAndIdAndArchivedAtIsNull(userId, plantId);
+        opt.ifPresent(plant -> {
+            // Touch lazy fields to avoid LazyInitException downstream.
+            if (plant.getLocation() != null) {
+                plant.getLocation().getName();
+                plant.getLocation().getEmoji();
+            }
+        });
+        return opt;
+    }
+
+    /**
      * Переместить растение в другую локацию.
      */
     @Transactional
@@ -280,6 +308,199 @@ public class PlantService {
         log.info("Updated photo_file_id for plant {} (user {})", plantId, userId);
 
         return saved;
+    }
+
+    // =================================================================
+    // Edit mode (issue #27): rename / note / archive / schedule edits
+    // =================================================================
+
+    /**
+     * Лимит длины заметки. Колонка plants.notes — TEXT, ограничение чисто UX-овое.
+     */
+    public static final int NOTE_MAX_LENGTH = 500;
+
+    /**
+     * Переименование растения. Имя валидируется тем же правилом, что и при создании.
+     */
+    @Transactional
+    public Plant renamePlant(Long userId, Long plantId, String newName) {
+        if (!isValidPlantName(newName)) {
+            throw new IllegalArgumentException(
+                    "Имя должно быть от 1 до 100 символов и не пустым");
+        }
+
+        Plant plant = plantRepository.findByUserIdAndIdAndArchivedAtIsNull(userId, plantId)
+                .orElseThrow(() -> new IllegalArgumentException("Растение не найдено"));
+
+        plant.setName(newName.trim());
+        Plant saved = plantRepository.save(plant);
+
+        log.info("Renamed plant {} to '{}' (user {})", plantId, newName, userId);
+        return saved;
+    }
+
+    /**
+     * Обновить заметку. null/blank → очистить.
+     */
+    @Transactional
+    public Plant updateNotes(Long userId, Long plantId, String notes) {
+        String normalized = notes == null ? null : notes.trim();
+        if (normalized != null && normalized.isEmpty()) {
+            normalized = null;
+        }
+        if (normalized != null && normalized.length() > NOTE_MAX_LENGTH) {
+            throw new IllegalArgumentException(
+                    "Заметка не может быть длиннее " + NOTE_MAX_LENGTH + " символов");
+        }
+
+        Plant plant = plantRepository.findByUserIdAndIdAndArchivedAtIsNull(userId, plantId)
+                .orElseThrow(() -> new IllegalArgumentException("Растение не найдено"));
+
+        plant.setNotes(normalized);
+        Plant saved = plantRepository.save(plant);
+
+        log.info("Updated notes for plant {} (user {}, cleared={})",
+                plantId, userId, normalized == null);
+        return saved;
+    }
+
+    /**
+     * Архивирует растение (soft-delete). История ухода остаётся для статистики.
+     */
+    @Transactional
+    public void archivePlant(Long userId, Long plantId) {
+        Plant plant = plantRepository.findByUserIdAndIdAndArchivedAtIsNull(userId, plantId)
+                .orElseThrow(() -> new IllegalArgumentException("Растение не найдено"));
+
+        plant.archive();
+        plantRepository.save(plant);
+
+        log.info("Archived plant {} (user {})", plantId, userId);
+    }
+
+    /**
+     * Изменить интервал расписания. Пересчёта nextDueAt НЕ делаем —
+     * пользователь обычно хочет отдельно перенести ближайшее напоминание.
+     */
+    @Transactional
+    public CareSchedule updateScheduleInterval(
+            Long userId, Long plantId, TaskType taskType, int intervalDays
+    ) {
+        if (!isValidInterval(intervalDays)) {
+            throw new IllegalArgumentException(
+                    "Интервал должен быть от 1 до 365 дней");
+        }
+
+        Plant plant = plantRepository.findByUserIdAndIdAndArchivedAtIsNull(userId, plantId)
+                .orElseThrow(() -> new IllegalArgumentException("Растение не найдено"));
+
+        CareSchedule schedule = careScheduleRepository
+                .findByPlantIdAndTaskType(plant.getId(), taskType)
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Расписание " + taskType + " не настроено"));
+
+        schedule.setIntervalDays(intervalDays);
+        CareSchedule saved = careScheduleRepository.save(schedule);
+
+        log.info("Updated {} interval to {} for plant {} (user {})",
+                taskType, intervalDays, plantId, userId);
+        return saved;
+    }
+
+    /**
+     * Перенести ближайшее срабатывание расписания на новое время.
+     */
+    @Transactional
+    public CareSchedule rescheduleSchedule(
+            Long userId, Long plantId, TaskType taskType, LocalDateTime nextDueAt
+    ) {
+        if (nextDueAt == null) {
+            throw new IllegalArgumentException("nextDueAt не задан");
+        }
+
+        Plant plant = plantRepository.findByUserIdAndIdAndArchivedAtIsNull(userId, plantId)
+                .orElseThrow(() -> new IllegalArgumentException("Растение не найдено"));
+
+        CareSchedule schedule = careScheduleRepository
+                .findByPlantIdAndTaskType(plant.getId(), taskType)
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Расписание " + taskType + " не настроено"));
+
+        schedule.setNextDueAt(nextDueAt);
+        CareSchedule saved = careScheduleRepository.save(schedule);
+
+        log.info("Rescheduled {} for plant {} to {} (user {})",
+                taskType, plantId, nextDueAt, userId);
+        return saved;
+    }
+
+    /**
+     * Переключить активность расписания типа ухода:
+     *   - если расписание есть и активно — выключаем (active=false);
+     *   - если расписание есть и отключено — включаем (active=true);
+     *   - если расписания нет — создаём новое с дефолтным интервалом и nextDueAt = today + interval.
+     *
+     * Дефолтные интервалы берём из вида (Species). Если для данного вида не задан или null —
+     * используем разумные хардкоды: WATERING=7, MISTING=3, FERTILIZING=14.
+     */
+    @Transactional
+    public CareSchedule toggleSchedule(Long userId, Long plantId, TaskType taskType) {
+        Plant plant = plantRepository.findByUserIdAndIdAndArchivedAtIsNull(userId, plantId)
+                .orElseThrow(() -> new IllegalArgumentException("Растение не найдено"));
+
+        CareSchedule existing = careScheduleRepository
+                .findByPlantIdAndTaskType(plant.getId(), taskType)
+                .orElse(null);
+
+        if (existing != null) {
+            existing.setActive(!existing.isActive());
+            // Если включили заново и nextDueAt в прошлом — сдвигаем на сегодня + интервал,
+            // чтобы у пользователя не висело "просрочено на 100 дней".
+            if (existing.isActive() && existing.getNextDueAt() != null
+                    && existing.getNextDueAt().isBefore(LocalDateTime.now())) {
+                existing.rescheduleFrom(LocalDateTime.now());
+            }
+            CareSchedule saved = careScheduleRepository.save(existing);
+            log.info("Toggled {} for plant {} → active={} (user {})",
+                    taskType, plantId, saved.isActive(), userId);
+            return saved;
+        }
+
+        int defaultInterval = defaultIntervalFor(plant, taskType);
+        LocalDateTime nextDueAt = LocalDateTime.now().plusDays(defaultInterval);
+
+        CareSchedule fresh = CareSchedule.builder()
+                .plant(plant)
+                .taskType(taskType)
+                .intervalDays(defaultInterval)
+                .nextDueAt(nextDueAt)
+                .active(true)
+                .build();
+        CareSchedule saved = careScheduleRepository.save(fresh);
+
+        log.info("Created {} schedule for plant {} (interval={}, nextDueAt={}, user {})",
+                taskType, plantId, defaultInterval, nextDueAt, userId);
+        return saved;
+    }
+
+    private int defaultIntervalFor(Plant plant, TaskType taskType) {
+        Integer fromSpecies = null;
+        Species species = plant.getSpecies();
+        if (species != null) {
+            fromSpecies = switch (taskType) {
+                case WATERING -> species.getWateringDays();
+                case MISTING -> species.getMistingDays();
+                case FERTILIZING -> species.getFertilizingDays();
+            };
+        }
+        if (fromSpecies != null && isValidInterval(fromSpecies)) {
+            return fromSpecies;
+        }
+        return switch (taskType) {
+            case WATERING -> 7;
+            case MISTING -> 3;
+            case FERTILIZING -> 14;
+        };
     }
 
     /**

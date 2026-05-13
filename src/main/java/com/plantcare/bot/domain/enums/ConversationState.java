@@ -29,6 +29,10 @@ public enum ConversationState {
     // Заметки
     AWAITING_PLANT_NOTE,
 
+    // Редактирование информации о растении (issue #27)
+    AWAITING_PLANT_RENAME,
+    AWAITING_PLANT_PHOTO_EDIT,
+
     // Изменение расписания
     AWAITING_NEW_INTERVAL
 }

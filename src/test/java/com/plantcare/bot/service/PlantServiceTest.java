@@ -433,4 +433,179 @@ class PlantServiceTest extends IntegrationTestBase {
             assertThat(expected.getMessage()).contains("не найдено");
         }
     }
+
+    // ==================== edit mode (issue #27) ====================
+
+    private Plant createTestPlant(String name) {
+        LocalDateTime nextDue = LocalDateTime.now().truncatedTo(ChronoUnit.MICROS).plusDays(7);
+        return plantService.createPlantWithWateringSchedule(
+                testUser, monstera.getId(), name, 7, nextDue);
+    }
+
+    @Test
+    @DisplayName("renamePlant: новое имя сохраняется")
+    void renamePlant_savesNewName() {
+        Plant plant = createTestPlant("Original");
+        plantService.renamePlant(testUser.getId(), plant.getId(), "  New name  ");
+
+        Plant reloaded = plantRepository.findById(plant.getId()).orElseThrow();
+        assertThat(reloaded.getName()).isEqualTo("New name");
+    }
+
+    @Test
+    @DisplayName("renamePlant: пустое имя → IllegalArgumentException")
+    void renamePlant_rejectsEmpty() {
+        Plant plant = createTestPlant("X");
+        try {
+            plantService.renamePlant(testUser.getId(), plant.getId(), "  ");
+            org.assertj.core.api.Assertions.fail("Should have thrown");
+        } catch (IllegalArgumentException expected) {
+            // ok
+        }
+    }
+
+    @Test
+    @DisplayName("updateNotes: текст и очистка работают")
+    void updateNotes_setAndClear() {
+        Plant plant = createTestPlant("X");
+
+        plantService.updateNotes(testUser.getId(), plant.getId(), "Поливает соседка пока в отпуске");
+        assertThat(plantRepository.findById(plant.getId()).orElseThrow().getNotes())
+                .isEqualTo("Поливает соседка пока в отпуске");
+
+        plantService.updateNotes(testUser.getId(), plant.getId(), null);
+        assertThat(plantRepository.findById(plant.getId()).orElseThrow().getNotes()).isNull();
+
+        plantService.updateNotes(testUser.getId(), plant.getId(), "   ");
+        assertThat(plantRepository.findById(plant.getId()).orElseThrow().getNotes()).isNull();
+    }
+
+    @Test
+    @DisplayName("updateNotes: слишком длинная заметка → IllegalArgumentException")
+    void updateNotes_rejectsTooLong() {
+        Plant plant = createTestPlant("X");
+        String overLimit = "a".repeat(PlantService.NOTE_MAX_LENGTH + 1);
+        try {
+            plantService.updateNotes(testUser.getId(), plant.getId(), overLimit);
+            org.assertj.core.api.Assertions.fail("Should have thrown");
+        } catch (IllegalArgumentException expected) {
+            // ok
+        }
+    }
+
+    @Test
+    @DisplayName("archivePlant: ставит archived_at, потом не находится как активное")
+    void archivePlant_marksArchived() {
+        Plant plant = createTestPlant("X");
+        plantService.archivePlant(testUser.getId(), plant.getId());
+
+        assertThat(plantRepository.findByUserIdAndIdAndArchivedAtIsNull(
+                testUser.getId(), plant.getId())).isEmpty();
+        assertThat(plantRepository.findById(plant.getId()).orElseThrow().getArchivedAt()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("updateScheduleInterval: меняет interval_days, не трогает next_due_at")
+    void updateScheduleInterval_changesIntervalOnly() {
+        Plant plant = createTestPlant("X");
+        LocalDateTime originalNext = scheduleRepository
+                .findByPlantIdAndTaskType(plant.getId(), TaskType.WATERING)
+                .orElseThrow().getNextDueAt();
+
+        plantService.updateScheduleInterval(
+                testUser.getId(), plant.getId(), TaskType.WATERING, 14);
+
+        CareSchedule s = scheduleRepository
+                .findByPlantIdAndTaskType(plant.getId(), TaskType.WATERING).orElseThrow();
+        assertThat(s.getIntervalDays()).isEqualTo(14);
+        assertThat(s.getNextDueAt()).isEqualTo(originalNext);
+    }
+
+    @Test
+    @DisplayName("updateScheduleInterval: невалидный интервал → IllegalArgumentException")
+    void updateScheduleInterval_rejectsBadInterval() {
+        Plant plant = createTestPlant("X");
+        try {
+            plantService.updateScheduleInterval(
+                    testUser.getId(), plant.getId(), TaskType.WATERING, 0);
+            org.assertj.core.api.Assertions.fail("Should have thrown");
+        } catch (IllegalArgumentException expected) { /* ok */ }
+    }
+
+    @Test
+    @DisplayName("updateScheduleInterval: расписание не настроено → IllegalArgumentException")
+    void updateScheduleInterval_rejectsMissingSchedule() {
+        Plant plant = createTestPlant("X");
+        try {
+            // MISTING не настроен у тестового растения
+            plantService.updateScheduleInterval(
+                    testUser.getId(), plant.getId(), TaskType.MISTING, 5);
+            org.assertj.core.api.Assertions.fail("Should have thrown");
+        } catch (IllegalArgumentException expected) { /* ok */ }
+    }
+
+    @Test
+    @DisplayName("rescheduleSchedule: новое значение next_due_at применяется")
+    void rescheduleSchedule_setsNewDate() {
+        Plant plant = createTestPlant("X");
+        LocalDateTime newNext = LocalDateTime.now().truncatedTo(ChronoUnit.MICROS).plusDays(2);
+
+        plantService.rescheduleSchedule(
+                testUser.getId(), plant.getId(), TaskType.WATERING, newNext);
+
+        CareSchedule s = scheduleRepository
+                .findByPlantIdAndTaskType(plant.getId(), TaskType.WATERING).orElseThrow();
+        assertThat(s.getNextDueAt()).isEqualTo(newNext);
+    }
+
+    @Test
+    @DisplayName("toggleSchedule: выключает активное расписание")
+    void toggleSchedule_disablesActive() {
+        Plant plant = createTestPlant("X");
+
+        CareSchedule s = plantService.toggleSchedule(
+                testUser.getId(), plant.getId(), TaskType.WATERING);
+
+        assertThat(s.isActive()).isFalse();
+        assertThat(scheduleRepository.findByPlantIdAndTaskType(
+                plant.getId(), TaskType.WATERING).orElseThrow().isActive()).isFalse();
+    }
+
+    @Test
+    @DisplayName("toggleSchedule: включает снова и подвигает next_due_at если оно в прошлом")
+    void toggleSchedule_reactivatesAndFixesPastDue() {
+        Plant plant = createTestPlant("X");
+        // Выключаем
+        plantService.toggleSchedule(testUser.getId(), plant.getId(), TaskType.WATERING);
+
+        // Принудительно делаем next_due_at в прошлом и сохраняем
+        CareSchedule s = scheduleRepository
+                .findByPlantIdAndTaskType(plant.getId(), TaskType.WATERING).orElseThrow();
+        s.setNextDueAt(LocalDateTime.now().minusDays(30));
+        scheduleRepository.save(s);
+
+        // Включаем — должен сдвинуть на now + interval
+        CareSchedule reactivated = plantService.toggleSchedule(
+                testUser.getId(), plant.getId(), TaskType.WATERING);
+
+        assertThat(reactivated.isActive()).isTrue();
+        assertThat(reactivated.getNextDueAt()).isAfter(LocalDateTime.now().minusMinutes(1));
+    }
+
+    @Test
+    @DisplayName("toggleSchedule: для несуществующего расписания создаёт новое с дефолтным интервалом")
+    void toggleSchedule_createsFreshScheduleWithDefaults() {
+        Plant plant = createTestPlant("X");
+        // MISTING ещё не существует у этого растения
+
+        CareSchedule created = plantService.toggleSchedule(
+                testUser.getId(), plant.getId(), TaskType.MISTING);
+
+        assertThat(created.isActive()).isTrue();
+        assertThat(created.getTaskType()).isEqualTo(TaskType.MISTING);
+        // Дефолт для misting = 3 дн (если у вида не задано — Monstera в seed-данных
+        // может иметь mistingDays — допускаем оба варианта, главное чтобы > 0)
+        assertThat(created.getIntervalDays()).isGreaterThan(0).isLessThanOrEqualTo(365);
+        assertThat(created.getNextDueAt()).isAfter(LocalDateTime.now().minusMinutes(1));
+    }
 }
