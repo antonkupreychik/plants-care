@@ -24,6 +24,7 @@ import java.util.List;
 @Component
 @RequiredArgsConstructor
 public class AwaitingTimezoneStateHandler implements StateHandler {
+
     private final UserService userService;
     private final TimeZoneEngine engine;
 
@@ -38,6 +39,7 @@ public class AwaitingTimezoneStateHandler implements StateHandler {
 
         if (update.hasMessage() && update.getMessage().hasLocation()) {
             Location loc = update.getMessage().getLocation();
+
             engine.query(loc.getLatitude(), loc.getLongitude())
                     .ifPresentOrElse(
                             zone -> saveAndFinish(user, zone.getId(), client),
@@ -46,68 +48,91 @@ public class AwaitingTimezoneStateHandler implements StateHandler {
             return;
         }
 
-        if (update.hasMessage() && "⌨️ Выбрать вручную".equals(update.getMessage().getText())) {
+        if (update.hasMessage()
+                && update.getMessage().hasText()
+                && "⌨️ Выбрать вручную".equals(update.getMessage().getText())) {
             showManualTimezonePicker(chatId, client);
             userService.updateState(user, ConversationState.AWAITING_TIMEZONE_MANUAL);
             return;
+        }
+
+        SendMessage message = SendMessage.builder()
+                .chatId(chatId.toString())
+                .text("Отправь локацию или нажми «⌨️ Выбрать вручную».")
+                .build();
+
+        try {
+            client.execute(message);
+        } catch (TelegramApiException e) {
+            log.error("Failed to send timezone help message", e);
         }
     }
 
     private void sendError(Long chatId, TelegramClient client) {
         SendMessage message = SendMessage.builder()
                 .chatId(chatId.toString())
-                .text("❌ К сожалению, я не смог определить часовой пояс по этим координатам. " +
-                        "Попробуй выбрать город вручную из списка ниже.")
+                .text("❌ Не смог определить часовой пояс по этим координатам. Попробуй выбрать город вручную.")
                 .build();
 
         try {
             client.execute(message);
             showManualTimezonePicker(chatId, client);
         } catch (TelegramApiException e) {
-            log.error("Failed to send error message in onboarding", e);
+            log.error("Failed to send error message in timezone setup", e);
         }
     }
 
     private void saveAndFinish(User user, String timezoneId, TelegramClient client) {
         user.setTimezone(timezoneId);
+        userService.updateState(user, ConversationState.IDLE);
+
         log.info("Timezone set to {} for user {}", timezoneId, user.getTelegramChatId());
-        userService.updateState(user, ConversationState.AWAITING_PLANT_NAME);
 
         SendMessage message = SendMessage.builder()
                 .chatId(user.getTelegramChatId().toString())
-                .text("✅ Часовой пояс установлен: *" + timezoneId + "*.\n\n" +
-                        "Теперь давай добавим твое первое растение. Как оно называется?")
+                .text("✅ Часовой пояс обновлён: *" + timezoneId + "*.\n\n" +
+                        "Открой /menu, чтобы продолжить.")
                 .parseMode("Markdown")
-                .replyMarkup(new ReplyKeyboardRemove(true)) // Убираем кнопку локации
+                .replyMarkup(new ReplyKeyboardRemove(true))
                 .build();
+
         try {
             client.execute(message);
         } catch (TelegramApiException e) {
-            log.error("Failed to send success message in onboarding", e);
+            log.error("Failed to send timezone success message", e);
         }
     }
 
     private void showManualTimezonePicker(Long chatId, TelegramClient client) {
-        List<String> popular = List.of("Europe/Moscow", "Europe/Kyiv", "Asia/Almaty",
-                "Europe/Berlin", "Europe/London", "America/New_York");
+        List<String> popular = List.of(
+                "Europe/Minsk",
+                "Europe/Moscow",
+                "Europe/Kyiv",
+                "Asia/Almaty",
+                "Europe/Berlin",
+                "Europe/London",
+                "America/New_York"
+        );
 
         InlineKeyboardMarkup.InlineKeyboardMarkupBuilder<?, ?> markup = InlineKeyboardMarkup.builder();
 
         popular.forEach(zone -> {
             InlineKeyboardButton button = InlineKeyboardButton.builder()
                     .text(zone)
-                    .callbackData("SET_TZ:" + zone) // Префикс для обработки в будущем
+                    .callbackData("SET_TZ:" + zone)
                     .build();
 
             markup.keyboardRow(new InlineKeyboardRow(button));
         });
 
+        SendMessage message = SendMessage.builder()
+                .chatId(chatId.toString())
+                .text("Выбери свой регион или ближайший к тебе:")
+                .replyMarkup(markup.build())
+                .build();
+
         try {
-            client.execute(SendMessage.builder()
-                    .chatId(chatId.toString())
-                    .text("Выбери свой город или ближайший к тебе:")
-                    .replyMarkup(markup.build())
-                    .build());
+            client.execute(message);
         } catch (TelegramApiException e) {
             log.error("Failed to send manual timezone picker to chatId: {}", chatId, e);
         }

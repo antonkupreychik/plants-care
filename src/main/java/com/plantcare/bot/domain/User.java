@@ -39,7 +39,7 @@ public class User extends BaseEntity {
 
     @Column(nullable = false, length = 64)
     @Builder.Default
-    private String timezone = "UTC";
+    private String timezone = "Europe/Minsk";
 
     @Column(name = "quiet_hours_start", nullable = false)
     @Builder.Default

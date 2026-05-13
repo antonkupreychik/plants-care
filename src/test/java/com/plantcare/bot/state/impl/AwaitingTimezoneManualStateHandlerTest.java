@@ -35,34 +35,32 @@ class AwaitingTimezoneManualStateHandlerTest extends IntegrationTestBase {
     private TelegramClient telegramClient;
 
     private User testUser;
+
     private final Long chatId = 12345L;
 
     @BeforeEach
     void setUp() {
         testUser = userService.findOrCreate(chatId, "test_user");
         userService.updateState(testUser, ConversationState.AWAITING_TIMEZONE_MANUAL);
-
         reset(telegramClient);
     }
 
     @Test
-    @DisplayName("Успешное сохранение таймзоны при получении CallbackQuery")
-    void shouldSaveTimezoneAndTransitionStateOnCallback() throws TelegramApiException {
-        String selectedTz = "Europe/Riga";
+    @DisplayName("Callback SET_TZ сохраняет таймзону и возвращает пользователя в IDLE")
+    void shouldSaveTimezoneAndReturnToIdleOnCallback() throws TelegramApiException {
+        String selectedTz = "Europe/Berlin";
 
         Update update = mock(Update.class);
         CallbackQuery callbackQuery = mock(CallbackQuery.class);
 
         when(update.hasCallbackQuery()).thenReturn(true);
         when(update.getCallbackQuery()).thenReturn(callbackQuery);
-
         when(callbackQuery.getData()).thenReturn("SET_TZ:" + selectedTz);
         when(callbackQuery.getId()).thenReturn("query_123");
 
         handler.handle(testUser, update, telegramClient);
 
-        User reloadedUser = userService.findByChatId(chatId)
-                .orElseThrow();
+        User reloadedUser = userService.findByChatId(chatId).orElseThrow();
 
         assertThat(reloadedUser.getTimezone()).isEqualTo(selectedTz);
         assertThat(reloadedUser.getConversationState()).isEqualTo(ConversationState.IDLE);
@@ -73,14 +71,15 @@ class AwaitingTimezoneManualStateHandlerTest extends IntegrationTestBase {
         SendMessage sentMessage = messageCaptor.getValue();
 
         assertThat(sentMessage.getChatId()).isEqualTo(chatId.toString());
-        assertThat(sentMessage.getText()).contains("✅ Часовой пояс установлен: " + selectedTz);
+        assertThat(sentMessage.getText()).contains("Часовой пояс обновлён");
+        assertThat(sentMessage.getText()).contains(selectedTz);
         assertThat(sentMessage.getText()).contains("/menu");
 
         verify(telegramClient).execute(any(AnswerCallbackQuery.class));
     }
 
     @Test
-    @DisplayName("Отправка напоминания при получении текста вместо клика по кнопке")
+    @DisplayName("Текст вместо callback не меняет состояние")
     void shouldSendReminderWhenTextReceivedInsteadOfCallback() throws TelegramApiException {
         Update update = mock(Update.class);
         Message message = mock(Message.class);
@@ -88,14 +87,12 @@ class AwaitingTimezoneManualStateHandlerTest extends IntegrationTestBase {
         when(update.hasCallbackQuery()).thenReturn(false);
         when(update.hasMessage()).thenReturn(true);
         when(update.getMessage()).thenReturn(message);
-
         when(message.hasText()).thenReturn(true);
         when(message.getText()).thenReturn("Москва");
 
         handler.handle(testUser, update, telegramClient);
 
-        User reloadedUser = userService.findByChatId(chatId)
-                .orElseThrow();
+        User reloadedUser = userService.findByChatId(chatId).orElseThrow();
 
         assertThat(reloadedUser.getConversationState())
                 .isEqualTo(ConversationState.AWAITING_TIMEZONE_MANUAL);
@@ -106,7 +103,7 @@ class AwaitingTimezoneManualStateHandlerTest extends IntegrationTestBase {
         SendMessage sentMessage = messageCaptor.getValue();
 
         assertThat(sentMessage.getChatId()).isEqualTo(chatId.toString());
-        assertThat(sentMessage.getText()).contains("Пожалуйста, выбери город из списка");
+        assertThat(sentMessage.getText()).contains("Пожалуйста, выбери регион");
 
         verify(telegramClient, never()).execute(any(AnswerCallbackQuery.class));
     }

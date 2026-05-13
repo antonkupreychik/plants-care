@@ -37,6 +37,7 @@ public class NotificationCallbackService {
     private static final int SNOOZE_HOURS = 2;
     private static final int DEDUP_SECONDS = 60;
     private static final int GRACE_PERIOD_HOURS = 24;
+
     private static final DateTimeFormatter TIME_FMT = DateTimeFormatter.ofPattern("HH:mm");
     private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("dd.MM.yyyy");
 
@@ -53,6 +54,7 @@ public class NotificationCallbackService {
         Integer messageId = callbackQuery.getMessage().getMessageId();
 
         String[] parts = data.split(":");
+
         if (parts.length != 3) {
             answerCallback(client, callbackId, "❌ Неизвестная команда");
             return;
@@ -76,6 +78,7 @@ public class NotificationCallbackService {
         }
 
         Optional<CareSchedule> optSchedule = careScheduleRepository.findById(scheduleId);
+
         if (optSchedule.isEmpty()) {
             answerCallback(client, callbackId, "❌ Расписание не найдено");
             return;
@@ -84,71 +87,47 @@ public class NotificationCallbackService {
         CareSchedule schedule = optSchedule.get();
         Plant plant = schedule.getPlant();
 
-        // Растение удалено (архивировано) — graceful 404
         if (plant.isArchived()) {
-            editMessage(client, chatId, messageId, "🗑 Растение уже удалено");
+            editMessage(client, chatId, messageId, "Растение уже удалено");
             answerCallback(client, callbackId, "Растение удалено");
-            log.info("Callback for archived plant id={}, scheduleId={}", plant.getId(), scheduleId);
             return;
         }
 
-        String plantName = plant.getName();
         LocalDateTime now = LocalDateTime.now();
-
         String responseText;
         String alertText;
 
         switch (action) {
             case "done" -> {
-                // Дедупликация: проверяем, не было ли записи за последние 60 секунд
-                if (isDuplicateDone(plant, schedule, now)) {
+                boolean marked = markScheduleDone(schedule, now);
+
+                if (!marked) {
                     answerCallback(client, callbackId, "Уже отмечено!");
-                    log.debug("Duplicate done callback for schedule {}, ignoring", scheduleId);
                     return;
                 }
-
-                // was_on_time: true если now <= scheduled_at + 24h grace period
-                boolean wasOnTime = isOnTime(schedule.getNextDueAt(), now);
-
-                // Записываем в историю
-                CareHistory history = CareHistory.builder()
-                        .plant(plant)
-                        .taskType(schedule.getTaskType())
-                        .doneAt(now)
-                        .onTime(wasOnTime)
-                        .build();
-                careHistoryRepository.save(history);
-
-                // Пересчитываем next_due_at от фактического времени выполнения
-                schedule.rescheduleFrom(now);
-                careScheduleRepository.save(schedule);
 
                 String timeStr = now.format(TIME_FMT);
                 String nextDateStr = schedule.getNextDueAt().format(DATE_FMT);
                 String doneVerb = doneVerb(schedule.getTaskType());
                 String nextLabel = nextLabel(schedule.getTaskType());
-                responseText = "✅ " + doneVerb + " " + plantName + " в " + timeStr
-                        + ". " + nextLabel + " — " + nextDateStr;
+
+                responseText = "✅ " + doneVerb + " " + plant.getName() + " в " + timeStr + ".\n"
+                        + nextLabel + " — " + nextDateStr;
                 alertText = "Отмечено!";
-                log.info("Schedule {} marked as done (on_time={}), next due at {}",
-                        scheduleId, wasOnTime, schedule.getNextDueAt());
             }
             case "snooze" -> {
                 schedule.setNextDueAt(now.plusHours(SNOOZE_HOURS));
                 careScheduleRepository.save(schedule);
-                responseText = "⏰ " + plantName + " — напомню через " + SNOOZE_HOURS + " часа";
+
+                responseText = "⏰ " + plant.getName() + " — напомню через " + SNOOZE_HOURS + " часа";
                 alertText = "Отложено!";
-                log.info("Schedule {} snoozed, next due at {}", scheduleId, schedule.getNextDueAt());
             }
             case "skip" -> {
-                // Дедупликация: проверяем, не было ли записи за последние 60 секунд
                 if (isDuplicateDone(plant, schedule, now)) {
                     answerCallback(client, callbackId, "Уже отмечено!");
-                    log.debug("Duplicate skip callback for schedule {}, ignoring", scheduleId);
                     return;
                 }
 
-                // Записываем в историю: was_on_time = false, note = "skipped"
                 CareHistory history = CareHistory.builder()
                         .plant(plant)
                         .taskType(schedule.getTaskType())
@@ -156,6 +135,7 @@ public class NotificationCallbackService {
                         .onTime(false)
                         .note("skipped")
                         .build();
+
                 careHistoryRepository.save(history);
 
                 // Пересчитываем next_due_at от now()
@@ -163,7 +143,9 @@ public class NotificationCallbackService {
                 careScheduleRepository.save(schedule);
 
                 String nextDateStr = schedule.getNextDueAt().format(DATE_FMT);
-                responseText = "❌ " + plantName + " — пропущено. Следующий раз: " + nextDateStr;
+
+                responseText = "❌ " + plant.getName() + " — пропущено.\n"
+                        + "Следующий раз: " + nextDateStr;
                 alertText = "Пропущено!";
                 log.info("Schedule {} skipped, next due at {}", scheduleId, schedule.getNextDueAt());
             }
@@ -177,46 +159,59 @@ public class NotificationCallbackService {
         answerCallback(client, callbackId, alertText);
     }
 
-    /**
-     * Проверяет, была ли запись в CareHistory за последние {@value DEDUP_SECONDS} секунд
-     * для данного растения и типа задачи. Если да — это дубликат нажатия.
-     */
+    @Transactional
+    public boolean markScheduleDone(CareSchedule schedule, LocalDateTime now) {
+        Plant plant = schedule.getPlant();
+
+        if (isDuplicateDone(plant, schedule, now)) {
+            return false;
+        }
+
+        boolean wasOnTime = isOnTime(schedule.getNextDueAt(), now);
+
+        CareHistory history = CareHistory.builder()
+                .plant(plant)
+                .taskType(schedule.getTaskType())
+                .doneAt(now)
+                .onTime(wasOnTime)
+                .build();
+
+        careHistoryRepository.save(history);
+
+        schedule.rescheduleFrom(now);
+        careScheduleRepository.save(schedule);
+
+        return true;
+    }
+
     private boolean isDuplicateDone(Plant plant, CareSchedule schedule, LocalDateTime now) {
         Optional<CareHistory> lastEntry = careHistoryRepository
                 .findFirstByPlantIdAndTaskTypeOrderByDoneAtDesc(plant.getId(), schedule.getTaskType());
+
         if (lastEntry.isEmpty()) {
             return false;
         }
+
         LocalDateTime lastDoneAt = lastEntry.get().getDoneAt();
         return lastDoneAt.plusSeconds(DEDUP_SECONDS).isAfter(now);
     }
 
-    /**
-     * was_on_time: true, если фактическое время выполнения (now) не позже
-     * запланированного времени + 24 часа grace period.
-     */
     private boolean isOnTime(LocalDateTime scheduledAt, LocalDateTime now) {
         return !now.isAfter(scheduledAt.plusHours(GRACE_PERIOD_HOURS));
     }
 
-    /**
-     * Глагол для сообщения "✅ {verb} {plant} в HH:mm"
-     */
     private String doneVerb(TaskType taskType) {
         return switch (taskType) {
-            case WATERING    -> "Полил";
-            case MISTING     -> "Опрыскал";
+            case WATERING -> "Полил";
+            case MISTING -> "Опрыскал";
             case FERTILIZING -> "Удобрил";
         };
     }
 
-    /**
-     * Метка следующего события для сообщения "Следующий {label} — dd.MM.yyyy"
-     */
     private String nextLabel(TaskType taskType) {
         return switch (taskType) {
-            case WATERING    -> "Следующий полив";
-            case MISTING     -> "Следующее опрыскивание";
+            case WATERING -> "Следующий полив";
+            case MISTING -> "Следующее опрыскивание";
             case FERTILIZING -> "Следующее удобрение";
         };
     }
@@ -228,6 +223,7 @@ public class NotificationCallbackService {
                 .text(text)
                 .replyMarkup(null)
                 .build();
+
         try {
             client.execute(edit);
         } catch (TelegramApiException e) {

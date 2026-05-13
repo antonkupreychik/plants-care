@@ -23,7 +23,14 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.*;import org.mockito.ArgumentCaptor;
+import org.telegram.telegrambots.meta.api.methods.AnswerCallbackQuery;
+import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
+import org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMarkup;
+import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardButton;
+
+import java.util.Collection;
+import java.util.List;
 
 @ExtendWith(MockitoExtension.class)
 @DisplayName("Unit-тесты для MenuCallbackService")
@@ -146,16 +153,44 @@ class MenuCallbackServiceTest {
     }
 
     @Test
-    @DisplayName("MENU:SETTINGS показывает заглушку")
-    void shouldShowStubForSettings() throws TelegramApiException {
+    @DisplayName("SETTINGS показывает меню настроек с кнопкой изменения региона")
+    void shouldShowSettingsMenu() throws TelegramApiException {
         when(callbackQuery.getData()).thenReturn("MENU:SETTINGS");
 
         service.handleCallback(callbackQuery, telegramClient, testUser);
 
-        ArgumentCaptor<AnswerCallbackQuery> captor = ArgumentCaptor.forClass(AnswerCallbackQuery.class);
-        verify(telegramClient).execute(captor.capture());
+        ArgumentCaptor<SendMessage> messageCaptor = ArgumentCaptor.forClass(SendMessage.class);
+        verify(telegramClient).execute(messageCaptor.capture());
 
-        assertThat(captor.getValue().getText()).contains("Скоро");
+        SendMessage message = messageCaptor.getValue();
+
+        assertThat(message).isNotNull();
+        assertThat(message.getChatId()).isEqualTo(testUser.getTelegramChatId().toString());
+        assertThat(message.getText()).contains("⚙️ Настройки");
+        assertThat(message.getText()).contains("Текущий часовой пояс");
+        assertThat(message.getText()).contains(testUser.getTimezone());
+
+        assertThat(message.getReplyMarkup()).isInstanceOf(InlineKeyboardMarkup.class);
+
+        InlineKeyboardMarkup keyboard = (InlineKeyboardMarkup) message.getReplyMarkup();
+
+        List<String> buttonTexts = keyboard.getKeyboard().stream()
+                .flatMap(Collection::stream)
+                .map(InlineKeyboardButton::getText)
+                .toList();
+
+        List<String> callbackData = keyboard.getKeyboard().stream()
+                .flatMap(Collection::stream)
+                .map(InlineKeyboardButton::getCallbackData)
+                .toList();
+
+        assertThat(buttonTexts).contains("🌍 Изменить регион");
+        assertThat(buttonTexts).contains("⬅️ Назад");
+
+        assertThat(callbackData).contains("MENU:CHANGE_TZ");
+        assertThat(callbackData).contains("MENU:BACK");
+
+        verify(telegramClient).execute(any(AnswerCallbackQuery.class));
     }
 
     @Test

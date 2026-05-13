@@ -31,7 +31,7 @@ class UserServiceTest extends IntegrationTestBase {
         assertThat(user.getId()).isNotNull();
         assertThat(user.getTelegramChatId()).isEqualTo(500L);
         assertThat(user.getUsername()).isEqualTo("alice");
-        assertThat(user.getTimezone()).isEqualTo("UTC");
+        assertThat(user.getTimezone()).isEqualTo("Europe/Minsk");
         assertThat(user.getConversationState()).isEqualTo(ConversationState.IDLE);
         assertThat(user.isBlocked()).isFalse();
     }
