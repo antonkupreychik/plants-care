@@ -9,8 +9,11 @@ import org.telegram.telegrambots.meta.api.methods.AnswerCallbackQuery;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
 import org.telegram.telegrambots.meta.api.objects.CallbackQuery;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMarkup;
+import org.telegram.telegrambots.meta.api.objects.replykeyboard.ReplyKeyboardMarkup;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardButton;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardRow;
+import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.KeyboardButton;
+import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.KeyboardRow;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 import org.telegram.telegrambots.meta.generics.TelegramClient;
 
@@ -103,7 +106,14 @@ public class MenuCallbackService {
             }
 
             case "SETTINGS" -> {
-                answerCallback(client, callbackId, "🚧 Скоро будет доступно!");
+                sendSettingsMenu(user, client);
+                answerCallback(client, callbackId, "");
+            }
+
+            case "CHANGE_TZ" -> {
+                userService.updateState(user, ConversationState.AWAITING_TIMEZONE);
+                sendTimezonePrompt(user, client);
+                answerCallback(client, callbackId, "");
             }
 
             default -> answerCallback(client, callbackId, "❌ Неизвестная команда");
@@ -130,6 +140,7 @@ public class MenuCallbackService {
             answerCallback(client, callbackId, "");
             return;
         }
+
         if (data.startsWith("LOCATION:PRESET:")) {
             String presetKey = data.substring("LOCATION:PRESET:".length());
 
@@ -156,7 +167,6 @@ public class MenuCallbackService {
                 locationMenuService.sendLocationsMenu(user, client);
                 answerCallback(client, callbackId, "");
                 return;
-
             } catch (IllegalArgumentException e) {
                 answerCallback(client, callbackId, "❌ " + e.getMessage());
                 return;
@@ -266,7 +276,6 @@ public class MenuCallbackService {
                 locationMenuService.sendLocationsMenu(user, client);
                 answerCallback(client, callbackId, "");
                 return;
-
             } catch (IllegalArgumentException e) {
                 answerCallback(client, callbackId, "❌ " + e.getMessage());
                 return;
@@ -291,7 +300,14 @@ public class MenuCallbackService {
             User user
     ) {
         if (data.startsWith("PLANT:VIEW:")) {
-            Long plantId = Long.parseLong(data.substring("PLANT:VIEW:".length()));
+            Long plantId;
+
+            try {
+                plantId = Long.parseLong(data.substring("PLANT:VIEW:".length()));
+            } catch (NumberFormatException e) {
+                answerCallback(client, callbackId, "❌ Неверный ID растения");
+                return;
+            }
 
             locationMenuService.sendPlantInLocationScreen(user, plantId, client);
             answerCallback(client, callbackId, "");
@@ -299,7 +315,14 @@ public class MenuCallbackService {
         }
 
         if (data.startsWith("PLANT:MOVE:")) {
-            Long plantId = Long.parseLong(data.substring("PLANT:MOVE:".length()));
+            Long plantId;
+
+            try {
+                plantId = Long.parseLong(data.substring("PLANT:MOVE:".length()));
+            } catch (NumberFormatException e) {
+                answerCallback(client, callbackId, "❌ Неверный ID растения");
+                return;
+            }
 
             locationMenuService.sendMovePlantDialog(user, plantId, client);
             answerCallback(client, callbackId, "");
@@ -310,8 +333,21 @@ public class MenuCallbackService {
             String payload = data.substring("PLANT:MOVE_CONFIRM:".length());
             String[] parts = payload.split(":");
 
-            Long plantId = Long.parseLong(parts[0]);
-            Long locationId = Long.parseLong(parts[1]);
+            if (parts.length < 2) {
+                answerCallback(client, callbackId, "❌ Неверная команда");
+                return;
+            }
+
+            Long plantId;
+            Long locationId;
+
+            try {
+                plantId = Long.parseLong(parts[0]);
+                locationId = Long.parseLong(parts[1]);
+            } catch (NumberFormatException e) {
+                answerCallback(client, callbackId, "❌ Неверная команда");
+                return;
+            }
 
             try {
                 plantService.movePlantToLocation(
@@ -333,12 +369,11 @@ public class MenuCallbackService {
 
                 locationMenuService.sendPlantInLocationScreen(user, plantId, client);
                 answerCallback(client, callbackId, "");
-                return;
-
             } catch (IllegalArgumentException e) {
                 answerCallback(client, callbackId, "❌ " + e.getMessage());
-                return;
             }
+
+            return;
         }
 
         answerCallback(client, callbackId, "❌ Неизвестная команда");
@@ -354,6 +389,69 @@ public class MenuCallbackService {
             case "BATHROOM" -> new LocationPreset("Ванная", "🚿");
             default -> throw new IllegalArgumentException("Неизвестный пресет комнаты");
         };
+    }
+
+    private void sendSettingsMenu(User user, TelegramClient client) {
+        InlineKeyboardMarkup keyboard = InlineKeyboardMarkup.builder()
+                .keyboardRow(new InlineKeyboardRow(List.of(
+                        InlineKeyboardButton.builder()
+                                .text("🌍 Изменить регион")
+                                .callbackData("MENU:CHANGE_TZ")
+                                .build()
+                )))
+                .keyboardRow(new InlineKeyboardRow(List.of(
+                        InlineKeyboardButton.builder()
+                                .text("⬅️ Назад")
+                                .callbackData("MENU:BACK")
+                                .build()
+                )))
+                .build();
+
+        SendMessage message = SendMessage.builder()
+                .chatId(user.getTelegramChatId().toString())
+                .text("""
+                        ⚙️ Настройки
+                        
+                        Текущий часовой пояс: %s
+                        
+                        Здесь можно изменить регион, чтобы напоминания приходили по местному времени.
+                        """.formatted(user.getTimezone()))
+                .replyMarkup(keyboard)
+                .build();
+
+        try {
+            client.execute(message);
+        } catch (TelegramApiException e) {
+            log.error("Failed to send settings menu", e);
+        }
+    }
+
+    private void sendTimezonePrompt(User user, TelegramClient client) {
+        ReplyKeyboardMarkup keyboard = ReplyKeyboardMarkup.builder()
+                .keyboardRow(new KeyboardRow(List.of(
+                        KeyboardButton.builder()
+                                .text("📍 Отправить локацию")
+                                .requestLocation(true)
+                                .build()
+                )))
+                .keyboardRow(new KeyboardRow(List.of(
+                        new KeyboardButton("⌨️ Выбрать вручную")
+                )))
+                .resizeKeyboard(true)
+                .oneTimeKeyboard(true)
+                .build();
+
+        SendMessage message = SendMessage.builder()
+                .chatId(user.getTelegramChatId().toString())
+                .text("Выбери, как установить регион для напоминаний:")
+                .replyMarkup(keyboard)
+                .build();
+
+        try {
+            client.execute(message);
+        } catch (TelegramApiException e) {
+            log.error("Failed to send timezone prompt", e);
+        }
     }
 
     private void sendLocationPresetMenu(User user, TelegramClient client) {

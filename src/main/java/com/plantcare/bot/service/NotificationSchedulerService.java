@@ -2,12 +2,15 @@ package com.plantcare.bot.service;
 
 import com.plantcare.bot.client.TelegramClientProvider;
 import com.plantcare.bot.domain.CareSchedule;
+import com.plantcare.bot.domain.DigestTaskItem;
+import com.plantcare.bot.domain.NotificationDigest;
 import com.plantcare.bot.domain.NotificationLog;
 import com.plantcare.bot.domain.Plant;
 import com.plantcare.bot.domain.User;
 import com.plantcare.bot.domain.enums.NotificationType;
 import com.plantcare.bot.domain.enums.TaskType;
 import com.plantcare.bot.repository.CareScheduleRepository;
+import com.plantcare.bot.repository.NotificationDigestRepository;
 import com.plantcare.bot.repository.NotificationLogRepository;
 import com.plantcare.bot.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
@@ -25,7 +28,10 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 @Service
 @RequiredArgsConstructor
@@ -36,6 +42,7 @@ public class NotificationSchedulerService {
 
     private final CareScheduleRepository careScheduleRepository;
     private final NotificationLogRepository notificationLogRepository;
+    private final NotificationDigestRepository notificationDigestRepository;
     private final UserRepository userRepository;
     private final TelegramClientProvider telegramClientProvider;
 
@@ -45,48 +52,59 @@ public class NotificationSchedulerService {
         LocalDateTime now = LocalDateTime.now();
         List<CareSchedule> dueSchedules = careScheduleRepository.findDueSchedules(now);
 
-        log.debug("Found {} due schedules", dueSchedules.size());
+        Map<Long, List<CareSchedule>> schedulesByUser = new LinkedHashMap<>();
 
         for (CareSchedule schedule : dueSchedules) {
             try {
-                processSchedule(schedule, now);
+                if (shouldSend(schedule, now)) {
+                    User user = schedule.getPlant().getUser();
+                    schedulesByUser
+                            .computeIfAbsent(user.getId(), ignored -> new ArrayList<>())
+                            .add(schedule);
+                }
             } catch (Exception e) {
-                log.error("Error processing schedule id={}: {}", schedule.getId(), e.getMessage(), e);
+                log.error("Error checking schedule id={}: {}", schedule.getId(), e.getMessage(), e);
+            }
+        }
+
+        for (List<CareSchedule> schedules : schedulesByUser.values()) {
+            try {
+                if (schedules.size() == 1) {
+                    CareSchedule schedule = schedules.get(0);
+                    sendNotification(schedule.getPlant().getUser(), schedule.getPlant(), schedule);
+                } else {
+                    sendDigest(schedules.get(0).getPlant().getUser(), schedules);
+                }
+            } catch (Exception e) {
+                log.error("Error sending notifications group: {}", e.getMessage(), e);
             }
         }
     }
 
-    private void processSchedule(CareSchedule schedule, LocalDateTime now) {
+    private boolean shouldSend(CareSchedule schedule, LocalDateTime now) {
         Plant plant = schedule.getPlant();
         User user = plant.getUser();
 
-        // Проверка paused_until
         if (user.isPaused()) {
-            log.debug("User {} is paused until {}, skipping", user.getTelegramChatId(), user.getPausedUntil());
-            return;
+            return false;
         }
 
-        // Проверка тихих часов
         if (isQuietHours(user, now)) {
-            log.debug("Quiet hours for user {}, skipping", user.getTelegramChatId());
-            return;
+            return false;
         }
 
-        // Дедупликация: не слать, если за последние 12 часов уже отправляли
         LocalDateTime deduplicationCutoff = now.minusHours(DEDUP_HOURS);
-        if (notificationLogRepository.existsByPlantIdAndTaskTypeAndSentAtAfter(
-                plant.getId(), schedule.getTaskType(), deduplicationCutoff)) {
-            log.debug("Already notified for plant {} / {} within {} hours, skipping",
-                    plant.getId(), schedule.getTaskType(), DEDUP_HOURS);
-            return;
-        }
 
-        // Отправка уведомления
-        sendNotification(user, plant, schedule);
+        return !notificationLogRepository.existsByPlantIdAndTaskTypeAndSentAtAfter(
+                plant.getId(),
+                schedule.getTaskType(),
+                deduplicationCutoff
+        );
     }
 
     private boolean isQuietHours(User user, LocalDateTime now) {
         ZoneId userZone;
+
         try {
             userZone = ZoneId.of(user.getTimezone());
         } catch (Exception e) {
@@ -102,17 +120,14 @@ public class NotificationSchedulerService {
         LocalTime end = user.getQuietHoursEnd();
 
         if (start.equals(end)) {
-            // Тихие часы отключены (start == end)
             return false;
         }
 
         if (start.isBefore(end)) {
-            // Обычный интервал, например 14:00 – 16:00
             return !userTime.isBefore(start) && userTime.isBefore(end);
-        } else {
-            // Интервал через полночь, например 22:00 – 09:00
-            return !userTime.isBefore(start) || userTime.isBefore(end);
         }
+
+        return !userTime.isBefore(start) || userTime.isBefore(end);
     }
 
     private void sendNotification(User user, Plant plant, CareSchedule schedule) {
@@ -127,36 +142,106 @@ public class NotificationSchedulerService {
 
         try {
             telegramClientProvider.getTelegramClient().execute(message);
+            saveNotificationLog(plant, schedule.getTaskType());
 
-            // Записываем в лог
-            NotificationLog logEntry = NotificationLog.builder()
-                    .plant(plant)
-                    .taskType(schedule.getTaskType())
-                    .notificationType(NotificationType.DUE)
-                    .sentAt(LocalDateTime.now())
-                    .build();
-            notificationLogRepository.save(logEntry);
-
-            log.info("Sent notification for plant '{}' (id={}) to user {}",
+            log.info("Sent notification for plant '{}' id={} to user {}",
                     plant.getName(), plant.getId(), user.getTelegramChatId());
-
         } catch (TelegramApiException e) {
             handleTelegramError(user, e);
         }
     }
 
+    private void sendDigest(User user, List<CareSchedule> schedules) {
+        List<DigestTaskItem> items = schedules.stream()
+                .map(schedule -> new DigestTaskItem(
+                        schedule.getId(),
+                        schedule.getPlant().getId(),
+                        schedule.getPlant().getName(),
+                        schedule.getTaskType(),
+                        schedule.getNextDueAt()
+                ))
+                .toList();
+
+        NotificationDigest digest = NotificationDigest.builder()
+                .userId(user.getId())
+                .plantTaskIds(items)
+                .build();
+
+        NotificationDigest savedDigest = notificationDigestRepository.save(digest);
+
+        SendMessage message = SendMessage.builder()
+                .chatId(user.getTelegramChatId().toString())
+                .text(buildDigestText(items))
+                .replyMarkup(buildDigestKeyboard(savedDigest.getId()))
+                .build();
+
+        try {
+            telegramClientProvider.getTelegramClient().execute(message);
+
+            for (CareSchedule schedule : schedules) {
+                saveNotificationLog(schedule.getPlant(), schedule.getTaskType());
+            }
+
+            log.info("Sent digest id={} with {} tasks to user {}",
+                    savedDigest.getId(), schedules.size(), user.getTelegramChatId());
+        } catch (TelegramApiException e) {
+            handleTelegramError(user, e);
+        }
+    }
+
+    private void saveNotificationLog(Plant plant, TaskType taskType) {
+        NotificationLog logEntry = NotificationLog.builder()
+                .plant(plant)
+                .taskType(taskType)
+                .notificationType(NotificationType.DUE)
+                .sentAt(LocalDateTime.now())
+                .build();
+
+        notificationLogRepository.save(logEntry);
+    }
+
+    private String buildDigestText(List<DigestTaskItem> items) {
+        StringBuilder builder = new StringBuilder("На сегодня:\n");
+
+        for (DigestTaskItem item : items) {
+            builder.append("• ")
+                    .append(item.plantName())
+                    .append(" — ")
+                    .append(taskLabel(item.taskType()))
+                    .append("\n");
+        }
+
+        return builder.toString().trim();
+    }
+
+    private InlineKeyboardMarkup buildDigestKeyboard(Long digestId) {
+        InlineKeyboardButton doneAllButton = InlineKeyboardButton.builder()
+                .text("✅ Сделал всё")
+                .callbackData("digest:done_all:" + digestId)
+                .build();
+
+        InlineKeyboardButton expandButton = InlineKeyboardButton.builder()
+                .text("По одному")
+                .callbackData("digest:expand:" + digestId)
+                .build();
+
+        return InlineKeyboardMarkup.builder()
+                .keyboardRow(new InlineKeyboardRow(doneAllButton, expandButton))
+                .build();
+    }
+
     private String buildNotificationText(Plant plant, TaskType taskType) {
         return switch (taskType) {
-            case WATERING -> "🌿 Пора полить: " + plant.getName();
-            case MISTING -> "💨 Пора опрыскать: " + plant.getName();
-            case FERTILIZING -> "🧪 Пора удобрить: " + plant.getName();
+            case WATERING -> "Пора полить: " + plant.getName();
+            case MISTING -> "Пора опрыскать: " + plant.getName();
+            case FERTILIZING -> "Пора удобрить: " + plant.getName();
         };
     }
 
     private InlineKeyboardMarkup buildKeyboard(Long scheduleId, TaskType taskType) {
         String doneBtnLabel = switch (taskType) {
-            case WATERING    -> "✅ Полил";
-            case MISTING     -> "✅ Опрыскал";
+            case WATERING -> "✅ Полил";
+            case MISTING -> "✅ Опрыскал";
             case FERTILIZING -> "✅ Удобрил";
         };
 
@@ -180,8 +265,17 @@ public class NotificationSchedulerService {
                 .build();
     }
 
+    private String taskLabel(TaskType taskType) {
+        return switch (taskType) {
+            case WATERING -> "полить";
+            case MISTING -> "опрыскать";
+            case FERTILIZING -> "удобрить";
+        };
+    }
+
     private void handleTelegramError(User user, TelegramApiException e) {
         String errorMessage = e.getMessage();
+
         if (errorMessage != null && errorMessage.contains("403")) {
             log.warn("Bot blocked by user {}, marking as blocked", user.getTelegramChatId());
             user.setBlocked(true);
