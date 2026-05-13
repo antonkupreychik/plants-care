@@ -34,6 +34,7 @@ public class MenuCallbackService {
     private final MainMenuService mainMenuService;
     private final PlantMenuService plantMenuService;
     private final PlantCardService plantCardService;
+    private final CalendarMenuService calendarMenuService;
 
     private record LocationPreset(String name, String emoji) {
     }
@@ -64,7 +65,28 @@ public class MenuCallbackService {
             return;
         }
 
+        // Календарь (issue #52). Формат: cal:week:<offset> где offset — int.
+        if (data.startsWith("cal:week:")) {
+            handleCalendarWeekCallback(data, callbackId, messageId, client, user);
+            return;
+        }
+
         answerCallback(client, callbackId, "❌ Неизвестная команда");
+    }
+
+    private void handleCalendarWeekCallback(
+            String data, String callbackId, Integer messageId,
+            TelegramClient client, User user
+    ) {
+        int offset;
+        try {
+            offset = Integer.parseInt(data.substring("cal:week:".length()));
+        } catch (NumberFormatException e) {
+            answerCallback(client, callbackId, "❌ Неверный offset");
+            return;
+        }
+        calendarMenuService.sendCalendar(user, offset, messageId, client);
+        answerCallback(client, callbackId, "");
     }
 
     private void handleMenuCallback(
@@ -114,6 +136,13 @@ public class MenuCallbackService {
                 // Дальнейшая навигация (список ↔ карточка) уже будет EditMessageText
                 // по этому новому сообщению.
                 plantMenuService.sendMyPlantsList(user, null, client);
+                answerCallback(client, callbackId, "");
+            }
+
+            case "CALENDAR" -> {
+                // Календарь (issue #52). Шлём новым сообщением — листание неделями
+                // уже будет EditMessageText по этому сообщению.
+                calendarMenuService.sendCalendar(user, client);
                 answerCallback(client, callbackId, "");
             }
 

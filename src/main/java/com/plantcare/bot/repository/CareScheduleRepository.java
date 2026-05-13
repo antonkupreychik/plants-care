@@ -42,4 +42,21 @@ public interface CareScheduleRepository extends JpaRepository<CareSchedule, Long
             @Param("userId") Long userId,
             @Param("until") LocalDateTime until
     );
+
+    /**
+     * Все активные расписания всех неархивных растений юзера, с прокинутым
+     * plant + location, чтобы потом проецировать события в окно календаря
+     * (issue #52). nextDueAt не фильтруем — мы проецируем и в прошлое
+     * (для overdue) и в будущее.
+     */
+    @Query("""
+        SELECT s FROM CareSchedule s
+        JOIN FETCH s.plant p
+        JOIN FETCH p.location l
+        WHERE p.user.id = :userId
+          AND p.archivedAt IS NULL
+          AND s.active = true
+        ORDER BY p.name ASC, s.taskType ASC
+        """)
+    List<CareSchedule> findActiveSchedulesByUserId(@Param("userId") Long userId);
 }

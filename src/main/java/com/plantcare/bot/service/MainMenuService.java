@@ -208,6 +208,10 @@ public class MainMenuService {
                 )))
                 .keyboardRow(new InlineKeyboardRow(List.of(
                         InlineKeyboardButton.builder()
+                                .text("📅 Календарь")
+                                .callbackData("MENU:CALENDAR")
+                                .build(),
+                        InlineKeyboardButton.builder()
                                 .text("⚙️ Настройки")
                                 .callbackData("MENU:SETTINGS")
                                 .build()

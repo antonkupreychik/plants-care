@@ -36,6 +36,7 @@ class MenuCallbackServiceTest {
     @Mock private MainMenuService mainMenuService;
     @Mock private PlantMenuService plantMenuService;
     @Mock private PlantCardService plantCardService;
+    @Mock private CalendarMenuService calendarMenuService;
     @Mock private TelegramClient telegramClient;
     @Mock private CallbackQuery callbackQuery;
     @Mock private Message message;
@@ -98,6 +99,50 @@ class MenuCallbackServiceTest {
         // Новое сообщение: messageId=null (мы пришли из главного меню).
         verify(plantMenuService).sendMyPlantsList(testUser, null, telegramClient);
         verify(userService, never()).updateState(any(), any());
+    }
+
+    @Test
+    @DisplayName("MENU:CALENDAR открывает календарь новым сообщением")
+    void shouldOpenCalendarFromMenu() {
+        when(callbackQuery.getData()).thenReturn("MENU:CALENDAR");
+
+        service.handleCallback(callbackQuery, telegramClient, testUser);
+
+        verify(calendarMenuService).sendCalendar(testUser, telegramClient);
+        verify(userService, never()).updateState(any(), any());
+    }
+
+    @Test
+    @DisplayName("cal:week:1 редактирует то же сообщение под следующую неделю")
+    void shouldEditCalendarOnWeekNavigation() {
+        when(callbackQuery.getData()).thenReturn("cal:week:1");
+
+        service.handleCallback(callbackQuery, telegramClient, testUser);
+
+        verify(calendarMenuService).sendCalendar(testUser, 1, 42, telegramClient);
+    }
+
+    @Test
+    @DisplayName("cal:week:-2 — отрицательный offset для просмотра прошлых недель")
+    void shouldHandleNegativeWeekOffset() {
+        when(callbackQuery.getData()).thenReturn("cal:week:-2");
+
+        service.handleCallback(callbackQuery, telegramClient, testUser);
+
+        verify(calendarMenuService).sendCalendar(testUser, -2, 42, telegramClient);
+    }
+
+    @Test
+    @DisplayName("cal:week:abc — битый offset, алёрт об ошибке")
+    void shouldRejectMalformedCalendarOffset() throws TelegramApiException {
+        when(callbackQuery.getData()).thenReturn("cal:week:abc");
+
+        service.handleCallback(callbackQuery, telegramClient, testUser);
+
+        verify(calendarMenuService, never()).sendCalendar(any(), org.mockito.ArgumentMatchers.anyInt(), any(), any());
+        ArgumentCaptor<AnswerCallbackQuery> cap = ArgumentCaptor.forClass(AnswerCallbackQuery.class);
+        verify(telegramClient).execute(cap.capture());
+        assertThat(cap.getValue().getText()).contains("❌");
     }
 
     @Test
