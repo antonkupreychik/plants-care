@@ -88,26 +88,6 @@ public class LocationMenuService {
         execute(client, message);
     }
 
-    public void sendPlantInLocationScreen(User user, Long plantId, TelegramClient client) {
-        Plant plant = locationService.getUserPlant(user.getId(), plantId);
-        Location location = plant.getLocation();
-
-        String text = String.format(
-                "🌿 *%s*\n\n📍 Сейчас стоит: %s",
-                plant.getName(),
-                location != null ? location.getDisplayName() : "без комнаты"
-        );
-
-        SendMessage message = SendMessage.builder()
-                .chatId(user.getTelegramChatId().toString())
-                .text(text)
-                .parseMode("Markdown")
-                .replyMarkup(buildPlantActionsKeyboard(plant))
-                .build();
-
-        execute(client, message);
-    }
-
     public void sendMovePlantDialog(User user, Long plantId, TelegramClient client) {
         Plant plant = locationService.getUserPlant(user.getId(), plantId);
         List<Location> locations = locationService.getUserLocations(user.getId());
@@ -208,7 +188,7 @@ public class LocationMenuService {
             rows.add(new InlineKeyboardRow(List.of(
                     InlineKeyboardButton.builder()
                             .text("🌿 " + plant.getName())
-                            .callbackData("PLANT:VIEW:" + plant.getId())
+                            .callbackData("PLANT:VIEW:" + plant.getId() + ":LOC:" + location.getId())
                             .build()
             )));
         }
@@ -239,37 +219,6 @@ public class LocationMenuService {
                         .callbackData("MENU:LOCATIONS")
                         .build()
         )));
-
-        return InlineKeyboardMarkup.builder()
-                .keyboard(rows)
-                .build();
-    }
-
-    private InlineKeyboardMarkup buildPlantActionsKeyboard(Plant plant) {
-        List<InlineKeyboardRow> rows = new ArrayList<>();
-
-        rows.add(new InlineKeyboardRow(List.of(
-                InlineKeyboardButton.builder()
-                        .text("📦 Переместить")
-                        .callbackData("PLANT:MOVE:" + plant.getId())
-                        .build()
-        )));
-
-        if (plant.getLocation() != null) {
-            rows.add(new InlineKeyboardRow(List.of(
-                    InlineKeyboardButton.builder()
-                            .text("⬅️ К комнате")
-                            .callbackData("LOCATION:VIEW:" + plant.getLocation().getId())
-                            .build()
-            )));
-        } else {
-            rows.add(new InlineKeyboardRow(List.of(
-                    InlineKeyboardButton.builder()
-                            .text("⬅️ К комнатам")
-                            .callbackData("MENU:LOCATIONS")
-                            .build()
-            )));
-        }
 
         return InlineKeyboardMarkup.builder()
                 .keyboard(rows)

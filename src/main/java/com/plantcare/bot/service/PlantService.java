@@ -1,10 +1,12 @@
 package com.plantcare.bot.service;
 
+import com.plantcare.bot.domain.CareHistory;
 import com.plantcare.bot.domain.CareSchedule;
 import com.plantcare.bot.domain.Plant;
 import com.plantcare.bot.domain.Species;
 import com.plantcare.bot.domain.User;
 import com.plantcare.bot.domain.enums.TaskType;
+import com.plantcare.bot.repository.CareHistoryRepository;
 import com.plantcare.bot.repository.CareScheduleRepository;
 import com.plantcare.bot.repository.PlantRepository;
 import com.plantcare.bot.repository.SpeciesRepository;
@@ -25,6 +27,7 @@ public class PlantService {
 
     private final PlantRepository plantRepository;
     private final CareScheduleRepository careScheduleRepository;
+    private final CareHistoryRepository careHistoryRepository;
     private final SpeciesRepository speciesRepository;
     private final LocationService locationService;
 
@@ -297,5 +300,96 @@ public class PlantService {
      */
     public static boolean isValidInterval(int days) {
         return days >= 1 && days <= 365;
+    }
+
+    /**
+     * Антидубль для отметки "сделано": если в течение DEDUP_SECONDS уже была запись
+     * такого же типа — игнорируем повторное нажатие. Совпадает с правилом в
+     * {@link NotificationCallbackService}, чтобы дребезг кнопок из карточки
+     * и из уведомления вёл себя одинаково.
+     */
+    private static final int CARE_DEDUP_SECONDS = 60;
+
+    /**
+     * Льготный период "вовремя": done считается on_time, если выполнено
+     * не позже nextDueAt + GRACE_PERIOD_HOURS.
+     */
+    private static final int CARE_GRACE_PERIOD_HOURS = 24;
+
+    /**
+     * Результат отметки выполнения. Возвращаем простой объект, чтобы вызывающий
+     * код мог решить, что показать пользователю (новая дата, "уже отмечено", и т.п.).
+     */
+    public record MarkCareDoneResult(
+            boolean wasDuplicate,
+            CareSchedule schedule,
+            CareHistory history,
+            LocalDateTime doneAt
+    ) {}
+
+    /**
+     * Отметить уход выполненным из карточки растения.
+     *
+     * Дублирует поведение {@link NotificationCallbackService} ("done"-действие)
+     * для случая, когда юзер сам открыл карточку и нажал кнопку быстрого ухода:
+     *   1. Если активного расписания этого типа у растения нет — возвращаем null.
+     *   2. Если за последние {@value #CARE_DEDUP_SECONDS} сек уже было "сделано" —
+     *      возвращаем wasDuplicate=true, в БД ничего не пишем.
+     *   3. Иначе пишем запись в care_history (с флагом on_time) и сдвигаем
+     *      next_due_at на интервал от фактического времени выполнения.
+     *
+     * @param userId   владелец растения (защита от чужого растения)
+     * @param plantId  ID растения
+     * @param taskType тип задачи (WATERING/MISTING/FERTILIZING)
+     * @return результат отметки или null, если расписание не найдено
+     */
+    @Transactional
+    public MarkCareDoneResult markCareDone(Long userId, Long plantId, TaskType taskType) {
+        Plant plant = plantRepository.findByUserIdAndIdAndArchivedAtIsNull(userId, plantId)
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Растение не найдено: id=" + plantId
+                ));
+
+        CareSchedule schedule = careScheduleRepository
+                .findByPlantIdAndTaskType(plant.getId(), taskType)
+                .filter(CareSchedule::isActive)
+                .orElse(null);
+
+        if (schedule == null) {
+            log.warn("Active schedule {} not found for plant {}", taskType, plant.getId());
+            return null;
+        }
+
+        LocalDateTime now = LocalDateTime.now();
+
+        // Дедуп — чтобы двойной тап по кнопке не создавал две записи
+        Optional<CareHistory> lastEntry = careHistoryRepository
+                .findFirstByPlantIdAndTaskTypeOrderByDoneAtDesc(plant.getId(), taskType);
+
+        if (lastEntry.isPresent()
+                && lastEntry.get().getDoneAt().plusSeconds(CARE_DEDUP_SECONDS).isAfter(now)) {
+            log.debug("Duplicate mark-done for plant {} {}, ignoring", plant.getId(), taskType);
+            return new MarkCareDoneResult(true, schedule, lastEntry.get(), now);
+        }
+
+        boolean wasOnTime = !now.isAfter(
+                schedule.getNextDueAt().plusHours(CARE_GRACE_PERIOD_HOURS)
+        );
+
+        CareHistory history = CareHistory.builder()
+                .plant(plant)
+                .taskType(taskType)
+                .doneAt(now)
+                .onTime(wasOnTime)
+                .build();
+        history = careHistoryRepository.save(history);
+
+        schedule.rescheduleFrom(now);
+        schedule = careScheduleRepository.save(schedule);
+
+        log.info("Plant {} {} marked as done from card (on_time={}, next due at {})",
+                plant.getId(), taskType, wasOnTime, schedule.getNextDueAt());
+
+        return new MarkCareDoneResult(false, schedule, history, now);
     }
 }

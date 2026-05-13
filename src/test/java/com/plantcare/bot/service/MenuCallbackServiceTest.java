@@ -31,6 +31,11 @@ class MenuCallbackServiceTest {
 
     @Mock private UserService userService;
     @Mock private PlantService plantService;
+    @Mock private LocationMenuService locationMenuService;
+    @Mock private LocationService locationService;
+    @Mock private MainMenuService mainMenuService;
+    @Mock private PlantMenuService plantMenuService;
+    @Mock private PlantCardService plantCardService;
     @Mock private TelegramClient telegramClient;
     @Mock private CallbackQuery callbackQuery;
     @Mock private Message message;
@@ -50,6 +55,7 @@ class MenuCallbackServiceTest {
         lenient().when(callbackQuery.getId()).thenReturn("cb-1");
         lenient().when(callbackQuery.getMessage()).thenReturn(message);
         lenient().when(message.getChatId()).thenReturn(100L);
+        lenient().when(message.getMessageId()).thenReturn(42);
     }
 
     @Test
@@ -83,16 +89,14 @@ class MenuCallbackServiceTest {
     }
 
     @Test
-    @DisplayName("MENU:ALL_PLANTS показывает заглушку")
-    void shouldShowStubForAllPlants() throws TelegramApiException {
+    @DisplayName("MENU:ALL_PLANTS открывает список «Мои растения» новым сообщением")
+    void shouldOpenMyPlantsListForAllPlants() {
         when(callbackQuery.getData()).thenReturn("MENU:ALL_PLANTS");
 
         service.handleCallback(callbackQuery, telegramClient, testUser);
 
-        ArgumentCaptor<AnswerCallbackQuery> captor = ArgumentCaptor.forClass(AnswerCallbackQuery.class);
-        verify(telegramClient).execute(captor.capture());
-
-        assertThat(captor.getValue().getText()).contains("Скоро");
+        // Новое сообщение: messageId=null (мы пришли из главного меню).
+        verify(plantMenuService).sendMyPlantsList(testUser, null, telegramClient);
         verify(userService, never()).updateState(any(), any());
     }
 
@@ -120,5 +124,154 @@ class MenuCallbackServiceTest {
         verify(telegramClient).execute(captor.capture());
 
         assertThat(captor.getValue().getText()).contains("❌");
+    }
+
+    // ==================== PLANT: callbacks (issue #26) ====================
+
+    @Test
+    @DisplayName("PLANT:VIEW:<id> открывает карточку с back=LIST в том же сообщении")
+    void shouldOpenPlantCardFromList() {
+        when(callbackQuery.getData()).thenReturn("PLANT:VIEW:7");
+
+        service.handleCallback(callbackQuery, telegramClient, testUser);
+
+        verify(plantCardService).showPlantCard(
+                testUser, 7L, 42, PlantCardService.BACK_TO_LIST, telegramClient
+        );
+    }
+
+    @Test
+    @DisplayName("PLANT:VIEW:<id>:LOC:<locId> открывает карточку с back в комнату")
+    void shouldOpenPlantCardWithLocationBackTarget() {
+        when(callbackQuery.getData()).thenReturn("PLANT:VIEW:7:LOC:5");
+
+        service.handleCallback(callbackQuery, telegramClient, testUser);
+
+        verify(plantCardService).showPlantCard(
+                testUser, 7L, 42,
+                PlantCardService.BACK_TO_LOCATION_PREFIX + "5",
+                telegramClient
+        );
+    }
+
+    @Test
+    @DisplayName("PLANT:LIST редактирует то же сообщение в список «Мои растения»")
+    void shouldRenderPlantsListInPlace() {
+        when(callbackQuery.getData()).thenReturn("PLANT:LIST");
+
+        service.handleCallback(callbackQuery, telegramClient, testUser);
+
+        verify(plantMenuService).sendMyPlantsList(testUser, 42, telegramClient);
+    }
+
+    @Test
+    @DisplayName("PLANT:CARE:<id>:WATERING отмечает уход и обновляет карточку")
+    void shouldMarkCareDoneAndRefreshCard() {
+        when(callbackQuery.getData()).thenReturn("PLANT:CARE:7:WATERING");
+
+        com.plantcare.bot.domain.CareSchedule schedule =
+                com.plantcare.bot.domain.CareSchedule.builder()
+                        .nextDueAt(java.time.LocalDateTime.now().plusDays(7))
+                        .build();
+        PlantService.MarkCareDoneResult result =
+                new PlantService.MarkCareDoneResult(false, schedule, null, java.time.LocalDateTime.now());
+
+        when(plantService.markCareDone(testUser.getId(), 7L,
+                com.plantcare.bot.domain.enums.TaskType.WATERING))
+                .thenReturn(result);
+
+        service.handleCallback(callbackQuery, telegramClient, testUser);
+
+        verify(plantService).markCareDone(testUser.getId(), 7L,
+                com.plantcare.bot.domain.enums.TaskType.WATERING);
+        verify(plantCardService).showPlantCard(
+                testUser, 7L, 42, PlantCardService.BACK_TO_LIST, telegramClient
+        );
+    }
+
+    @Test
+    @DisplayName("PLANT:CARE с дубликатом — карточка не перерисовывается, только alert")
+    void shouldNotRerenderOnDuplicateCare() throws TelegramApiException {
+        when(callbackQuery.getData()).thenReturn("PLANT:CARE:7:WATERING");
+
+        PlantService.MarkCareDoneResult duplicate =
+                new PlantService.MarkCareDoneResult(true, null, null, java.time.LocalDateTime.now());
+        when(plantService.markCareDone(any(), any(), any())).thenReturn(duplicate);
+
+        service.handleCallback(callbackQuery, telegramClient, testUser);
+
+        verify(plantCardService, never()).showPlantCard(any(), any(), any(), any(), any());
+
+        ArgumentCaptor<AnswerCallbackQuery> captor = ArgumentCaptor.forClass(AnswerCallbackQuery.class);
+        verify(telegramClient).execute(captor.capture());
+        assertThat(captor.getValue().getText()).contains("Уже отмечено");
+    }
+
+    @Test
+    @DisplayName("PLANT:CARE для растения без активного расписания — алёрт, карточка не трогается")
+    void shouldHandleMissingScheduleOnCare() throws TelegramApiException {
+        when(callbackQuery.getData()).thenReturn("PLANT:CARE:7:MISTING");
+        when(plantService.markCareDone(any(), any(), any())).thenReturn(null);
+
+        service.handleCallback(callbackQuery, telegramClient, testUser);
+
+        verify(plantCardService, never()).showPlantCard(any(), any(), any(), any(), any());
+
+        ArgumentCaptor<AnswerCallbackQuery> captor = ArgumentCaptor.forClass(AnswerCallbackQuery.class);
+        verify(telegramClient).execute(captor.capture());
+        assertThat(captor.getValue().getText()).contains("Расписание не настроено");
+    }
+
+    @Test
+    @DisplayName("PLANT:PHOTO:<id> делегирует sendPlantPhoto, не трогает карточку")
+    void shouldSendPlantPhoto() {
+        when(callbackQuery.getData()).thenReturn("PLANT:PHOTO:7");
+
+        service.handleCallback(callbackQuery, telegramClient, testUser);
+
+        verify(plantCardService).sendPlantPhoto(testUser, 7L, "cb-1", telegramClient);
+        verify(plantCardService, never()).showPlantCard(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("PLANT:SETTINGS:<id> открывает экран настроек в том же сообщении")
+    void shouldOpenSettingsScreen() {
+        when(callbackQuery.getData()).thenReturn("PLANT:SETTINGS:7");
+
+        service.handleCallback(callbackQuery, telegramClient, testUser);
+
+        verify(plantCardService).showSettingsScreen(
+                testUser, 7L, 42, PlantCardService.BACK_TO_LIST, telegramClient
+        );
+    }
+
+    @Test
+    @DisplayName("PLANT:SETTINGS с битым ID — алёрт об ошибке, карточка не трогается")
+    void shouldRejectMalformedSettingsCallback() throws TelegramApiException {
+        when(callbackQuery.getData()).thenReturn("PLANT:SETTINGS:not-a-number");
+
+        service.handleCallback(callbackQuery, telegramClient, testUser);
+
+        verify(plantCardService, never())
+                .showSettingsScreen(any(), any(), any(), any(), any());
+
+        ArgumentCaptor<AnswerCallbackQuery> captor = ArgumentCaptor.forClass(AnswerCallbackQuery.class);
+        verify(telegramClient).execute(captor.capture());
+        assertThat(captor.getValue().getText()).contains("❌");
+    }
+
+    @Test
+    @DisplayName("PLANT:MOVE_CONFIRM перемещает и сразу показывает карточку в новой комнате")
+    void shouldRefreshCardAfterMoveConfirm() {
+        when(callbackQuery.getData()).thenReturn("PLANT:MOVE_CONFIRM:7:5");
+
+        service.handleCallback(callbackQuery, telegramClient, testUser);
+
+        verify(plantService).movePlantToLocation(testUser.getId(), 7L, 5L);
+        verify(plantCardService).showPlantCard(
+                testUser, 7L, 42,
+                PlantCardService.BACK_TO_LOCATION_PREFIX + "5",
+                telegramClient
+        );
     }
 }
