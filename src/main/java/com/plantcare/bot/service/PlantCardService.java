@@ -1,5 +1,6 @@
 package com.plantcare.bot.service;
 
+import com.plantcare.bot.domain.CareHistory;
 import com.plantcare.bot.domain.CareSchedule;
 import com.plantcare.bot.domain.Location;
 import com.plantcare.bot.domain.Plant;
@@ -22,6 +23,8 @@ import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 import org.telegram.telegrambots.meta.generics.TelegramClient;
 
 import java.time.LocalDate;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -58,11 +61,13 @@ public class PlantCardService {
     public static final String BACK_TO_LOCATION_PREFIX = "LOC:";
 
     private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("dd.MM");
+    private static final DateTimeFormatter HISTORY_DATE_FMT = DateTimeFormatter.ofPattern("dd.MM");
 
     private final PlantService plantService;
     private final PlantRepository plantRepository;
     private final MainMenuService mainMenuService;
     private final UserService userService;
+    private final CareHistoryService careHistoryService;
 
     // =================================================================
     // 1) Карточка "только что создано" — используется визардом создания
@@ -666,6 +671,162 @@ public class PlantCardService {
     }
 
     // =================================================================
+    // 3) Экран «📜 История» (issue #51)
+    // =================================================================
+
+    /**
+     * Отрисовать экран истории ухода для растения с пагинацией.
+     *
+     * @param page        страница (0-based)
+     */
+    @Transactional(readOnly = true)
+    public void showHistoryScreen(
+            User user,
+            Long plantId,
+            int page,
+            Integer messageId,
+            String backTarget,
+            TelegramClient client
+    ) {
+        Plant plant = plantRepository.findByUserIdAndIdAndArchivedAtIsNull(user.getId(), plantId)
+                .orElse(null);
+        if (plant == null) {
+            sendTextMessage(user.getTelegramChatId(),
+                    "❌ Растение не найдено.", client);
+            return;
+        }
+
+        // Принудительно подтягиваем lazy-локацию для шапки.
+        if (plant.getLocation() != null) {
+            plant.getLocation().getName();
+        }
+
+        long total = careHistoryService.countHistory(plantId);
+        int pageSize = CareHistoryService.HISTORY_PAGE_SIZE;
+        int safePage = Math.max(0, page);
+        int totalPages = total == 0 ? 1 : (int) Math.ceil((double) total / pageSize);
+        if (safePage >= totalPages) {
+            safePage = totalPages - 1;
+        }
+
+        List<CareHistory> entries = careHistoryService.getHistoryPage(plantId, safePage);
+        CareHistoryService.PlantStats stats = careHistoryService.getPlantStats(plantId);
+        ZoneId tz = parseUserZone(user);
+
+        String text = buildHistoryText(plant, entries, stats, safePage, totalPages, total, tz);
+        InlineKeyboardMarkup keyboard = buildHistoryKeyboard(plant, safePage, totalPages, backTarget);
+
+        sendOrEditText(user.getTelegramChatId(), messageId, text, keyboard, client);
+    }
+
+    private String buildHistoryText(
+            Plant plant,
+            List<CareHistory> entries,
+            CareHistoryService.PlantStats stats,
+            int page,
+            int totalPages,
+            long total,
+            ZoneId tz
+    ) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("📜 *История ухода — ").append(escapeMd(plant.getName())).append("*\n\n");
+
+        if (entries.isEmpty()) {
+            sb.append("История пока пуста. Отметь первое действие в карточке 🌱");
+            return sb.toString();
+        }
+
+        for (CareHistory h : entries) {
+            sb.append(formatHistoryLine(h, tz)).append("\n");
+        }
+
+        sb.append("\n");
+
+        if (!stats.hasEnoughData()) {
+            sb.append("_Пока мало данных, продолжай ухаживать 🌱_");
+        } else {
+            sb.append("🔥 Стрик: ").append(stats.streak()).append(" выполнений подряд\n");
+            sb.append("✅ Вовремя: ").append(stats.onTimePct()).append("% за 30 дней\n");
+            sb.append("📊 Всего действий: ").append(stats.total());
+        }
+
+        if (totalPages > 1) {
+            sb.append("\n\n_Страница ").append(page + 1).append(" из ").append(totalPages).append("_");
+        }
+        return sb.toString();
+    }
+
+    private String formatHistoryLine(CareHistory h, ZoneId tz) {
+        LocalDate doneDay = h.getDoneAt()
+                .atOffset(ZoneOffset.UTC)
+                .atZoneSameInstant(tz)
+                .toLocalDate();
+        String date = doneDay.format(HISTORY_DATE_FMT);
+        String emoji = taskEmoji(h.getTaskType());
+        String verb = doneVerb(h.getTaskType()).toLowerCase();
+
+        String status;
+        if (h.isOnTime()) {
+            status = "вовремя";
+        } else {
+            // Просрочка — посчитаем на сколько дней (от ожидаемого срока).
+            // Здесь у нас нет CareSchedule, чтобы посчитать точно. Помечаем «с опозданием».
+            status = "с опозданием";
+        }
+        return date + " — " + emoji + " " + verb + " (" + status + ")";
+    }
+
+    private InlineKeyboardMarkup buildHistoryKeyboard(
+            Plant plant,
+            int page,
+            int totalPages,
+            String backTarget
+    ) {
+        List<InlineKeyboardRow> rows = new ArrayList<>();
+
+        if (totalPages > 1) {
+            InlineKeyboardRow nav = new InlineKeyboardRow();
+            if (page > 0) {
+                nav.add(InlineKeyboardButton.builder()
+                        .text("← Назад")
+                        .callbackData("PLANT:HISTORY:" + plant.getId() + ":" + (page - 1) + backSuffix(backTarget))
+                        .build());
+            }
+            // Индикатор страницы — non-clickable, callback на текущую (no-op).
+            nav.add(InlineKeyboardButton.builder()
+                    .text((page + 1) + "/" + totalPages)
+                    .callbackData("PLANT:HISTORY:" + plant.getId() + ":" + page + backSuffix(backTarget))
+                    .build());
+            if (page < totalPages - 1) {
+                nav.add(InlineKeyboardButton.builder()
+                        .text("Вперёд →")
+                        .callbackData("PLANT:HISTORY:" + plant.getId() + ":" + (page + 1) + backSuffix(backTarget))
+                        .build());
+            }
+            rows.add(nav);
+        }
+
+        rows.add(new InlineKeyboardRow(List.of(
+                InlineKeyboardButton.builder()
+                        .text("⬅️ К карточке")
+                        .callbackData(plantCardCallback(plant.getId(), backTarget))
+                        .build()
+        )));
+
+        return InlineKeyboardMarkup.builder().keyboard(rows).build();
+    }
+
+    private ZoneId parseUserZone(User user) {
+        String tz = user.getTimezone();
+        if (tz == null || tz.isBlank()) return ZoneOffset.UTC;
+        try {
+            return ZoneId.of(tz);
+        } catch (Exception e) {
+            return ZoneOffset.UTC;
+        }
+    }
+
+    // =================================================================
     // Рендер карточки
     // =================================================================
 
@@ -746,7 +907,7 @@ public class PlantCardService {
             rows.add(careRow);
         }
 
-        // 2) Вспомогательные действия: Фото (если есть), Настройки.
+        // 2) Вспомогательные действия: Фото (если есть), История, Настройки.
         InlineKeyboardRow auxRow = new InlineKeyboardRow();
         if (plant.getPhotoFileId() != null && !plant.getPhotoFileId().isBlank()) {
             auxRow.add(InlineKeyboardButton.builder()
@@ -754,6 +915,10 @@ public class PlantCardService {
                     .callbackData("PLANT:PHOTO:" + plant.getId())
                     .build());
         }
+        auxRow.add(InlineKeyboardButton.builder()
+                .text("📜 История")
+                .callbackData("PLANT:HISTORY:" + plant.getId() + ":0" + backSuffix(backTarget))
+                .build());
         auxRow.add(InlineKeyboardButton.builder()
                 .text("⚙️ Настройки")
                 .callbackData(plantSettingsCallback(plant.getId(), backTarget))

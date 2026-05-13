@@ -418,6 +418,29 @@ public class MenuCallbackService {
             return;
         }
 
+        // История ухода с пагинацией: PLANT:HISTORY:<id>:<page>[:LOC:<locId>]
+        if (data.startsWith("PLANT:HISTORY:")) {
+            String[] parts = data.substring("PLANT:HISTORY:".length()).split(":");
+            if (parts.length < 2) {
+                answerCallback(client, callbackId, "❌ Неверная команда");
+                return;
+            }
+            Long plantId;
+            int page;
+            try {
+                plantId = Long.parseLong(parts[0]);
+                page = Integer.parseInt(parts[1]);
+            } catch (NumberFormatException e) {
+                answerCallback(client, callbackId, "❌ Неверная команда");
+                return;
+            }
+            String backTarget = parseBackTarget(parts, 2);
+
+            plantCardService.showHistoryScreen(user, plantId, page, messageId, backTarget, client);
+            answerCallback(client, callbackId, "");
+            return;
+        }
+
         // Настройки: PLANT:SETTINGS:<id>[:LOC:<locId>]
         if (data.startsWith("PLANT:SETTINGS:")) {
             String[] parts = data.substring("PLANT:SETTINGS:".length()).split(":");

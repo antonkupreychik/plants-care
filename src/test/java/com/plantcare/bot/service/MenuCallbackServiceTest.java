@@ -234,6 +234,45 @@ class MenuCallbackServiceTest {
     }
 
     @Test
+    @DisplayName("PLANT:HISTORY:<id>:<page> открывает экран истории в том же сообщении")
+    void shouldOpenHistoryScreen() {
+        when(callbackQuery.getData()).thenReturn("PLANT:HISTORY:7:0");
+
+        service.handleCallback(callbackQuery, telegramClient, testUser);
+
+        verify(plantCardService).showHistoryScreen(
+                testUser, 7L, 0, 42, PlantCardService.BACK_TO_LIST, telegramClient
+        );
+    }
+
+    @Test
+    @DisplayName("PLANT:HISTORY:<id>:<page>:LOC:<locId> сохраняет back-target в комнату")
+    void shouldOpenHistoryWithLocationBack() {
+        when(callbackQuery.getData()).thenReturn("PLANT:HISTORY:7:2:LOC:9");
+
+        service.handleCallback(callbackQuery, telegramClient, testUser);
+
+        verify(plantCardService).showHistoryScreen(
+                testUser, 7L, 2, 42,
+                PlantCardService.BACK_TO_LOCATION_PREFIX + "9",
+                telegramClient
+        );
+    }
+
+    @Test
+    @DisplayName("PLANT:HISTORY с битым page — алёрт об ошибке")
+    void shouldRejectMalformedHistoryPage() throws TelegramApiException {
+        when(callbackQuery.getData()).thenReturn("PLANT:HISTORY:7:abc");
+
+        service.handleCallback(callbackQuery, telegramClient, testUser);
+
+        verify(plantCardService, never()).showHistoryScreen(any(), any(), org.mockito.ArgumentMatchers.anyInt(), any(), any(), any());
+        ArgumentCaptor<AnswerCallbackQuery> cap = ArgumentCaptor.forClass(AnswerCallbackQuery.class);
+        verify(telegramClient).execute(cap.capture());
+        assertThat(cap.getValue().getText()).contains("❌");
+    }
+
+    @Test
     @DisplayName("PLANT:SETTINGS:<id> открывает экран настроек в том же сообщении")
     void shouldOpenSettingsScreen() {
         when(callbackQuery.getData()).thenReturn("PLANT:SETTINGS:7");
