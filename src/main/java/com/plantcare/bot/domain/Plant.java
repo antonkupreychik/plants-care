@@ -59,6 +59,19 @@ public class Plant extends BaseEntity {
     @Column(name = "archived_at")
     private LocalDateTime archivedAt;
 
+    /**
+     * Endpoint режима акклиматизации (issue #75). Если задано и больше now() —
+     * растение в режиме акклиматизации. Очищается hourly-тиком после окончания.
+     */
+    @Column(name = "acclimation_until")
+    private LocalDateTime acclimationUntil;
+
+    /**
+     * Когда отправить следующий check-in вопрос «как растение?» в acclimation-режиме.
+     */
+    @Column(name = "acclimation_checkin_next_at")
+    private LocalDateTime acclimationCheckinNextAt;
+
     @OneToMany(mappedBy = "plant")
     @Builder.Default
     private List<CareSchedule> schedules = new ArrayList<>();
@@ -69,6 +82,11 @@ public class Plant extends BaseEntity {
 
     public void archive() {
         this.archivedAt = LocalDateTime.now();
+    }
+
+    /** issue #75: true, если сейчас активен режим акклиматизации. */
+    public boolean isInAcclimation(LocalDateTime now) {
+        return acclimationUntil != null && acclimationUntil.isAfter(now);
     }
 
     public void addSchedule(CareSchedule schedule) {

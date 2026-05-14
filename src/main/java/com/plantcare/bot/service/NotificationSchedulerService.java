@@ -59,6 +59,11 @@ public class NotificationSchedulerService {
         // логика ответов (DRY/WET/UNKNOWN), которая не вписывается в "Сделал всё".
         List<CareSchedule> standaloneSoilChecks = new ArrayList<>();
 
+        // WATERING для растений в режиме акклиматизации (issue #75) тоже отдельно —
+        // у них мягкий «проверь грунт» промпт с тремя вариантами, который не вписывается
+        // в дайджест.
+        List<CareSchedule> standaloneAcclimWaterings = new ArrayList<>();
+
         for (CareSchedule schedule : dueSchedules) {
             try {
                 if (!shouldSend(schedule, now)) {
@@ -66,6 +71,11 @@ public class NotificationSchedulerService {
                 }
                 if (schedule.getTaskType() == TaskType.SOIL_CHECK) {
                     standaloneSoilChecks.add(schedule);
+                    continue;
+                }
+                if (schedule.getTaskType() == TaskType.WATERING
+                        && schedule.getPlant().isInAcclimation(now)) {
+                    standaloneAcclimWaterings.add(schedule);
                     continue;
                 }
                 User user = schedule.getPlant().getUser();
@@ -82,6 +92,14 @@ public class NotificationSchedulerService {
                 sendNotification(soilCheck.getPlant().getUser(), soilCheck.getPlant(), soilCheck);
             } catch (Exception e) {
                 log.error("Error sending soil-check notification: {}", e.getMessage(), e);
+            }
+        }
+
+        for (CareSchedule acclim : standaloneAcclimWaterings) {
+            try {
+                sendNotification(acclim.getPlant().getUser(), acclim.getPlant(), acclim);
+            } catch (Exception e) {
+                log.error("Error sending acclimation watering notification: {}", e.getMessage(), e);
             }
         }
 
@@ -157,8 +175,15 @@ public class NotificationSchedulerService {
     }
 
     private void sendNotification(User user, Plant plant, CareSchedule schedule) {
-        String text = buildNotificationText(plant, schedule.getTaskType());
-        InlineKeyboardMarkup keyboard = buildKeyboard(schedule.getId(), schedule.getTaskType());
+        boolean inAcclimation = plant.isInAcclimation(LocalDateTime.now())
+                && schedule.getTaskType() == TaskType.WATERING;
+
+        String text = inAcclimation
+                ? buildAcclimationWateringText(plant)
+                : buildNotificationText(plant, schedule.getTaskType());
+        InlineKeyboardMarkup keyboard = inAcclimation
+                ? buildAcclimationSoilCheckKeyboard(schedule.getId())
+                : buildKeyboard(schedule.getId(), schedule.getTaskType());
 
         SendMessage message = SendMessage.builder()
                 .chatId(user.getTelegramChatId().toString())
@@ -170,11 +195,34 @@ public class NotificationSchedulerService {
             telegramClientProvider.getTelegramClient().execute(message);
             saveNotificationLog(plant, schedule.getTaskType());
 
-            log.info("Sent notification for plant '{}' id={} to user {}",
-                    plant.getName(), plant.getId(), user.getTelegramChatId());
+            log.info("Sent notification for plant '{}' id={} to user {} (acclimation={})",
+                    plant.getName(), plant.getId(), user.getTelegramChatId(), inAcclimation);
         } catch (TelegramApiException e) {
             handleTelegramError(user, e);
         }
+    }
+
+    private String buildAcclimationWateringText(Plant plant) {
+        return "💧 По плану сегодня полив: " + plant.getName() + ".\n"
+                + "Проверь грунт — сухо на 2–3 см?";
+    }
+
+    private InlineKeyboardMarkup buildAcclimationSoilCheckKeyboard(Long scheduleId) {
+        InlineKeyboardButton dry = InlineKeyboardButton.builder()
+                .text("✅ Сухо")
+                .callbackData("v1:accl_soil:" + scheduleId + ":DRY")
+                .build();
+        InlineKeyboardButton wet = InlineKeyboardButton.builder()
+                .text("❌ Влажно")
+                .callbackData("v1:accl_soil:" + scheduleId + ":WET")
+                .build();
+        InlineKeyboardButton unk = InlineKeyboardButton.builder()
+                .text("🤷 Не знаю")
+                .callbackData("v1:accl_soil:" + scheduleId + ":UNKNOWN")
+                .build();
+        return InlineKeyboardMarkup.builder()
+                .keyboardRow(new InlineKeyboardRow(dry, wet, unk))
+                .build();
     }
 
     private void sendDigest(User user, List<CareSchedule> schedules) {

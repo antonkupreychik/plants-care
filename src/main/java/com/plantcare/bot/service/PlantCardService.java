@@ -6,6 +6,7 @@ import com.plantcare.bot.domain.Location;
 import com.plantcare.bot.domain.Plant;
 import com.plantcare.bot.domain.PlantEvent;
 import com.plantcare.bot.domain.User;
+import com.plantcare.bot.domain.enums.ConversationState;
 import com.plantcare.bot.domain.enums.PlantEventType;
 import com.plantcare.bot.domain.enums.TaskType;
 import com.plantcare.bot.repository.PlantRepository;
@@ -26,6 +27,7 @@ import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 import org.telegram.telegrambots.meta.generics.TelegramClient;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
@@ -78,22 +80,89 @@ public class PlantCardService {
     // =================================================================
 
     /**
-     * Финальный шаг создания растения:
-     *   1) показать карточку (с фото или без)
-     *   2) сбросить пользователя в IDLE и очистить stateData
-     *   3) показать главное меню
+     * Финальный шаг создания растения. Теперь блокирующий: вместо немедленного
+     * показа карточки сначала задаём вопрос про акклиматизацию (issue #75) —
+     * пользователь должен ответить, и только после этого:
+     *   1) включаем (или нет) acclimation
+     *   2) показываем карточку
+     *   3) сбрасываем state, отправляем главное меню
+     *
+     * Завершение этого flow живёт в {@link #completePlantCreationAfterAcclimation}.
      */
     @Transactional
     public void finishPlantCreation(User user, Plant plant, TelegramClient client) {
-        sendCreatedPlantCard(user, plant, client);
+        userService.updateState(user, ConversationState.AWAITING_PLANT_ACCLIMATION_CHOICE);
+        userService.setStateData(user, "acclimation_plant_id", String.valueOf(plant.getId()));
+
+        InlineKeyboardMarkup keyboard = InlineKeyboardMarkup.builder()
+                .keyboardRow(new InlineKeyboardRow(List.of(
+                        InlineKeyboardButton.builder()
+                                .text("✅ Да, новое")
+                                .callbackData("PLANT:ACCL:YES:" + plant.getId())
+                                .build(),
+                        InlineKeyboardButton.builder()
+                                .text("❌ Нет")
+                                .callbackData("PLANT:ACCL:NO:" + plant.getId())
+                                .build()
+                )))
+                .build();
+
+        String text = "✅ Растение *" + escapeMd(plant.getName()) + "* добавлено!\n\n"
+                + "🆕 Это новое растение (недавно куплено или переехало)?\n\n"
+                + "_Если да — включу режим акклиматизации на "
+                + PlantAcclimationService.ACCLIMATION_DAYS
+                + " дней: буду напоминать мягче и просить проверять грунт._";
+
+        sendTextWithKeyboard(user.getTelegramChatId(), text, keyboard, client);
+
+        log.info(
+                "Plant creation -> awaiting acclimation choice for user {}, plant={}",
+                user.getTelegramChatId(),
+                plant.getId()
+        );
+    }
+
+    /**
+     * Завершение создания после ответа на вопрос про акклиматизацию (issue #75).
+     * Включает или не включает режим, показывает карточку, главное меню,
+     * сбрасывает state.
+     */
+    @Transactional
+    public void completePlantCreationAfterAcclimation(
+            User user, Plant plant, boolean acclimationEnabled, TelegramClient client
+    ) {
+        // Перезагружаем растение в ТЕКУЩЕЙ транзакции: переданный plant приходит
+        // из PlantAcclimationService.enable() / plantService.getPlantForUser(), чьи
+        // транзакции уже закрыты — обращение к lazy plant.getLocation() в этой
+        // сессии падает в LazyInitializationException. Свежая загрузка привязывает
+        // entity к нашей текущей сессии и позволяет дёрнуть location без проблем.
+        Plant fresh = plantRepository.findById(plant.getId()).orElse(null);
+        if (fresh == null) {
+            log.error(
+                    "Plant {} disappeared during wizard completion for user {}",
+                    plant.getId(),
+                    user.getTelegramChatId()
+            );
+            return;
+        }
+
+        if (acclimationEnabled) {
+            String confirm = "🆕 Ок, включаю акклиматизацию на "
+                    + PlantAcclimationService.ACCLIMATION_DAYS + " дней.\n"
+                    + "Буду напоминать мягче и просить проверять грунт/листья.";
+            sendTextMessage(user.getTelegramChatId(), confirm, client);
+        }
+
+        sendCreatedPlantCard(user, fresh, client);
 
         userService.resetToIdle(user);
         mainMenuService.sendMainMenu(user, client);
 
         log.info(
-                "Plant creation completed for user {}, plant={}",
+                "Plant creation completed for user {}, plant={}, acclimation={}",
                 user.getTelegramChatId(),
-                plant.getId()
+                fresh.getId(),
+                acclimationEnabled
         );
     }
 
@@ -1077,6 +1146,13 @@ public class PlantCardService {
             sb.append("📷 Фото загружено\n");
         }
 
+        // issue #75: баннер режима акклиматизации
+        if (plant.isInAcclimation(LocalDateTime.now())) {
+            sb.append("🆕 *Акклиматизация:* до ")
+                    .append(plant.getAcclimationUntil().toLocalDate().format(DATE_FMT))
+                    .append("\n");
+        }
+
         if (plant.getNotes() != null && !plant.getNotes().isBlank()) {
             sb.append("\n📝 _").append(escapeMd(plant.getNotes().trim())).append("_\n");
         }
@@ -1171,6 +1247,16 @@ public class PlantCardService {
                 .callbackData("PLANT:EVENT:LIST:" + plant.getId() + ":0" + backSuffix(backTarget))
                 .build());
         rows.add(eventsRow);
+
+        // 2c) Кнопка выключения акклиматизации (issue #75) — показываем только если режим активен.
+        if (plant.isInAcclimation(LocalDateTime.now())) {
+            rows.add(new InlineKeyboardRow(List.of(
+                    InlineKeyboardButton.builder()
+                            .text("🛑 Выключить акклиматизацию")
+                            .callbackData("PLANT:ACCL:DISABLE:" + plant.getId() + backSuffix(backTarget))
+                            .build()
+            )));
+        }
 
         // 3) Назад.
         rows.add(new InlineKeyboardRow(List.of(buildBackButton(backTarget))));

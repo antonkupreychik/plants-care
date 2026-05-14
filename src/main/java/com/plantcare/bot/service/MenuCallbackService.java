@@ -43,6 +43,7 @@ public class MenuCallbackService {
     private final PlantTemplateService plantTemplateService;
     private final NotificationCallbackService notificationCallbackService;
     private final PlantEventService plantEventService;
+    private final PlantAcclimationService plantAcclimationService;
 
     private record LocationPreset(String name, String emoji) {
     }
@@ -544,6 +545,15 @@ public class MenuCallbackService {
             return;
         }
 
+        // Акклиматизация (issue #75):
+        //   PLANT:ACCL:YES:<plantId>     — wizard: «новое», включить режим
+        //   PLANT:ACCL:NO:<plantId>      — wizard: «не новое», карточка как обычно
+        //   PLANT:ACCL:DISABLE:<plantId>[:LOC:<locId>] — выключить режим из карточки
+        if (data.startsWith("PLANT:ACCL:")) {
+            handlePlantAcclimationCallback(data, user, messageId, callbackId, client);
+            return;
+        }
+
         // Настройки: PLANT:SETTINGS:<id>[:LOC:<locId>]
         if (data.startsWith("PLANT:SETTINGS:")) {
             String[] parts = data.substring("PLANT:SETTINGS:".length()).split(":");
@@ -998,6 +1008,70 @@ public class MenuCallbackService {
                 String backTarget = parseBackTarget(parts, 3);
                 plantCardService.showEventsScreen(user, plantId, page, messageId, backTarget, client);
                 answerCallback(client, callbackId, "");
+            }
+            default -> answerCallback(client, callbackId, "❌ Неизвестное действие");
+        }
+    }
+
+    /**
+     * Акклиматизация растения (issue #75).
+     *
+     * Форматы:
+     *   PLANT:ACCL:YES:<plantId>                       — wizard «да, новое»
+     *   PLANT:ACCL:NO:<plantId>                        — wizard «нет, не новое»
+     *   PLANT:ACCL:DISABLE:<plantId>[:LOC:<locId>]     — выключить режим из карточки
+     */
+    private void handlePlantAcclimationCallback(
+            String data, User user, Integer messageId, String callbackId, TelegramClient client
+    ) {
+        String[] parts = data.substring("PLANT:ACCL:".length()).split(":");
+        if (parts.length < 2) {
+            answerCallback(client, callbackId, "❌ Неверная команда");
+            return;
+        }
+
+        String action = parts[0];
+        Long plantId;
+        try {
+            plantId = Long.parseLong(parts[1]);
+        } catch (NumberFormatException e) {
+            answerCallback(client, callbackId, "❌ Неверный ID");
+            return;
+        }
+
+        switch (action) {
+            case "YES" -> {
+                com.plantcare.bot.domain.Plant plant =
+                        plantAcclimationService.enable(user, plantId);
+                if (plant == null) {
+                    answerCallback(client, callbackId, "❌ Растение не найдено");
+                    return;
+                }
+                answerCallback(client, callbackId, "🆕 Включил акклиматизацию");
+                plantCardService.completePlantCreationAfterAcclimation(user, plant, true, client);
+            }
+            case "NO" -> {
+                com.plantcare.bot.domain.Plant plant = plantService
+                        .getPlantForUser(user.getId(), plantId)
+                        .orElse(null);
+                if (plant == null) {
+                    answerCallback(client, callbackId, "❌ Растение не найдено");
+                    return;
+                }
+                answerCallback(client, callbackId, "");
+                plantCardService.completePlantCreationAfterAcclimation(user, plant, false, client);
+            }
+            case "DISABLE" -> {
+                String backTarget = parseBackTarget(parts, 2);
+                com.plantcare.bot.domain.Plant plant =
+                        plantAcclimationService.disable(user, plantId);
+                if (plant == null) {
+                    answerCallback(client, callbackId, "❌ Растение не найдено");
+                    return;
+                }
+                answerCallback(client, callbackId, "Ок, дальше работаем в обычном режиме");
+                // Перерисовываем карточку — теперь без баннера и без кнопки выключения.
+                plantCardService.showPlantCard(user, plantId, messageId, backTarget, client);
             }
             default -> answerCallback(client, callbackId, "❌ Неизвестное действие");
         }
