@@ -45,6 +45,7 @@ public class NotificationSchedulerService {
     private final NotificationDigestRepository notificationDigestRepository;
     private final UserRepository userRepository;
     private final TelegramClientProvider telegramClientProvider;
+    private final SchedulerHealthTracker schedulerHealthTracker;
 
     @Scheduled(fixedRate = 60_000)
     @Transactional
@@ -79,6 +80,14 @@ public class NotificationSchedulerService {
                 log.error("Error sending notifications group: {}", e.getMessage(), e);
             }
         }
+
+        // Фиксируем успешное завершение тика для healthcheck (issue #28).
+        // Запись делается в самом конце: если до сюда не дошли (например, БД отвалилась
+        // при загрузке dueSchedules или тик упал в неожиданном RuntimeException) —
+        // таймстемп не обновится, и через max-tick-age health indicator вернёт DOWN.
+        // AtomicReference.set() не участвует в JPA-транзакции, так что rollback
+        // окружающего @Transactional на эту запись не повлияет.
+        schedulerHealthTracker.recordTick();
     }
 
     private boolean shouldSend(CareSchedule schedule, LocalDateTime now) {

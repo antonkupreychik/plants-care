@@ -62,6 +62,9 @@ class NotificationSchedulerServiceTest {
     @Mock
     private TelegramClient telegramClient;
 
+    @Mock
+    private SchedulerHealthTracker schedulerHealthTracker;
+
     @InjectMocks
     private NotificationSchedulerService service;
 
@@ -123,6 +126,33 @@ class NotificationSchedulerServiceTest {
 
             verify(notificationDigestRepository, never()).save(any());
             verify(notificationLogRepository).save(any(NotificationLog.class));
+            // Тик зафиксирован после успешной итерации (issue #28).
+            verify(schedulerHealthTracker).recordTick();
+        }
+
+        @Test
+        @DisplayName("recordTick вызывается даже когда расписаний нет (короткая итерация)")
+        void shouldRecordTickEvenWhenNoSchedules() {
+            when(careScheduleRepository.findDueSchedules(any())).thenReturn(List.of());
+
+            service.checkAndSendNotifications();
+
+            verify(schedulerHealthTracker).recordTick();
+        }
+
+        @Test
+        @DisplayName("recordTick НЕ вызывается, если findDueSchedules бросает (тик не доехал)")
+        void shouldNotRecordTickWhenIterationFailsEarly() {
+            when(careScheduleRepository.findDueSchedules(any()))
+                    .thenThrow(new RuntimeException("DB hiccup"));
+
+            try {
+                service.checkAndSendNotifications();
+            } catch (RuntimeException expected) {
+                // ожидаемо, тик не завершился успешно
+            }
+
+            verify(schedulerHealthTracker, org.mockito.Mockito.never()).recordTick();
         }
 
         @Test

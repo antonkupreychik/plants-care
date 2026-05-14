@@ -7,10 +7,7 @@ import com.plantcare.bot.domain.User;
 import com.plantcare.bot.domain.enums.ConversationState;
 import com.plantcare.bot.domain.enums.TaskType;
 import com.plantcare.bot.repository.PlantRepository;
-import com.plantcare.bot.service.LocationService;
-import com.plantcare.bot.service.MainMenuService;
-import com.plantcare.bot.service.PlantService;
-import com.plantcare.bot.service.UserService;
+import com.plantcare.bot.service.*;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -54,6 +51,9 @@ class PlantCreationStateHandlerTests {
 
     @Mock
     private TelegramClient telegramClient;
+
+    @Mock
+    private PlantTemplateService plantTemplateService;
 
     @Mock
     private MainMenuService mainMenuService;
@@ -107,7 +107,7 @@ class PlantCreationStateHandlerTests {
     @Test
     void testSpeciesChoiceHandler_SelectSpecies() throws TelegramApiException {
         AwaitingPlantSpeciesChoiceStateHandler handler =
-                new AwaitingPlantSpeciesChoiceStateHandler(userService, plantService);
+                new AwaitingPlantSpeciesChoiceStateHandler(userService, plantService, plantTemplateService);
 
         Update update = createCallbackUpdate("SPECIES:1");
         when(plantService.getSpeciesById(1L)).thenReturn(Optional.of(testSpecies));
@@ -123,7 +123,7 @@ class PlantCreationStateHandlerTests {
     @Test
     void testSpeciesChoiceHandler_SelectCustom() throws TelegramApiException {
         AwaitingPlantSpeciesChoiceStateHandler handler =
-                new AwaitingPlantSpeciesChoiceStateHandler(userService, plantService);
+                new AwaitingPlantSpeciesChoiceStateHandler(userService, plantService, plantTemplateService);
 
         Update update = createCallbackUpdate("SPECIES:CUSTOM");
 
@@ -138,7 +138,7 @@ class PlantCreationStateHandlerTests {
     @Test
     void testSpeciesChoiceHandler_SelectSearch() throws TelegramApiException {
         AwaitingPlantSpeciesChoiceStateHandler handler =
-                new AwaitingPlantSpeciesChoiceStateHandler(userService, plantService);
+                new AwaitingPlantSpeciesChoiceStateHandler(userService, plantService, plantTemplateService);
 
         Update update = createCallbackUpdate("SPECIES:SEARCH");
 
@@ -152,7 +152,7 @@ class PlantCreationStateHandlerTests {
     @Test
     void testSpeciesChoiceHandler_InvalidSpeciesId() {
         AwaitingPlantSpeciesChoiceStateHandler handler =
-                new AwaitingPlantSpeciesChoiceStateHandler(userService, plantService);
+                new AwaitingPlantSpeciesChoiceStateHandler(userService, plantService, plantTemplateService);
 
         Update update = createCallbackUpdate("SPECIES:INVALID");
 

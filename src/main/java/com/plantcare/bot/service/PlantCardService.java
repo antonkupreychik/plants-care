@@ -247,6 +247,13 @@ public class PlantCardService {
                         .callbackData("PLANT:MOVE:" + plant.getId())
                         .build()
         )));
+        // issue #68: сохранение растения как шаблон
+        rows.add(new InlineKeyboardRow(List.of(
+                InlineKeyboardButton.builder()
+                        .text("💾 Сохранить как шаблон")
+                        .callbackData("PLANT:SAVE_TPL:" + plant.getId() + backSuffix(backTarget))
+                        .build()
+        )));
 
         // Расписания — если есть хотя бы одно активное, даём «Ближайшее».
         // Управление вкл/выкл всех трёх — отдельной страницей.

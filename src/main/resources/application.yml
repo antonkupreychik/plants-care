@@ -64,6 +64,16 @@ management:
     health:
       show-details: when-authorized
 
+# Параметры приложения (issue #28: healthcheck шедулера)
+plants:
+  scheduler:
+    health:
+      # Максимально допустимый возраст последнего тика, после которого health
+      # компонент 'scheduler' начнёт возвращать DOWN. ISO-8601 duration.
+      # Шедулер тикает раз в 60 секунд, дефолт 15 мин = 15 пропущенных тиков подряд.
+      # Для более агрессивного мониторинга можно поставить PT3M (3 пропуска).
+      max-tick-age: ${PLANTS_SCHEDULER_MAX_TICK_AGE:PT15M}
+
 # Telegram (placeholder, используется со следующей задачи)
 telegram:
   bot:
