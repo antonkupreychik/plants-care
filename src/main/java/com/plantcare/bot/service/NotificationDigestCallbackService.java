@@ -213,6 +213,7 @@ public class NotificationDigestCallbackService {
             case WATERING -> "полить";
             case MISTING -> "опрыскать";
             case FERTILIZING -> "удобрить";
+            case SOIL_CHECK -> "проверить грунт";
         };
     }
 

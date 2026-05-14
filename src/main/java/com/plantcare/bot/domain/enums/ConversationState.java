@@ -17,6 +17,7 @@ public enum ConversationState {
     AWAITING_PLANT_MISTING_SETUP,      // Настройка опрыскивания (после создания)
     AWAITING_PLANT_FERTILIZING_SETUP,  // Настройка удобрения (после опрыскивания)
     AWAITING_PLANT_PHOTO,              // Загрузка фото растения (после удобрения)
+    AWAITING_PLANT_ACCLIMATION_CHOICE, // issue #75: «Это новое растение?» — блокирующий шаг
 
     // Работа с комнатами
     AWAITING_LOCATION_RENAME,

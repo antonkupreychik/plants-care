@@ -3,6 +3,7 @@ package com.plantcare.bot.service;
 import com.plantcare.bot.domain.PlantTemplate;
 import com.plantcare.bot.domain.User;
 import com.plantcare.bot.domain.enums.ConversationState;
+import com.plantcare.bot.domain.enums.PlantEventType;
 import com.plantcare.bot.domain.enums.TaskType;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -40,6 +41,9 @@ public class MenuCallbackService {
     private final PlantCardService plantCardService;
     private final CalendarMenuService calendarMenuService;
     private final PlantTemplateService plantTemplateService;
+    private final NotificationCallbackService notificationCallbackService;
+    private final PlantEventService plantEventService;
+    private final PlantAcclimationService plantAcclimationService;
 
     private record LocationPreset(String name, String emoji) {
     }
@@ -419,6 +423,33 @@ public class MenuCallbackService {
             }
 
             try {
+                // issue #71: WATERING — двухшаговый flow с уточнениями (обильно? / сухая?).
+                // MISTING/FERTILIZING/SOIL_CHECK — старая логика немедленной отметки.
+                if (taskType == TaskType.WATERING) {
+                    com.plantcare.bot.domain.Plant plant = plantService
+                            .getPlantForUser(user.getId(), plantId)
+                            .orElse(null);
+                    if (plant == null) {
+                        answerCallback(client, callbackId, "❌ Растение не найдено");
+                        return;
+                    }
+                    com.plantcare.bot.domain.CareSchedule wateringSchedule = plantService
+                            .getActiveSchedules(plantId).stream()
+                            .filter(s -> s.getTaskType() == TaskType.WATERING)
+                            .findFirst()
+                            .orElse(null);
+                    if (wateringSchedule == null) {
+                        answerCallback(client, callbackId, "❌ Расписание не настроено");
+                        return;
+                    }
+                    notificationCallbackService.startWateringDetailsFlow(
+                            wateringSchedule.getId(), plant.getName(),
+                            user.getTelegramChatId(), client
+                    );
+                    answerCallback(client, callbackId, "");
+                    return;
+                }
+
                 PlantService.MarkCareDoneResult result =
                         plantService.markCareDone(user.getId(), plantId, taskType);
 
@@ -502,6 +533,24 @@ public class MenuCallbackService {
 
             plantCardService.showHistoryScreen(user, plantId, page, messageId, backTarget, client);
             answerCallback(client, callbackId, "");
+            return;
+        }
+
+        // Журнал событий (issue #76):
+        //   PLANT:EVENT:ADD:<plantId>[:LOC:<locId>]            — меню типов
+        //   PLANT:EVENT:SAVE:<plantId>:<TYPE>[:LOC:<locId>]    — сохранить событие
+        //   PLANT:EVENT:LIST:<plantId>:<page>[:LOC:<locId>]    — журнал с пагинацией
+        if (data.startsWith("PLANT:EVENT:")) {
+            handlePlantEventCallback(data, user, messageId, callbackId, client);
+            return;
+        }
+
+        // Акклиматизация (issue #75):
+        //   PLANT:ACCL:YES:<plantId>     — wizard: «новое», включить режим
+        //   PLANT:ACCL:NO:<plantId>      — wizard: «не новое», карточка как обычно
+        //   PLANT:ACCL:DISABLE:<plantId>[:LOC:<locId>] — выключить режим из карточки
+        if (data.startsWith("PLANT:ACCL:")) {
+            handlePlantAcclimationCallback(data, user, messageId, callbackId, client);
             return;
         }
 
@@ -882,6 +931,153 @@ public class MenuCallbackService {
     }
 
     /**
+     * Журнал событий растения (issue #76).
+     *
+     * Форматы callback_data:
+     *   PLANT:EVENT:ADD:<plantId>[:LOC:<locId>]            — открыть меню типов
+     *   PLANT:EVENT:SAVE:<plantId>:<TYPE>[:LOC:<locId>]    — сохранить событие
+     *   PLANT:EVENT:LIST:<plantId>:<page>[:LOC:<locId>]    — журнал с пагинацией
+     */
+    private void handlePlantEventCallback(
+            String data, User user, Integer messageId, String callbackId, TelegramClient client
+    ) {
+        String[] parts = data.substring("PLANT:EVENT:".length()).split(":");
+        if (parts.length < 2) {
+            answerCallback(client, callbackId, "❌ Неверная команда");
+            return;
+        }
+
+        String action = parts[0];
+        Long plantId;
+        try {
+            plantId = Long.parseLong(parts[1]);
+        } catch (NumberFormatException e) {
+            answerCallback(client, callbackId, "❌ Неверный ID");
+            return;
+        }
+
+        switch (action) {
+            case "ADD" -> {
+                String backTarget = parseBackTarget(parts, 2);
+                plantCardService.showEventTypeMenu(user, plantId, messageId, backTarget, client);
+                answerCallback(client, callbackId, "");
+            }
+            case "SAVE" -> {
+                if (parts.length < 3) {
+                    answerCallback(client, callbackId, "❌ Неверная команда");
+                    return;
+                }
+                PlantEventType type;
+                try {
+                    type = PlantEventType.valueOf(parts[2]);
+                } catch (IllegalArgumentException e) {
+                    answerCallback(client, callbackId, "❌ Неизвестный тип события");
+                    return;
+                }
+                String backTarget = parseBackTarget(parts, 3);
+
+                PlantEventService.AddResult result = plantEventService.addEvent(user, plantId, type);
+
+                if (result.wasNotFound()) {
+                    answerCallback(client, callbackId, "❌ Растение не найдено");
+                    return;
+                }
+
+                String label = plantCardService.eventShortLabel(type);
+                String alertText = result.wasDuplicate()
+                        ? "Уже отмечено!"
+                        : "✅ Событие «" + label + "» сохранено в историю";
+                answerCallback(client, callbackId, alertText);
+
+                // Возвращаем юзера в карточку — он только что что-то сделал
+                // и логично увидеть актуальное состояние.
+                plantCardService.showPlantCard(user, plantId, messageId, backTarget, client);
+            }
+            case "LIST" -> {
+                if (parts.length < 3) {
+                    answerCallback(client, callbackId, "❌ Неверная команда");
+                    return;
+                }
+                int page;
+                try {
+                    page = Integer.parseInt(parts[2]);
+                } catch (NumberFormatException e) {
+                    answerCallback(client, callbackId, "❌ Неверная команда");
+                    return;
+                }
+                String backTarget = parseBackTarget(parts, 3);
+                plantCardService.showEventsScreen(user, plantId, page, messageId, backTarget, client);
+                answerCallback(client, callbackId, "");
+            }
+            default -> answerCallback(client, callbackId, "❌ Неизвестное действие");
+        }
+    }
+
+    /**
+     * Акклиматизация растения (issue #75).
+     *
+     * Форматы:
+     *   PLANT:ACCL:YES:<plantId>                       — wizard «да, новое»
+     *   PLANT:ACCL:NO:<plantId>                        — wizard «нет, не новое»
+     *   PLANT:ACCL:DISABLE:<plantId>[:LOC:<locId>]     — выключить режим из карточки
+     */
+    private void handlePlantAcclimationCallback(
+            String data, User user, Integer messageId, String callbackId, TelegramClient client
+    ) {
+        String[] parts = data.substring("PLANT:ACCL:".length()).split(":");
+        if (parts.length < 2) {
+            answerCallback(client, callbackId, "❌ Неверная команда");
+            return;
+        }
+
+        String action = parts[0];
+        Long plantId;
+        try {
+            plantId = Long.parseLong(parts[1]);
+        } catch (NumberFormatException e) {
+            answerCallback(client, callbackId, "❌ Неверный ID");
+            return;
+        }
+
+        switch (action) {
+            case "YES" -> {
+                com.plantcare.bot.domain.Plant plant =
+                        plantAcclimationService.enable(user, plantId);
+                if (plant == null) {
+                    answerCallback(client, callbackId, "❌ Растение не найдено");
+                    return;
+                }
+                answerCallback(client, callbackId, "🆕 Включил акклиматизацию");
+                plantCardService.completePlantCreationAfterAcclimation(user, plant, true, client);
+            }
+            case "NO" -> {
+                com.plantcare.bot.domain.Plant plant = plantService
+                        .getPlantForUser(user.getId(), plantId)
+                        .orElse(null);
+                if (plant == null) {
+                    answerCallback(client, callbackId, "❌ Растение не найдено");
+                    return;
+                }
+                answerCallback(client, callbackId, "");
+                plantCardService.completePlantCreationAfterAcclimation(user, plant, false, client);
+            }
+            case "DISABLE" -> {
+                String backTarget = parseBackTarget(parts, 2);
+                com.plantcare.bot.domain.Plant plant =
+                        plantAcclimationService.disable(user, plantId);
+                if (plant == null) {
+                    answerCallback(client, callbackId, "❌ Растение не найдено");
+                    return;
+                }
+                answerCallback(client, callbackId, "Ок, дальше работаем в обычном режиме");
+                // Перерисовываем карточку — теперь без баннера и без кнопки выключения.
+                plantCardService.showPlantCard(user, plantId, messageId, backTarget, client);
+            }
+            default -> answerCallback(client, callbackId, "❌ Неизвестное действие");
+        }
+    }
+
+    /**
      * Парсит back-target из остатка callback-data. Поддерживает формат «LOC:<id>».
      * Возвращает {@link PlantCardService#BACK_TO_LIST} по умолчанию.
      */
@@ -897,6 +1093,7 @@ public class MenuCallbackService {
             case WATERING -> "Полил";
             case MISTING -> "Опрыскал";
             case FERTILIZING -> "Удобрил";
+            case SOIL_CHECK -> "Проверил";
         };
     }
 

@@ -44,6 +44,9 @@ class MenuCallbackServiceTest {
     @Mock private PlantMenuService plantMenuService;
     @Mock private PlantCardService plantCardService;
     @Mock private CalendarMenuService calendarMenuService;
+    @Mock private PlantTemplateService plantTemplateService;
+    @Mock private NotificationCallbackService notificationCallbackService;
+    @Mock private PlantEventService plantEventService;
     @Mock private TelegramClient telegramClient;
     @Mock private CallbackQuery callbackQuery;
     @Mock private Message message;
@@ -245,9 +248,9 @@ class MenuCallbackServiceTest {
     }
 
     @Test
-    @DisplayName("PLANT:CARE:<id>:WATERING отмечает уход и обновляет карточку")
+    @DisplayName("PLANT:CARE:<id>:MISTING — старая логика: отмечает уход и обновляет карточку")
     void shouldMarkCareDoneAndRefreshCard() {
-        when(callbackQuery.getData()).thenReturn("PLANT:CARE:7:WATERING");
+        when(callbackQuery.getData()).thenReturn("PLANT:CARE:7:MISTING");
 
         com.plantcare.bot.domain.CareSchedule schedule =
                 com.plantcare.bot.domain.CareSchedule.builder()
@@ -257,22 +260,52 @@ class MenuCallbackServiceTest {
                 new PlantService.MarkCareDoneResult(false, schedule, null, java.time.LocalDateTime.now());
 
         when(plantService.markCareDone(testUser.getId(), 7L,
-                com.plantcare.bot.domain.enums.TaskType.WATERING))
+                com.plantcare.bot.domain.enums.TaskType.MISTING))
                 .thenReturn(result);
 
         service.handleCallback(callbackQuery, telegramClient, testUser);
 
         verify(plantService).markCareDone(testUser.getId(), 7L,
-                com.plantcare.bot.domain.enums.TaskType.WATERING);
+                com.plantcare.bot.domain.enums.TaskType.MISTING);
         verify(plantCardService).showPlantCard(
                 testUser, 7L, 42, PlantCardService.BACK_TO_LIST, telegramClient
         );
     }
 
     @Test
-    @DisplayName("PLANT:CARE с дубликатом — карточка не перерисовывается, только alert")
-    void shouldNotRerenderOnDuplicateCare() throws TelegramApiException {
+    @DisplayName("PLANT:CARE:<id>:WATERING (issue #71) — стартует двухшаговый flow, history не пишется сразу")
+    void shouldStartWateringDetailsFlowFromCard() {
         when(callbackQuery.getData()).thenReturn("PLANT:CARE:7:WATERING");
+
+        com.plantcare.bot.domain.Plant plant =
+                com.plantcare.bot.domain.Plant.builder().name("Монстера").build();
+        com.plantcare.bot.domain.CareSchedule schedule =
+                com.plantcare.bot.domain.CareSchedule.builder()
+                        .plant(plant)
+                        .taskType(com.plantcare.bot.domain.enums.TaskType.WATERING)
+                        .intervalDays(7)
+                        .nextDueAt(java.time.LocalDateTime.now().plusDays(7))
+                        .active(true)
+                        .build();
+        org.springframework.test.util.ReflectionTestUtils.setField(schedule, "id", 99L);
+
+        when(plantService.getPlantForUser(testUser.getId(), 7L))
+                .thenReturn(java.util.Optional.of(plant));
+        when(plantService.getActiveSchedules(7L)).thenReturn(java.util.List.of(schedule));
+
+        service.handleCallback(callbackQuery, telegramClient, testUser);
+
+        // markCareDone НЕ вызывается напрямую — flow начинается через NotificationCallbackService
+        verify(plantService, never()).markCareDone(any(), any(), any());
+        verify(notificationCallbackService).startWateringDetailsFlow(
+                eq(99L), eq("Монстера"), eq(testUser.getTelegramChatId()), eq(telegramClient)
+        );
+    }
+
+    @Test
+    @DisplayName("PLANT:CARE с дубликатом (MISTING) — карточка не перерисовывается, только alert")
+    void shouldNotRerenderOnDuplicateCare() throws TelegramApiException {
+        when(callbackQuery.getData()).thenReturn("PLANT:CARE:7:MISTING");
 
         PlantService.MarkCareDoneResult duplicate =
                 new PlantService.MarkCareDoneResult(true, null, null, java.time.LocalDateTime.now());
@@ -524,5 +557,127 @@ class MenuCallbackServiceTest {
 
         verify(userService).resetToIdle(testUser);
         verify(plantMenuService).sendMyPlantsList(testUser, 42, telegramClient);
+    }
+
+    // ===================================================================
+    // Журнал событий (issue #76): PLANT:EVENT:ADD / SAVE / LIST
+    // ===================================================================
+
+    @Test
+    @DisplayName("PLANT:EVENT:ADD:<id> открывает меню выбора типа")
+    void shouldOpenEventTypeMenu() {
+        when(callbackQuery.getData()).thenReturn("PLANT:EVENT:ADD:7");
+
+        service.handleCallback(callbackQuery, telegramClient, testUser);
+
+        verify(plantCardService).showEventTypeMenu(
+                testUser, 7L, 42, PlantCardService.BACK_TO_LIST, telegramClient
+        );
+    }
+
+    @Test
+    @DisplayName("PLANT:EVENT:SAVE:<id>:<TYPE> сохраняет, alert и возвращает карточку")
+    void shouldSaveEventAndShowCard() {
+        when(callbackQuery.getData()).thenReturn("PLANT:EVENT:SAVE:7:PRUNING");
+        com.plantcare.bot.domain.PlantEvent saved =
+                com.plantcare.bot.domain.PlantEvent.builder()
+                        .eventType(com.plantcare.bot.domain.enums.PlantEventType.PRUNING)
+                        .eventDate(java.time.LocalDateTime.now())
+                        .build();
+        when(plantEventService.addEvent(eq(testUser), eq(7L),
+                eq(com.plantcare.bot.domain.enums.PlantEventType.PRUNING)))
+                .thenReturn(PlantEventService.AddResult.created(saved));
+        when(plantCardService.eventShortLabel(
+                com.plantcare.bot.domain.enums.PlantEventType.PRUNING))
+                .thenReturn("Обрезка");
+
+        service.handleCallback(callbackQuery, telegramClient, testUser);
+
+        verify(plantEventService).addEvent(testUser, 7L,
+                com.plantcare.bot.domain.enums.PlantEventType.PRUNING);
+
+        ArgumentCaptor<AnswerCallbackQuery> acap = ArgumentCaptor.forClass(AnswerCallbackQuery.class);
+        try {
+            verify(telegramClient).execute(acap.capture());
+        } catch (org.telegram.telegrambots.meta.exceptions.TelegramApiException e) {
+            throw new RuntimeException(e);
+        }
+        org.assertj.core.api.Assertions.assertThat(acap.getValue().getText())
+                .contains("Обрезка")
+                .contains("сохранено");
+
+        verify(plantCardService).showPlantCard(
+                testUser, 7L, 42, PlantCardService.BACK_TO_LIST, telegramClient
+        );
+    }
+
+    @Test
+    @DisplayName("PLANT:EVENT:SAVE дубликат — alert «Уже отмечено», карточка всё равно показывается")
+    void shouldHandleDuplicateOnSave() {
+        when(callbackQuery.getData()).thenReturn("PLANT:EVENT:SAVE:7:PRUNING");
+        when(plantEventService.addEvent(any(), any(), any()))
+                .thenReturn(PlantEventService.AddResult.duplicate(null));
+
+        service.handleCallback(callbackQuery, telegramClient, testUser);
+
+        ArgumentCaptor<AnswerCallbackQuery> acap = ArgumentCaptor.forClass(AnswerCallbackQuery.class);
+        try {
+            verify(telegramClient).execute(acap.capture());
+        } catch (org.telegram.telegrambots.meta.exceptions.TelegramApiException e) {
+            throw new RuntimeException(e);
+        }
+        org.assertj.core.api.Assertions.assertThat(acap.getValue().getText()).contains("Уже отмечено");
+
+        verify(plantCardService).showPlantCard(
+                eq(testUser), eq(7L), eq(42), any(), eq(telegramClient)
+        );
+    }
+
+    @Test
+    @DisplayName("PLANT:EVENT:SAVE для чужого/архивного растения — alert «не найдено», карточка НЕ показывается")
+    void shouldHandleNotFoundOnSave() {
+        when(callbackQuery.getData()).thenReturn("PLANT:EVENT:SAVE:7:PRUNING");
+        when(plantEventService.addEvent(any(), any(), any()))
+                .thenReturn(PlantEventService.AddResult.notFound());
+
+        service.handleCallback(callbackQuery, telegramClient, testUser);
+
+        verify(plantCardService, never()).showPlantCard(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("PLANT:EVENT:SAVE с неизвестным типом — alert об ошибке, save не зовётся")
+    void shouldRejectUnknownEventType() {
+        when(callbackQuery.getData()).thenReturn("PLANT:EVENT:SAVE:7:SOMETHING_WEIRD");
+
+        service.handleCallback(callbackQuery, telegramClient, testUser);
+
+        verify(plantEventService, never()).addEvent(any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("PLANT:EVENT:LIST:<id>:<page> открывает журнал на указанной странице")
+    void shouldShowEventsList() {
+        when(callbackQuery.getData()).thenReturn("PLANT:EVENT:LIST:7:2");
+
+        service.handleCallback(callbackQuery, telegramClient, testUser);
+
+        verify(plantCardService).showEventsScreen(
+                testUser, 7L, 2, 42, PlantCardService.BACK_TO_LIST, telegramClient
+        );
+    }
+
+    @Test
+    @DisplayName("PLANT:EVENT:LIST с back-target LOC — пагинация сохраняет контекст комнаты")
+    void shouldKeepLocationBackTargetInEventsList() {
+        when(callbackQuery.getData()).thenReturn("PLANT:EVENT:LIST:7:0:LOC:5");
+
+        service.handleCallback(callbackQuery, telegramClient, testUser);
+
+        verify(plantCardService).showEventsScreen(
+                eq(testUser), eq(7L), eq(0), eq(42),
+                eq(PlantCardService.BACK_TO_LOCATION_PREFIX + "5"),
+                eq(telegramClient)
+        );
     }
 }

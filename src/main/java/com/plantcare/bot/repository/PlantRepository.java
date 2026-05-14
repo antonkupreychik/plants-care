@@ -52,4 +52,26 @@ public interface PlantRepository extends JpaRepository<Plant, Long> {
         Long getSpeciesId();
         Long getPlantCount();
     }
+
+    // issue #75: acclimation
+    // Возвращаем только активные (не архивные) растения — у архивных уведомления
+    // в любом случае не шлём, а так избегаем пустой обработки на стороне сервиса.
+
+    @Query("""
+            SELECT p FROM Plant p
+            WHERE p.archivedAt IS NULL
+              AND p.acclimationUntil IS NOT NULL
+              AND p.acclimationUntil <= :now
+            """)
+    List<Plant> findFinishedAcclimation(@Param("now") java.time.LocalDateTime now);
+
+    @Query("""
+            SELECT p FROM Plant p
+            WHERE p.archivedAt IS NULL
+              AND p.acclimationUntil IS NOT NULL
+              AND p.acclimationUntil > :now
+              AND p.acclimationCheckinNextAt IS NOT NULL
+              AND p.acclimationCheckinNextAt <= :now
+            """)
+    List<Plant> findPendingAcclimationCheckin(@Param("now") java.time.LocalDateTime now);
 }

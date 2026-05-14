@@ -4,11 +4,15 @@ import com.plantcare.bot.domain.CareHistory;
 import com.plantcare.bot.domain.CareSchedule;
 import com.plantcare.bot.domain.Location;
 import com.plantcare.bot.domain.Plant;
+import com.plantcare.bot.domain.PlantEvent;
 import com.plantcare.bot.domain.User;
+import com.plantcare.bot.domain.enums.ConversationState;
+import com.plantcare.bot.domain.enums.PlantEventType;
 import com.plantcare.bot.domain.enums.TaskType;
 import com.plantcare.bot.repository.PlantRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Page;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.telegram.telegrambots.meta.api.methods.AnswerCallbackQuery;
@@ -23,6 +27,7 @@ import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 import org.telegram.telegrambots.meta.generics.TelegramClient;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
@@ -68,28 +73,96 @@ public class PlantCardService {
     private final MainMenuService mainMenuService;
     private final UserService userService;
     private final CareHistoryService careHistoryService;
+    private final PlantEventService plantEventService;
 
     // =================================================================
     // 1) Карточка "только что создано" — используется визардом создания
     // =================================================================
 
     /**
-     * Финальный шаг создания растения:
-     *   1) показать карточку (с фото или без)
-     *   2) сбросить пользователя в IDLE и очистить stateData
-     *   3) показать главное меню
+     * Финальный шаг создания растения. Теперь блокирующий: вместо немедленного
+     * показа карточки сначала задаём вопрос про акклиматизацию (issue #75) —
+     * пользователь должен ответить, и только после этого:
+     *   1) включаем (или нет) acclimation
+     *   2) показываем карточку
+     *   3) сбрасываем state, отправляем главное меню
+     *
+     * Завершение этого flow живёт в {@link #completePlantCreationAfterAcclimation}.
      */
     @Transactional
     public void finishPlantCreation(User user, Plant plant, TelegramClient client) {
-        sendCreatedPlantCard(user, plant, client);
+        userService.updateState(user, ConversationState.AWAITING_PLANT_ACCLIMATION_CHOICE);
+        userService.setStateData(user, "acclimation_plant_id", String.valueOf(plant.getId()));
+
+        InlineKeyboardMarkup keyboard = InlineKeyboardMarkup.builder()
+                .keyboardRow(new InlineKeyboardRow(List.of(
+                        InlineKeyboardButton.builder()
+                                .text("✅ Да, новое")
+                                .callbackData("PLANT:ACCL:YES:" + plant.getId())
+                                .build(),
+                        InlineKeyboardButton.builder()
+                                .text("❌ Нет")
+                                .callbackData("PLANT:ACCL:NO:" + plant.getId())
+                                .build()
+                )))
+                .build();
+
+        String text = "✅ Растение *" + escapeMd(plant.getName()) + "* добавлено!\n\n"
+                + "🆕 Это новое растение (недавно куплено или переехало)?\n\n"
+                + "_Если да — включу режим акклиматизации на "
+                + PlantAcclimationService.ACCLIMATION_DAYS
+                + " дней: буду напоминать мягче и просить проверять грунт._";
+
+        sendTextWithKeyboard(user.getTelegramChatId(), text, keyboard, client);
+
+        log.info(
+                "Plant creation -> awaiting acclimation choice for user {}, plant={}",
+                user.getTelegramChatId(),
+                plant.getId()
+        );
+    }
+
+    /**
+     * Завершение создания после ответа на вопрос про акклиматизацию (issue #75).
+     * Включает или не включает режим, показывает карточку, главное меню,
+     * сбрасывает state.
+     */
+    @Transactional
+    public void completePlantCreationAfterAcclimation(
+            User user, Plant plant, boolean acclimationEnabled, TelegramClient client
+    ) {
+        // Перезагружаем растение в ТЕКУЩЕЙ транзакции: переданный plant приходит
+        // из PlantAcclimationService.enable() / plantService.getPlantForUser(), чьи
+        // транзакции уже закрыты — обращение к lazy plant.getLocation() в этой
+        // сессии падает в LazyInitializationException. Свежая загрузка привязывает
+        // entity к нашей текущей сессии и позволяет дёрнуть location без проблем.
+        Plant fresh = plantRepository.findById(plant.getId()).orElse(null);
+        if (fresh == null) {
+            log.error(
+                    "Plant {} disappeared during wizard completion for user {}",
+                    plant.getId(),
+                    user.getTelegramChatId()
+            );
+            return;
+        }
+
+        if (acclimationEnabled) {
+            String confirm = "🆕 Ок, включаю акклиматизацию на "
+                    + PlantAcclimationService.ACCLIMATION_DAYS + " дней.\n"
+                    + "Буду напоминать мягче и просить проверять грунт/листья.";
+            sendTextMessage(user.getTelegramChatId(), confirm, client);
+        }
+
+        sendCreatedPlantCard(user, fresh, client);
 
         userService.resetToIdle(user);
         mainMenuService.sendMainMenu(user, client);
 
         log.info(
-                "Plant creation completed for user {}, plant={}",
+                "Plant creation completed for user {}, plant={}, acclimation={}",
                 user.getTelegramChatId(),
-                plant.getId()
+                fresh.getId(),
+                acclimationEnabled
         );
     }
 
@@ -773,7 +846,8 @@ public class PlantCardService {
         return sb.toString();
     }
 
-    private String formatHistoryLine(CareHistory h, ZoneId tz) {
+    // package-private для unit-теста (PlantCardServiceWateringHistoryTest)
+    String formatHistoryLine(CareHistory h, ZoneId tz) {
         LocalDate doneDay = h.getDoneAt()
                 .atOffset(ZoneOffset.UTC)
                 .atZoneSameInstant(tz)
@@ -790,7 +864,44 @@ public class PlantCardService {
             // Здесь у нас нет CareSchedule, чтобы посчитать точно. Помечаем «с опозданием».
             status = "с опозданием";
         }
-        return date + " — " + emoji + " " + verb + " (" + status + ")";
+
+        // issue #71: для записей WATERING с заполненными деталями добавляем
+        // обильность и сухость грунта. Старые записи (до V10) и не-WATERING типы
+        // имеют was_abundant=NULL и soil_was_dry=NULL — для них формат прежний.
+        String details = wateringDetailsSuffix(h);
+        return date + " — " + emoji + " " + verb + details + " (" + status + ")";
+    }
+
+    /**
+     * Строит фрагмент строки истории с обильностью + сухостью грунта (issue #71).
+     * Возвращает пустую строку, если деталей нет (старая запись, bulk-полив,
+     * MISTING/FERTILIZING).
+     *
+     * <p>Примеры:
+     * <ul>
+     *   <li>HEAVY + DRY → {@code ", обильно, земля сухая"}</li>
+     *   <li>NORMAL + WET → {@code ", обычно, земля влажная"}</li>
+     *   <li>HEAVY + UNKNOWN → {@code ", обильно"}</li>
+     *   <li>оба null → {@code ""}</li>
+     * </ul>
+     */
+    private String wateringDetailsSuffix(CareHistory h) {
+        if (h.getTaskType() != TaskType.WATERING) {
+            return "";
+        }
+        Boolean abundant = h.getWasAbundant();
+        Boolean soilDry = h.getSoilWasDry();
+        if (abundant == null && soilDry == null) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder();
+        if (abundant != null) {
+            sb.append(", ").append(abundant ? "обильно" : "обычно");
+        }
+        if (soilDry != null) {
+            sb.append(", земля ").append(soilDry ? "сухая" : "влажная");
+        }
+        return sb.toString();
     }
 
     private InlineKeyboardMarkup buildHistoryKeyboard(
@@ -844,6 +955,181 @@ public class PlantCardService {
     }
 
     // =================================================================
+    // 3b) Журнал событий — выбор типа + просмотр списка (issue #76)
+    // =================================================================
+
+    /**
+     * Меню выбора типа события. Заменяет текущее сообщение (карточку) на
+     * вертикальный список из 4 типов + «Отмена».
+     */
+    @Transactional(readOnly = true)
+    public void showEventTypeMenu(
+            User user, Long plantId, Integer messageId, String backTarget, TelegramClient client
+    ) {
+        Plant plant = plantRepository.findByUserIdAndIdAndArchivedAtIsNull(user.getId(), plantId)
+                .orElse(null);
+        if (plant == null) {
+            sendTextMessage(user.getTelegramChatId(), "❌ Растение не найдено.", client);
+            return;
+        }
+
+        String text = "📝 *Добавить событие — " + escapeMd(plant.getName()) + "*\n\n"
+                + "Выбери тип события:";
+
+        List<InlineKeyboardRow> rows = new ArrayList<>();
+        for (PlantEventType type : PlantEventType.values()) {
+            rows.add(new InlineKeyboardRow(List.of(
+                    InlineKeyboardButton.builder()
+                            .text(eventEmoji(type) + " " + eventLabel(type))
+                            .callbackData("PLANT:EVENT:SAVE:" + plantId + ":" + type.name()
+                                    + backSuffix(backTarget))
+                            .build()
+            )));
+        }
+        rows.add(new InlineKeyboardRow(List.of(
+                InlineKeyboardButton.builder()
+                        .text("⬅️ Отмена")
+                        .callbackData(plantCardCallback(plantId, backTarget))
+                        .build()
+        )));
+
+        InlineKeyboardMarkup keyboard = InlineKeyboardMarkup.builder().keyboard(rows).build();
+        sendOrEditText(user.getTelegramChatId(), messageId, text, keyboard, client);
+    }
+
+    /**
+     * Журнал событий — постраничный список последних событий растения.
+     * Пагинация: {@link PlantEventService#EVENTS_PAGE_SIZE} на страницу,
+     * inline-кнопки {@code [← Назад] N/M [Вперёд →]}, если страниц больше одной.
+     */
+    public void showEventsScreen(
+            User user, Long plantId, int page, Integer messageId, String backTarget,
+            TelegramClient client
+    ) {
+        Plant plant = plantRepository.findByUserIdAndIdAndArchivedAtIsNull(user.getId(), plantId)
+                .orElse(null);
+        if (plant == null) {
+            sendTextMessage(user.getTelegramChatId(), "❌ Растение не найдено.", client);
+            return;
+        }
+
+        Page<PlantEvent> result = plantEventService.getEvents(user, plantId, page);
+        int safePage = result.getNumber();
+        int totalPages = Math.max(1, result.getTotalPages());
+
+        String text = buildEventsText(plant, result.getContent(), safePage, totalPages);
+        InlineKeyboardMarkup keyboard = buildEventsKeyboard(plant, safePage, totalPages, backTarget);
+
+        sendOrEditText(user.getTelegramChatId(), messageId, text, keyboard, client);
+    }
+
+    private String buildEventsText(Plant plant, List<PlantEvent> events, int page, int totalPages) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("📖 *Журнал событий — ").append(escapeMd(plant.getName())).append("*\n\n");
+
+        if (events.isEmpty()) {
+            sb.append("Здесь пока пусто. Нажми «📝 Добавить событие» в карточке, "
+                    + "чтобы зафиксировать пересадку, обрезку или другое разовое действие.");
+            return sb.toString();
+        }
+
+        for (PlantEvent e : events) {
+            String date = e.getEventDate().toLocalDate().format(HISTORY_DATE_FMT);
+            sb.append(date)
+                    .append(" — ")
+                    .append(eventEmoji(e.getEventType()))
+                    .append(" ")
+                    .append(eventLabel(e.getEventType()))
+                    .append("\n");
+        }
+
+        if (totalPages > 1) {
+            sb.append("\n_Страница ").append(page + 1).append(" из ").append(totalPages).append("_");
+        }
+        return sb.toString();
+    }
+
+    private InlineKeyboardMarkup buildEventsKeyboard(
+            Plant plant, int page, int totalPages, String backTarget
+    ) {
+        List<InlineKeyboardRow> rows = new ArrayList<>();
+
+        if (totalPages > 1) {
+            InlineKeyboardRow nav = new InlineKeyboardRow();
+            if (page > 0) {
+                nav.add(InlineKeyboardButton.builder()
+                        .text("← Назад")
+                        .callbackData("PLANT:EVENT:LIST:" + plant.getId() + ":" + (page - 1)
+                                + backSuffix(backTarget))
+                        .build());
+            }
+            // Индикатор страницы — клик ведёт сам в себя (no-op rerender).
+            nav.add(InlineKeyboardButton.builder()
+                    .text((page + 1) + "/" + totalPages)
+                    .callbackData("PLANT:EVENT:LIST:" + plant.getId() + ":" + page
+                            + backSuffix(backTarget))
+                    .build());
+            if (page < totalPages - 1) {
+                nav.add(InlineKeyboardButton.builder()
+                        .text("Вперёд →")
+                        .callbackData("PLANT:EVENT:LIST:" + plant.getId() + ":" + (page + 1)
+                                + backSuffix(backTarget))
+                        .build());
+            }
+            rows.add(nav);
+        }
+
+        // «Добавить событие» прямо отсюда — удобно, если юзер пришёл посмотреть
+        // и решил тут же зафиксировать новое.
+        rows.add(new InlineKeyboardRow(List.of(
+                InlineKeyboardButton.builder()
+                        .text("📝 Добавить событие")
+                        .callbackData("PLANT:EVENT:ADD:" + plant.getId() + backSuffix(backTarget))
+                        .build()
+        )));
+
+        rows.add(new InlineKeyboardRow(List.of(
+                InlineKeyboardButton.builder()
+                        .text("⬅️ К карточке")
+                        .callbackData(plantCardCallback(plant.getId(), backTarget))
+                        .build()
+        )));
+
+        return InlineKeyboardMarkup.builder().keyboard(rows).build();
+    }
+
+    private String eventLabel(PlantEventType type) {
+        return switch (type) {
+            case TRANSPLANT     -> "Пересадка / Смена горшка";
+            case SOIL_CHANGE    -> "Замена грунта / Досыпка";
+            case PRUNING        -> "Обрезка";
+            case PEST_TREATMENT -> "Обработка от вредителей";
+        };
+    }
+
+    private String eventEmoji(PlantEventType type) {
+        return switch (type) {
+            case TRANSPLANT     -> "🪴";
+            case SOIL_CHANGE    -> "🌱";
+            case PRUNING        -> "✂️";
+            case PEST_TREATMENT -> "🐛";
+        };
+    }
+
+    /**
+     * Короткий локализованный label типа события — используется в alert'ах после
+     * сохранения («Событие "Обрезка" сохранено в историю»). Без emoji, без слешей.
+     */
+    public String eventShortLabel(PlantEventType type) {
+        return switch (type) {
+            case TRANSPLANT     -> "Пересадка";
+            case SOIL_CHANGE    -> "Замена грунта";
+            case PRUNING        -> "Обрезка";
+            case PEST_TREATMENT -> "Обработка от вредителей";
+        };
+    }
+
+    // =================================================================
     // Рендер карточки
     // =================================================================
 
@@ -858,6 +1144,13 @@ public class PlantCardService {
 
         if (plant.getPhotoFileId() != null && !plant.getPhotoFileId().isBlank()) {
             sb.append("📷 Фото загружено\n");
+        }
+
+        // issue #75: баннер режима акклиматизации
+        if (plant.isInAcclimation(LocalDateTime.now())) {
+            sb.append("🆕 *Акклиматизация:* до ")
+                    .append(plant.getAcclimationUntil().toLocalDate().format(DATE_FMT))
+                    .append("\n");
         }
 
         if (plant.getNotes() != null && !plant.getNotes().isBlank()) {
@@ -941,6 +1234,29 @@ public class PlantCardService {
                 .callbackData(plantSettingsCallback(plant.getId(), backTarget))
                 .build());
         rows.add(auxRow);
+
+        // 2b) Журнал событий (issue #76): добавить событие + просмотр журнала.
+        // Отдельный ряд, чтобы не смешивать с регулярным уходом и не перегружать auxRow.
+        InlineKeyboardRow eventsRow = new InlineKeyboardRow();
+        eventsRow.add(InlineKeyboardButton.builder()
+                .text("📝 Добавить событие")
+                .callbackData("PLANT:EVENT:ADD:" + plant.getId() + backSuffix(backTarget))
+                .build());
+        eventsRow.add(InlineKeyboardButton.builder()
+                .text("📖 События")
+                .callbackData("PLANT:EVENT:LIST:" + plant.getId() + ":0" + backSuffix(backTarget))
+                .build());
+        rows.add(eventsRow);
+
+        // 2c) Кнопка выключения акклиматизации (issue #75) — показываем только если режим активен.
+        if (plant.isInAcclimation(LocalDateTime.now())) {
+            rows.add(new InlineKeyboardRow(List.of(
+                    InlineKeyboardButton.builder()
+                            .text("🛑 Выключить акклиматизацию")
+                            .callbackData("PLANT:ACCL:DISABLE:" + plant.getId() + backSuffix(backTarget))
+                            .build()
+            )));
+        }
 
         // 3) Назад.
         rows.add(new InlineKeyboardRow(List.of(buildBackButton(backTarget))));
@@ -1087,6 +1403,7 @@ public class PlantCardService {
             case WATERING -> "Полив";
             case MISTING -> "Опрыскивание";
             case FERTILIZING -> "Удобрение";
+            case SOIL_CHECK -> "Проверка грунта";
         };
     }
 
@@ -1095,6 +1412,7 @@ public class PlantCardService {
             case WATERING -> "💧";
             case MISTING -> "💨";
             case FERTILIZING -> "🌿";
+            case SOIL_CHECK -> "🪴";
         };
     }
 
@@ -1106,6 +1424,7 @@ public class PlantCardService {
             case WATERING -> "Полил";
             case MISTING -> "Опрыскал";
             case FERTILIZING -> "Удобрил";
+            case SOIL_CHECK -> "Проверил";
         };
     }
 
