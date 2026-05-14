@@ -38,6 +38,9 @@ public class Species extends BaseEntity {
     @Column(name = "fertilizing_days")
     private Integer fertilizingDays;
 
+    @Column(name = "soil_check_days")
+    private Integer soilCheckDays;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "light_preference", length = 16)
     private LightPreference lightPreference;

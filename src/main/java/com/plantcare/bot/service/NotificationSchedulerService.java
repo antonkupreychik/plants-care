@@ -55,16 +55,33 @@ public class NotificationSchedulerService {
 
         Map<Long, List<CareSchedule>> schedulesByUser = new LinkedHashMap<>();
 
+        // SOIL_CHECK всегда отправляется отдельным пушем (issue #74) — у него своя
+        // логика ответов (DRY/WET/UNKNOWN), которая не вписывается в "Сделал всё".
+        List<CareSchedule> standaloneSoilChecks = new ArrayList<>();
+
         for (CareSchedule schedule : dueSchedules) {
             try {
-                if (shouldSend(schedule, now)) {
-                    User user = schedule.getPlant().getUser();
-                    schedulesByUser
-                            .computeIfAbsent(user.getId(), ignored -> new ArrayList<>())
-                            .add(schedule);
+                if (!shouldSend(schedule, now)) {
+                    continue;
                 }
+                if (schedule.getTaskType() == TaskType.SOIL_CHECK) {
+                    standaloneSoilChecks.add(schedule);
+                    continue;
+                }
+                User user = schedule.getPlant().getUser();
+                schedulesByUser
+                        .computeIfAbsent(user.getId(), ignored -> new ArrayList<>())
+                        .add(schedule);
             } catch (Exception e) {
                 log.error("Error checking schedule id={}: {}", schedule.getId(), e.getMessage(), e);
+            }
+        }
+
+        for (CareSchedule soilCheck : standaloneSoilChecks) {
+            try {
+                sendNotification(soilCheck.getPlant().getUser(), soilCheck.getPlant(), soilCheck);
+            } catch (Exception e) {
+                log.error("Error sending soil-check notification: {}", e.getMessage(), e);
             }
         }
 
@@ -244,14 +261,21 @@ public class NotificationSchedulerService {
             case WATERING -> "Пора полить: " + plant.getName();
             case MISTING -> "Пора опрыскать: " + plant.getName();
             case FERTILIZING -> "Пора удобрить: " + plant.getName();
+            case SOIL_CHECK -> "🪴 Проверь грунт у " + plant.getName() + ". Земля сухая?";
         };
     }
 
     private InlineKeyboardMarkup buildKeyboard(Long scheduleId, TaskType taskType) {
+        // SOIL_CHECK не имеет "Сделал/Отложить/Пропустить" — у него три варианта результата.
+        if (taskType == TaskType.SOIL_CHECK) {
+            return buildSoilCheckKeyboard(scheduleId);
+        }
+
         String doneBtnLabel = switch (taskType) {
             case WATERING -> "✅ Полил";
             case MISTING -> "✅ Опрыскал";
             case FERTILIZING -> "✅ Удобрил";
+            case SOIL_CHECK -> "✅ Проверил"; // unreachable, exhaustive switch
         };
 
         InlineKeyboardButton doneBtn = InlineKeyboardButton.builder()
@@ -274,11 +298,33 @@ public class NotificationSchedulerService {
                 .build();
     }
 
+    private InlineKeyboardMarkup buildSoilCheckKeyboard(Long scheduleId) {
+        InlineKeyboardButton dryBtn = InlineKeyboardButton.builder()
+                .text("✅ Сухая")
+                .callbackData("v1:soil_dry:" + scheduleId)
+                .build();
+
+        InlineKeyboardButton wetBtn = InlineKeyboardButton.builder()
+                .text("❌ Влажная")
+                .callbackData("v1:soil_wet:" + scheduleId)
+                .build();
+
+        InlineKeyboardButton unkBtn = InlineKeyboardButton.builder()
+                .text("🤷 Не знаю")
+                .callbackData("v1:soil_unk:" + scheduleId)
+                .build();
+
+        return InlineKeyboardMarkup.builder()
+                .keyboardRow(new InlineKeyboardRow(dryBtn, wetBtn, unkBtn))
+                .build();
+    }
+
     private String taskLabel(TaskType taskType) {
         return switch (taskType) {
             case WATERING -> "полить";
             case MISTING -> "опрыскать";
             case FERTILIZING -> "удобрить";
+            case SOIL_CHECK -> "проверить грунт";
         };
     }
 

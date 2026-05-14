@@ -491,6 +491,7 @@ public class PlantService {
                 case WATERING -> species.getWateringDays();
                 case MISTING -> species.getMistingDays();
                 case FERTILIZING -> species.getFertilizingDays();
+                case SOIL_CHECK -> species.getSoilCheckDays();
             };
         }
         if (fromSpecies != null && isValidInterval(fromSpecies)) {
@@ -500,6 +501,7 @@ public class PlantService {
             case WATERING -> 7;
             case MISTING -> 3;
             case FERTILIZING -> 14;
+            case SOIL_CHECK -> 3;
         };
     }
 

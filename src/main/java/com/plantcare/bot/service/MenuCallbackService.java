@@ -40,6 +40,7 @@ public class MenuCallbackService {
     private final PlantCardService plantCardService;
     private final CalendarMenuService calendarMenuService;
     private final PlantTemplateService plantTemplateService;
+    private final NotificationCallbackService notificationCallbackService;
 
     private record LocationPreset(String name, String emoji) {
     }
@@ -419,6 +420,33 @@ public class MenuCallbackService {
             }
 
             try {
+                // issue #71: WATERING — двухшаговый flow с уточнениями (обильно? / сухая?).
+                // MISTING/FERTILIZING/SOIL_CHECK — старая логика немедленной отметки.
+                if (taskType == TaskType.WATERING) {
+                    com.plantcare.bot.domain.Plant plant = plantService
+                            .getPlantForUser(user.getId(), plantId)
+                            .orElse(null);
+                    if (plant == null) {
+                        answerCallback(client, callbackId, "❌ Растение не найдено");
+                        return;
+                    }
+                    com.plantcare.bot.domain.CareSchedule wateringSchedule = plantService
+                            .getActiveSchedules(plantId).stream()
+                            .filter(s -> s.getTaskType() == TaskType.WATERING)
+                            .findFirst()
+                            .orElse(null);
+                    if (wateringSchedule == null) {
+                        answerCallback(client, callbackId, "❌ Расписание не настроено");
+                        return;
+                    }
+                    notificationCallbackService.startWateringDetailsFlow(
+                            wateringSchedule.getId(), plant.getName(),
+                            user.getTelegramChatId(), client
+                    );
+                    answerCallback(client, callbackId, "");
+                    return;
+                }
+
                 PlantService.MarkCareDoneResult result =
                         plantService.markCareDone(user.getId(), plantId, taskType);
 
@@ -897,6 +925,7 @@ public class MenuCallbackService {
             case WATERING -> "Полил";
             case MISTING -> "Опрыскал";
             case FERTILIZING -> "Удобрил";
+            case SOIL_CHECK -> "Проверил";
         };
     }
 

@@ -1087,6 +1087,7 @@ public class PlantCardService {
             case WATERING -> "Полив";
             case MISTING -> "Опрыскивание";
             case FERTILIZING -> "Удобрение";
+            case SOIL_CHECK -> "Проверка грунта";
         };
     }
 
@@ -1095,6 +1096,7 @@ public class PlantCardService {
             case WATERING -> "💧";
             case MISTING -> "💨";
             case FERTILIZING -> "🌿";
+            case SOIL_CHECK -> "🪴";
         };
     }
 
@@ -1106,6 +1108,7 @@ public class PlantCardService {
             case WATERING -> "Полил";
             case MISTING -> "Опрыскал";
             case FERTILIZING -> "Удобрил";
+            case SOIL_CHECK -> "Проверил";
         };
     }
 
