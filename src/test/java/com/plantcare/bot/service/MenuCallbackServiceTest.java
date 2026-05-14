@@ -44,6 +44,8 @@ class MenuCallbackServiceTest {
     @Mock private PlantMenuService plantMenuService;
     @Mock private PlantCardService plantCardService;
     @Mock private CalendarMenuService calendarMenuService;
+    @Mock private PlantTemplateService plantTemplateService;
+    @Mock private NotificationCallbackService notificationCallbackService;
     @Mock private TelegramClient telegramClient;
     @Mock private CallbackQuery callbackQuery;
     @Mock private Message message;
@@ -245,9 +247,9 @@ class MenuCallbackServiceTest {
     }
 
     @Test
-    @DisplayName("PLANT:CARE:<id>:WATERING отмечает уход и обновляет карточку")
+    @DisplayName("PLANT:CARE:<id>:MISTING — старая логика: отмечает уход и обновляет карточку")
     void shouldMarkCareDoneAndRefreshCard() {
-        when(callbackQuery.getData()).thenReturn("PLANT:CARE:7:WATERING");
+        when(callbackQuery.getData()).thenReturn("PLANT:CARE:7:MISTING");
 
         com.plantcare.bot.domain.CareSchedule schedule =
                 com.plantcare.bot.domain.CareSchedule.builder()
@@ -257,22 +259,52 @@ class MenuCallbackServiceTest {
                 new PlantService.MarkCareDoneResult(false, schedule, null, java.time.LocalDateTime.now());
 
         when(plantService.markCareDone(testUser.getId(), 7L,
-                com.plantcare.bot.domain.enums.TaskType.WATERING))
+                com.plantcare.bot.domain.enums.TaskType.MISTING))
                 .thenReturn(result);
 
         service.handleCallback(callbackQuery, telegramClient, testUser);
 
         verify(plantService).markCareDone(testUser.getId(), 7L,
-                com.plantcare.bot.domain.enums.TaskType.WATERING);
+                com.plantcare.bot.domain.enums.TaskType.MISTING);
         verify(plantCardService).showPlantCard(
                 testUser, 7L, 42, PlantCardService.BACK_TO_LIST, telegramClient
         );
     }
 
     @Test
-    @DisplayName("PLANT:CARE с дубликатом — карточка не перерисовывается, только alert")
-    void shouldNotRerenderOnDuplicateCare() throws TelegramApiException {
+    @DisplayName("PLANT:CARE:<id>:WATERING (issue #71) — стартует двухшаговый flow, history не пишется сразу")
+    void shouldStartWateringDetailsFlowFromCard() {
         when(callbackQuery.getData()).thenReturn("PLANT:CARE:7:WATERING");
+
+        com.plantcare.bot.domain.Plant plant =
+                com.plantcare.bot.domain.Plant.builder().name("Монстера").build();
+        com.plantcare.bot.domain.CareSchedule schedule =
+                com.plantcare.bot.domain.CareSchedule.builder()
+                        .plant(plant)
+                        .taskType(com.plantcare.bot.domain.enums.TaskType.WATERING)
+                        .intervalDays(7)
+                        .nextDueAt(java.time.LocalDateTime.now().plusDays(7))
+                        .active(true)
+                        .build();
+        org.springframework.test.util.ReflectionTestUtils.setField(schedule, "id", 99L);
+
+        when(plantService.getPlantForUser(testUser.getId(), 7L))
+                .thenReturn(java.util.Optional.of(plant));
+        when(plantService.getActiveSchedules(7L)).thenReturn(java.util.List.of(schedule));
+
+        service.handleCallback(callbackQuery, telegramClient, testUser);
+
+        // markCareDone НЕ вызывается напрямую — flow начинается через NotificationCallbackService
+        verify(plantService, never()).markCareDone(any(), any(), any());
+        verify(notificationCallbackService).startWateringDetailsFlow(
+                eq(99L), eq("Монстера"), eq(testUser.getTelegramChatId()), eq(telegramClient)
+        );
+    }
+
+    @Test
+    @DisplayName("PLANT:CARE с дубликатом (MISTING) — карточка не перерисовывается, только alert")
+    void shouldNotRerenderOnDuplicateCare() throws TelegramApiException {
+        when(callbackQuery.getData()).thenReturn("PLANT:CARE:7:MISTING");
 
         PlantService.MarkCareDoneResult duplicate =
                 new PlantService.MarkCareDoneResult(true, null, null, java.time.LocalDateTime.now());

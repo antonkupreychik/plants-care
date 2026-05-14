@@ -46,6 +46,20 @@ public class CareHistory extends BaseEntity {
     private String note;
 
     /**
+     * Обильность полива (issue #71). NULL для bulk-полива, для MISTING/FERTILIZING
+     * и для исторических записей до миграции V10.
+     */
+    @Column(name = "was_abundant")
+    private Boolean wasAbundant;
+
+    /**
+     * Земля была сухая до полива (issue #71). NULL для bulk, не-WATERING типов,
+     * "не знаю" ответа и старых записей.
+     */
+    @Column(name = "soil_was_dry")
+    private Boolean soilWasDry;
+
+    /**
      * Ссылка на компенсирующую запись. История иммутабельна — ошибочная запись
      * не удаляется, а перекрывается компенсирующей. Резерв под Этап 3 (кнопка отмены).
      * NULL означает, что запись активна и не отменена.

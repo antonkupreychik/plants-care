@@ -58,7 +58,10 @@ class NotificationCallbackServiceTest {
         plant = Plant.builder().user(user).name("Монстера").build();
         schedule = CareSchedule.builder()
                 .plant(plant)
-                .taskType(TaskType.WATERING)
+                // MISTING вместо WATERING: после issue #71 done для WATERING стартует
+                // двухшаговый flow (отдельные тесты в NotificationCallbackServiceWateringDetailsTest).
+                // Здесь проверяем классический немедленный done — он остался для MISTING/FERTILIZING.
+                .taskType(TaskType.MISTING)
                 .intervalDays(7)
                 .nextDueAt(LocalDateTime.now().minusHours(1))
                 .active(true)
@@ -89,7 +92,7 @@ class NotificationCallbackServiceTest {
 
             CareHistory saved = captor.getValue();
             assertThat(saved.getPlant()).isEqualTo(plant);
-            assertThat(saved.getTaskType()).isEqualTo(TaskType.WATERING);
+            assertThat(saved.getTaskType()).isEqualTo(TaskType.MISTING);
             assertThat(saved.getDoneAt()).isNotNull();
             assertThat(saved.getNote()).isNull();
         }
@@ -160,25 +163,6 @@ class NotificationCallbackServiceTest {
         }
 
         @Test
-        @DisplayName("Текст done-ответа содержит глагол и метку по типу WATERING")
-        void shouldEditMessageWithCorrectFormat() throws TelegramApiException {
-            when(callbackQuery.getData()).thenReturn("v1:done:1");
-            when(careScheduleRepository.findById(1L)).thenReturn(Optional.of(schedule));
-            when(careHistoryRepository.findFirstByPlantIdAndTaskTypeOrderByDoneAtDesc(any(), any()))
-                    .thenReturn(Optional.empty());
-
-            service.handleCallback(callbackQuery, telegramClient);
-
-            ArgumentCaptor<EditMessageText> captor = ArgumentCaptor.forClass(EditMessageText.class);
-            verify(telegramClient).execute(captor.capture());
-
-            EditMessageText edit = captor.getValue();
-            assertThat(edit.getText()).startsWith("✅ Полил Монстера в ");
-            assertThat(edit.getText()).contains("Следующий полив —");
-            assertThat(edit.getReplyMarkup()).isNull();
-        }
-
-        @Test
         @DisplayName("Текст done-ответа содержит правильный глагол для MISTING")
         void shouldEditMessageWithMistingText() throws TelegramApiException {
             schedule.setTaskType(TaskType.MISTING);
@@ -223,7 +207,7 @@ class NotificationCallbackServiceTest {
         @DisplayName("Повторное done в течение 60с — не создаёт второй записи")
         void shouldNotDuplicateWithin60Seconds() throws TelegramApiException {
             CareHistory recent = CareHistory.builder()
-                    .plant(plant).taskType(TaskType.WATERING)
+                    .plant(plant).taskType(TaskType.MISTING)
                     .doneAt(LocalDateTime.now().minusSeconds(30)).onTime(true).build();
 
             when(callbackQuery.getData()).thenReturn("v1:done:1");
@@ -245,7 +229,7 @@ class NotificationCallbackServiceTest {
         @DisplayName("done спустя 61+ секунд — нормально создаёт запись")
         void shouldAllowAfter60Seconds() throws TelegramApiException {
             CareHistory old = CareHistory.builder()
-                    .plant(plant).taskType(TaskType.WATERING)
+                    .plant(plant).taskType(TaskType.MISTING)
                     .doneAt(LocalDateTime.now().minusSeconds(120)).onTime(true).build();
 
             when(callbackQuery.getData()).thenReturn("v1:done:1");
@@ -263,7 +247,7 @@ class NotificationCallbackServiceTest {
         @DisplayName("Повторный skip в течение 60с — тоже дедуплицируется")
         void shouldDeduplicateSkip() throws TelegramApiException {
             CareHistory recent = CareHistory.builder()
-                    .plant(plant).taskType(TaskType.WATERING)
+                    .plant(plant).taskType(TaskType.MISTING)
                     .doneAt(LocalDateTime.now().minusSeconds(10)).onTime(false).note("skipped").build();
 
             when(callbackQuery.getData()).thenReturn("v1:skip:1");

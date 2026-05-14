@@ -48,6 +48,7 @@ public class NotificationCallbackService {
     private final CareHistoryRepository careHistoryRepository;
     private final PlantService plantService;
     private final UserService userService;
+    private final PlantCardService plantCardService;
 
     @Transactional
     public void handleCallback(CallbackQuery callbackQuery, TelegramClient client) {
@@ -58,7 +59,7 @@ public class NotificationCallbackService {
 
         String[] parts = data.split(":");
 
-        if (parts.length != 3) {
+        if (parts.length < 3) {
             answerCallback(client, callbackId, "❌ Неизвестная команда");
             return;
         }
@@ -69,6 +70,34 @@ public class NotificationCallbackService {
         // и логика своя, поэтому веткаем рано.
         if ("bulk_done".equals(action)) {
             handleBulkDone(parts[2], chatId, callbackId, client);
+            return;
+        }
+
+        // Расширенный полив (issue #71): двухшаговый flow «Обильно?» → «Сухая?».
+        // Состояние между шагами хранится в самом callback_data, чтобы flow был
+        // устойчив к перерывам (юзер открывает другие чаты, перезапускает бота и т.п.).
+        //   v1:wabund:<scheduleId>:<HEAVY|NORMAL>            (шаг 2 после «Полил»)
+        //   v1:wsoil:<scheduleId>:<abundance>:<DRY|WET|UNKNOWN>  (финальный)
+        if ("wabund".equals(action)) {
+            handleWateringAbundance(parts, chatId, messageId, callbackId, client);
+            return;
+        }
+        if ("wsoil".equals(action)) {
+            handleWateringSoilDry(parts, chatId, messageId, callbackId, client);
+            return;
+        }
+
+        // Расширенный полив (issue #71): двухшаговый flow «Обильно?» → «Сухая?».
+        // Состояние между шагами хранится в самом callback_data, чтобы flow был
+        // устойчив к перерывам (юзер открывает другие чаты, перезапускает бота и т.п.).
+        //   v1:wabund:<scheduleId>:<HEAVY|NORMAL>            (шаг 2 после «Полил»)
+        //   v1:wsoil:<scheduleId>:<abundance>:<DRY|WET|UNKNOWN>  (финальный)
+        if ("wabund".equals(action)) {
+            handleWateringAbundance(parts, chatId, messageId, callbackId, client);
+            return;
+        }
+        if ("wsoil".equals(action)) {
+            handleWateringSoilDry(parts, chatId, messageId, callbackId, client);
             return;
         }
 
@@ -112,6 +141,14 @@ public class NotificationCallbackService {
 
         switch (action) {
             case "done" -> {
+                // issue #71: для WATERING начинаем двухшаговый flow с уточнениями
+                // (обильность + сухость грунта). MISTING/FERTILIZING — как раньше.
+                if (schedule.getTaskType() == TaskType.WATERING) {
+                    askWateringAbundance(plant.getName(), scheduleId, chatId, messageId, client);
+                    answerCallback(client, callbackId, "");
+                    return;
+                }
+
                 boolean marked = markScheduleDone(schedule, now);
 
                 if (!marked) {
@@ -170,6 +207,242 @@ public class NotificationCallbackService {
 
         editMessage(client, chatId, messageId, responseText);
         answerCallback(client, callbackId, alertText);
+    }
+
+    // ====================================================================
+    // Расширенный полив (issue #71): «Обильно?» → «Сухая?» → запись истории.
+    // ====================================================================
+
+    /**
+     * Стартует двухшаговый flow «Полив с деталями» — вызывается из карточки
+     * растения (PLANT:CARE:&lt;id&gt;:WATERING в MenuCallbackService).
+     *
+     * @param scheduleId  id активного WATERING-расписания для растения
+     * @param plantName   имя растения для текста сообщения
+     * @param chatId      куда отправить
+     * @param client      Telegram client
+     */
+    public void startWateringDetailsFlow(
+            Long scheduleId, String plantName, Long chatId, TelegramClient client
+    ) {
+        SendMessage prompt = SendMessage.builder()
+                .chatId(chatId.toString())
+                .text(buildAbundanceQuestion(plantName))
+                .replyMarkup(buildAbundanceKeyboard(scheduleId))
+                .build();
+        try {
+            client.execute(prompt);
+        } catch (TelegramApiException e) {
+            log.error("Failed to send watering abundance question: {}", e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Та же логика, но edit'ит существующее сообщение — используется из notification
+     * callback'а (юзер уже видит пуш «Пора полить», его и переписываем).
+     */
+    private void askWateringAbundance(
+            String plantName, Long scheduleId, Long chatId, Integer messageId, TelegramClient client
+    ) {
+        EditMessageText edit = EditMessageText.builder()
+                .chatId(chatId.toString())
+                .messageId(messageId)
+                .text(buildAbundanceQuestion(plantName))
+                .replyMarkup(buildAbundanceKeyboard(scheduleId))
+                .build();
+        try {
+            client.execute(edit);
+        } catch (TelegramApiException e) {
+            log.error("Failed to edit message to abundance question: {}", e.getMessage(), e);
+        }
+    }
+
+    private String buildAbundanceQuestion(String plantName) {
+        return "💧 " + plantName + " — как полил?";
+    }
+
+    private InlineKeyboardMarkup buildAbundanceKeyboard(Long scheduleId) {
+        InlineKeyboardButton heavy = InlineKeyboardButton.builder()
+                .text("💦 Обильно")
+                .callbackData("v1:wabund:" + scheduleId + ":HEAVY")
+                .build();
+        InlineKeyboardButton normal = InlineKeyboardButton.builder()
+                .text("💧 Обычно")
+                .callbackData("v1:wabund:" + scheduleId + ":NORMAL")
+                .build();
+        return InlineKeyboardMarkup.builder()
+                .keyboardRow(new InlineKeyboardRow(heavy, normal))
+                .build();
+    }
+
+    /**
+     * Шаг 2: получили ответ на «Обильно?», спрашиваем про сухость грунта.
+     * callback: v1:wabund:&lt;scheduleId&gt;:&lt;HEAVY|NORMAL&gt;
+     */
+    private void handleWateringAbundance(
+            String[] parts, Long chatId, Integer messageId, String callbackId, TelegramClient client
+    ) {
+        if (parts.length != 4) {
+            answerCallback(client, callbackId, "❌ Неверный формат");
+            return;
+        }
+        Long scheduleId;
+        try {
+            scheduleId = Long.parseLong(parts[2]);
+        } catch (NumberFormatException e) {
+            answerCallback(client, callbackId, "❌ Неверный ID");
+            return;
+        }
+        String abundance = parts[3];
+        if (!"HEAVY".equals(abundance) && !"NORMAL".equals(abundance)) {
+            answerCallback(client, callbackId, "❌ Неверный ответ");
+            return;
+        }
+
+        Optional<CareSchedule> opt = careScheduleRepository.findById(scheduleId);
+        if (opt.isEmpty() || opt.get().getTaskType() != TaskType.WATERING) {
+            answerCallback(client, callbackId, "❌ Расписание не найдено");
+            return;
+        }
+        Plant plant = opt.get().getPlant();
+        if (plant.isArchived()) {
+            editMessage(client, chatId, messageId, "Растение уже удалено");
+            answerCallback(client, callbackId, "Растение удалено");
+            return;
+        }
+
+        // Шаг 2 — спрашиваем про сухость грунта. Состояние (abundance) зашиваем
+        // в callback_data следующего шага, чтобы не плодить state в БД.
+        EditMessageText edit = EditMessageText.builder()
+                .chatId(chatId.toString())
+                .messageId(messageId)
+                .text("🌱 " + plant.getName() + " — земля была сухая?")
+                .replyMarkup(buildSoilDryKeyboard(scheduleId, abundance))
+                .build();
+        try {
+            client.execute(edit);
+        } catch (TelegramApiException e) {
+            log.error("Failed to edit message to soil-dry question: {}", e.getMessage(), e);
+        }
+        answerCallback(client, callbackId, "");
+    }
+
+    private InlineKeyboardMarkup buildSoilDryKeyboard(Long scheduleId, String abundance) {
+        InlineKeyboardButton dry = InlineKeyboardButton.builder()
+                .text("✅ Сухая")
+                .callbackData("v1:wsoil:" + scheduleId + ":" + abundance + ":DRY")
+                .build();
+        InlineKeyboardButton wet = InlineKeyboardButton.builder()
+                .text("❌ Влажная")
+                .callbackData("v1:wsoil:" + scheduleId + ":" + abundance + ":WET")
+                .build();
+        InlineKeyboardButton unk = InlineKeyboardButton.builder()
+                .text("🤷 Не знаю")
+                .callbackData("v1:wsoil:" + scheduleId + ":" + abundance + ":UNKNOWN")
+                .build();
+        return InlineKeyboardMarkup.builder()
+                .keyboardRow(new InlineKeyboardRow(dry, wet, unk))
+                .build();
+    }
+
+    /**
+     * Шаг 3 (финал): пишем CareHistory с обильностью и сухостью, сдвигаем schedule.
+     * callback: v1:wsoil:&lt;scheduleId&gt;:&lt;abundance&gt;:&lt;DRY|WET|UNKNOWN&gt;
+     */
+    private void handleWateringSoilDry(
+            String[] parts, Long chatId, Integer messageId, String callbackId, TelegramClient client
+    ) {
+        if (parts.length != 5) {
+            answerCallback(client, callbackId, "❌ Неверный формат");
+            return;
+        }
+        Long scheduleId;
+        try {
+            scheduleId = Long.parseLong(parts[2]);
+        } catch (NumberFormatException e) {
+            answerCallback(client, callbackId, "❌ Неверный ID");
+            return;
+        }
+        String abundanceStr = parts[3];
+        String soilStr = parts[4];
+
+        boolean wasAbundant = "HEAVY".equals(abundanceStr);
+        if (!"HEAVY".equals(abundanceStr) && !"NORMAL".equals(abundanceStr)) {
+            answerCallback(client, callbackId, "❌ Неверный ответ");
+            return;
+        }
+        Boolean soilWasDry = switch (soilStr) {
+            case "DRY" -> Boolean.TRUE;
+            case "WET" -> Boolean.FALSE;
+            case "UNKNOWN" -> null;
+            default -> { answerCallback(client, callbackId, "❌ Неверный ответ"); yield null; }
+        };
+        // Если был неизвестный soilStr — уже ответили выше, но нам нужно явно выйти.
+        if (!"DRY".equals(soilStr) && !"WET".equals(soilStr) && !"UNKNOWN".equals(soilStr)) {
+            return;
+        }
+
+        Optional<CareSchedule> opt = careScheduleRepository.findById(scheduleId);
+        if (opt.isEmpty() || opt.get().getTaskType() != TaskType.WATERING) {
+            answerCallback(client, callbackId, "❌ Расписание не найдено");
+            return;
+        }
+        CareSchedule schedule = opt.get();
+        Plant plant = schedule.getPlant();
+        if (plant.isArchived()) {
+            editMessage(client, chatId, messageId, "Растение уже удалено");
+            answerCallback(client, callbackId, "Растение удалено");
+            return;
+        }
+
+        LocalDateTime now = LocalDateTime.now();
+
+        if (isDuplicateDone(plant, schedule, now)) {
+            answerCallback(client, callbackId, "Уже отмечено!");
+            return;
+        }
+
+        boolean wasOnTime = isOnTime(schedule.getNextDueAt(), now);
+
+        CareHistory history = CareHistory.builder()
+                .plant(plant)
+                .taskType(TaskType.WATERING)
+                .doneAt(now)
+                .onTime(wasOnTime)
+                .wasAbundant(wasAbundant)
+                .soilWasDry(soilWasDry)
+                .build();
+        careHistoryRepository.save(history);
+
+        schedule.rescheduleFrom(now);
+        careScheduleRepository.save(schedule);
+
+        String nextDateStr = schedule.getNextDueAt().format(DATE_FMT);
+        String summary = "✅ Полил " + plant.getName() + ":\n"
+                + "• " + (wasAbundant ? "обильно" : "обычно") + "\n"
+                + "• земля: " + soilHumanLabel(soilStr) + "\n"
+                + "Следующий полив — " + nextDateStr;
+        editMessage(client, chatId, messageId, summary);
+
+        // Карточка растения новым сообщением вниз чата (messageId=null) — чтобы
+        // после отметки полива юзер сразу видел актуальное состояние растения и
+        // мог продолжить уход (фото, заметки, другие задачи) без скролла.
+        plantCardService.showPlantCard(
+                plant.getUser(), plant.getId(), null, PlantCardService.BACK_TO_LIST, client
+        );
+
+        answerCallback(client, callbackId, "Записано");
+
+        log.info("Watering with details: plant={}, abundant={}, soil_dry={}, schedule={}",
+                plant.getId(), wasAbundant, soilWasDry, scheduleId);
+    }
+
+    private String soilHumanLabel(String soilStr) {
+        return switch (soilStr) {
+            case "DRY" -> "сухая";
+            case "WET" -> "влажная";
+            default -> "неизвестно";
+        };
     }
 
     @Transactional
