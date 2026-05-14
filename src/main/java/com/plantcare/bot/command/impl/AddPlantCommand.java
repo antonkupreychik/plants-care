@@ -86,6 +86,13 @@ public class AddPlantCommand implements BotCommand {
         // Дополнительные опции
         builder.keyboardRow(new InlineKeyboardRow(List.of(
                 InlineKeyboardButton.builder()
+                        .text("⭐ Из моих шаблонов")
+                        .callbackData("SPECIES:MY_TEMPLATES")
+                        .build()
+        )));
+
+        builder.keyboardRow(new InlineKeyboardRow(List.of(
+                InlineKeyboardButton.builder()
                         .text("🔍 Поиск")
                         .callbackData("SPECIES:SEARCH")
                         .build()

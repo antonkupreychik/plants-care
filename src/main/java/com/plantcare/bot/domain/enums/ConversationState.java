@@ -34,5 +34,10 @@ public enum ConversationState {
     AWAITING_PLANT_PHOTO_EDIT,
 
     // Изменение расписания
-    AWAITING_NEW_INTERVAL
+    AWAITING_NEW_INTERVAL,
+
+    // Пользовательские шаблоны (issue #68)
+    AWAITING_TEMPLATE_NAME,            // ввод имени при сохранении шаблона
+    AWAITING_PLANT_NAME_FROM_TEMPLATE, // ввод имени растения при создании из шаблона
+    AWAITING_TEMPLATE_RENAME           // ввод нового имени при переименовании шаблона
 }

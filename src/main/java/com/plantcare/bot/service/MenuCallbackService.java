@@ -1,5 +1,6 @@
 package com.plantcare.bot.service;
 
+import com.plantcare.bot.domain.PlantTemplate;
 import com.plantcare.bot.domain.User;
 import com.plantcare.bot.domain.enums.ConversationState;
 import com.plantcare.bot.domain.enums.TaskType;
@@ -38,6 +39,7 @@ public class MenuCallbackService {
     private final PlantMenuService plantMenuService;
     private final PlantCardService plantCardService;
     private final CalendarMenuService calendarMenuService;
+    private final PlantTemplateService plantTemplateService;
 
     private record LocationPreset(String name, String emoji) {
     }
@@ -65,6 +67,13 @@ public class MenuCallbackService {
 
         if (data.startsWith("PLANT:")) {
             handlePlantCallback(data, callbackId, messageId, client, user);
+            return;
+        }
+
+        // Шаблоны (issue #68). TPL_RENAME, TPL_DELETE, TPL_DELETE_CONFIRM.
+        // TPL_PICK обрабатывается в AwaitingPlantSpeciesChoiceStateHandler.
+        if (data.startsWith("TPL_")) {
+            handleTemplateCallback(data, callbackId, client, user);
             return;
         }
 
@@ -151,6 +160,11 @@ public class MenuCallbackService {
 
             case "SETTINGS" -> {
                 sendSettingsMenu(user, client);
+                answerCallback(client, callbackId, "");
+            }
+
+            case "MY_TEMPLATES" -> {
+                sendMyTemplatesList(user, client);
                 answerCallback(client, callbackId, "");
             }
 
@@ -505,6 +519,42 @@ public class MenuCallbackService {
             String backTarget = parseBackTarget(parts, 1);
 
             plantCardService.showSettingsScreen(user, plantId, messageId, backTarget, client);
+            answerCallback(client, callbackId, "");
+            return;
+        }
+
+        // issue #68: сохранение растения как шаблон
+        // Формат: PLANT:SAVE_TPL:<plantId>[:LOC:<locId>]
+        if (data.startsWith("PLANT:SAVE_TPL:")) {
+            String[] parts = data.substring("PLANT:SAVE_TPL:".length()).split(":");
+            Long plantId;
+            try {
+                plantId = Long.parseLong(parts[0]);
+            } catch (NumberFormatException e) {
+                answerCallback(client, callbackId, "❌ Неверный ID");
+                return;
+            }
+
+            if (plantTemplateService.hasReachedLimit(user.getId())) {
+                answerCallback(client, callbackId,
+                        "❌ Лимит " + PlantTemplateService.MAX_TEMPLATES_PER_USER + " шаблонов");
+                return;
+            }
+
+            userService.setStateData(user, "save_template_plant_id", String.valueOf(plantId));
+            userService.updateState(user, ConversationState.AWAITING_TEMPLATE_NAME);
+
+            try {
+                client.execute(SendMessage.builder()
+                        .chatId(user.getTelegramChatId().toString())
+                        .text("💾 *Сохранить как шаблон*\n\n" +
+                              "Введи название шаблона (до 40 символов) или /cancel.")
+                        .parseMode("Markdown")
+                        .build());
+            } catch (TelegramApiException e) {
+                log.error("Failed to send template name prompt", e);
+            }
+
             answerCallback(client, callbackId, "");
             return;
         }
@@ -866,6 +916,12 @@ public class MenuCallbackService {
         InlineKeyboardMarkup keyboard = InlineKeyboardMarkup.builder()
                 .keyboardRow(new InlineKeyboardRow(List.of(
                         InlineKeyboardButton.builder()
+                                .text("⭐ Мои шаблоны")
+                                .callbackData("MENU:MY_TEMPLATES")
+                                .build()
+                )))
+                .keyboardRow(new InlineKeyboardRow(List.of(
+                        InlineKeyboardButton.builder()
                                 .text("🌍 Изменить регион")
                                 .callbackData("MENU:CHANGE_TZ")
                                 .build()
@@ -1060,6 +1116,13 @@ public class MenuCallbackService {
 
         builder.keyboardRow(new InlineKeyboardRow(List.of(
                 InlineKeyboardButton.builder()
+                        .text("⭐ Из моих шаблонов")
+                        .callbackData("SPECIES:MY_TEMPLATES")
+                        .build()
+        )));
+
+        builder.keyboardRow(new InlineKeyboardRow(List.of(
+                InlineKeyboardButton.builder()
                         .text("🔍 Поиск")
                         .callbackData("SPECIES:SEARCH")
                         .build()
@@ -1087,6 +1150,163 @@ public class MenuCallbackService {
             client.execute(builder.build());
         } catch (TelegramApiException e) {
             log.error("Failed to answer callback: {}", e.getMessage(), e);
+        }
+    }
+
+    // =================================================================
+    // Управление шаблонами растений (issue #68)
+    // =================================================================
+
+    private void handleTemplateCallback(
+            String data,
+            String callbackId,
+            TelegramClient client,
+            User user
+    ) {
+        // ВАЖНО: TPL_DELETE_CONFIRM проверяется ДО TPL_DELETE,
+        // иначе startsWith("TPL_DELETE:") перехватит подтверждение.
+        if (data.startsWith("TPL_DELETE_CONFIRM:")) {
+            Long templateId;
+            try {
+                templateId = Long.parseLong(data.substring("TPL_DELETE_CONFIRM:".length()));
+            } catch (NumberFormatException e) {
+                answerCallback(client, callbackId, "❌ Неверный ID");
+                return;
+            }
+            try {
+                plantTemplateService.deleteTemplate(user, templateId);
+                answerCallback(client, callbackId, "🗑 Шаблон удалён");
+                sendMyTemplatesList(user, client);
+            } catch (IllegalArgumentException e) {
+                answerCallback(client, callbackId, "❌ " + e.getMessage());
+            }
+            return;
+        }
+
+        if (data.startsWith("TPL_DELETE:")) {
+            Long templateId;
+            try {
+                templateId = Long.parseLong(data.substring("TPL_DELETE:".length()));
+            } catch (NumberFormatException e) {
+                answerCallback(client, callbackId, "❌ Неверный ID");
+                return;
+            }
+            sendTemplateDeleteConfirm(user, templateId, client);
+            answerCallback(client, callbackId, "");
+            return;
+        }
+
+        if (data.startsWith("TPL_RENAME:")) {
+            Long templateId;
+            try {
+                templateId = Long.parseLong(data.substring("TPL_RENAME:".length()));
+            } catch (NumberFormatException e) {
+                answerCallback(client, callbackId, "❌ Неверный ID");
+                return;
+            }
+            userService.setStateData(user, "rename_template_id", String.valueOf(templateId));
+            userService.updateState(user, ConversationState.AWAITING_TEMPLATE_RENAME);
+            try {
+                client.execute(SendMessage.builder()
+                        .chatId(user.getTelegramChatId().toString())
+                        .text("✏️ Введи новое название шаблона (до 40 символов) или /cancel.")
+                        .build());
+            } catch (TelegramApiException e) {
+                log.error("Failed to send template rename prompt", e);
+            }
+            answerCallback(client, callbackId, "");
+            return;
+        }
+
+        answerCallback(client, callbackId, "❌ Неизвестная команда");
+    }
+
+    private void sendMyTemplatesList(User user, TelegramClient client) {
+        java.util.List<PlantTemplate> templates =
+                plantTemplateService.getUserTemplates(user.getId());
+        Long chatId = user.getTelegramChatId();
+
+        if (templates.isEmpty()) {
+            try {
+                client.execute(SendMessage.builder()
+                        .chatId(chatId.toString())
+                        .text("⭐ *Мои шаблоны*\n\n" +
+                              "Пока нет шаблонов. Сохрани шаблон из карточки растения.\n\n" +
+                              "_⚙️ Настройки растения → 💾 Сохранить как шаблон_")
+                        .parseMode("Markdown")
+                        .replyMarkup(InlineKeyboardMarkup.builder()
+                                .keyboardRow(new InlineKeyboardRow(java.util.List.of(
+                                        InlineKeyboardButton.builder()
+                                                .text("⬅️ Назад")
+                                                .callbackData("MENU:SETTINGS")
+                                                .build()
+                                )))
+                                .build())
+                        .build());
+            } catch (TelegramApiException e) {
+                log.error("Failed to send empty templates list", e);
+            }
+            return;
+        }
+
+        StringBuilder text = new StringBuilder("⭐ *Мои шаблоны*\n\n");
+        java.util.List<InlineKeyboardRow> rows = new java.util.ArrayList<>();
+
+        for (PlantTemplate template : templates) {
+            text.append("• ").append(template.getName())
+                .append(" — ").append(template.shortDescription()).append("\n");
+            rows.add(new InlineKeyboardRow(java.util.List.of(
+                    InlineKeyboardButton.builder()
+                            .text("✏️ " + template.getName())
+                            .callbackData("TPL_RENAME:" + template.getId())
+                            .build(),
+                    InlineKeyboardButton.builder()
+                            .text("🗑")
+                            .callbackData("TPL_DELETE:" + template.getId())
+                            .build()
+            )));
+        }
+        rows.add(new InlineKeyboardRow(java.util.List.of(
+                InlineKeyboardButton.builder()
+                        .text("⬅️ Назад")
+                        .callbackData("MENU:SETTINGS")
+                        .build()
+        )));
+
+        try {
+            client.execute(SendMessage.builder()
+                    .chatId(chatId.toString())
+                    .text(text.toString())
+                    .parseMode("Markdown")
+                    .replyMarkup(InlineKeyboardMarkup.builder().keyboard(rows).build())
+                    .build());
+        } catch (TelegramApiException e) {
+            log.error("Failed to send templates list", e);
+        }
+    }
+
+    private void sendTemplateDeleteConfirm(User user, Long templateId, TelegramClient client) {
+        try {
+            client.execute(SendMessage.builder()
+                    .chatId(user.getTelegramChatId().toString())
+                    .text("🗑 *Удалить шаблон?*\n\n" +
+                          "_Растения, созданные из него, останутся без изменений._")
+                    .parseMode("Markdown")
+                    .replyMarkup(InlineKeyboardMarkup.builder()
+                            .keyboardRow(new InlineKeyboardRow(java.util.List.of(
+                                    InlineKeyboardButton.builder()
+                                            .text("✅ Да, удалить")
+                                            .callbackData("TPL_DELETE_CONFIRM:" + templateId)
+                                            .build(),
+                                    InlineKeyboardButton.builder()
+                                            .text("⬅️ Отмена")
+                                            .callbackData("MENU:MY_TEMPLATES")
+                                            .build()
+                            )))
+                            .build())
+                    .build());
+        } catch (TelegramApiException e) {
+            log.error("Failed to send delete confirm for template {}", templateId, e);
         }
     }
 }
