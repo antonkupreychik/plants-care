@@ -897,6 +897,7 @@ public class MenuCallbackService {
             case WATERING -> "Полил";
             case MISTING -> "Опрыскал";
             case FERTILIZING -> "Удобрил";
+            case SOIL_CHECK -> "Проверил";
         };
     }
 

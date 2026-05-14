@@ -177,6 +177,7 @@ public class MainMenuService {
             case WATERING -> "💧";
             case MISTING -> "💨";
             case FERTILIZING -> "🌿";
+            case SOIL_CHECK -> "🪴";
         };
     }
 
@@ -185,6 +186,7 @@ public class MainMenuService {
             case WATERING -> "полить";
             case MISTING -> "опрыскать";
             case FERTILIZING -> "удобрить";
+            case SOIL_CHECK -> "проверить грунт";
         };
     }
 

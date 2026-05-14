@@ -15,6 +15,9 @@ import org.telegram.telegrambots.meta.api.methods.AnswerCallbackQuery;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
 import org.telegram.telegrambots.meta.api.methods.updatingmessages.EditMessageText;
 import org.telegram.telegrambots.meta.api.objects.CallbackQuery;
+import org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMarkup;
+import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardButton;
+import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardRow;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 import org.telegram.telegrambots.meta.generics.TelegramClient;
 
@@ -67,6 +70,16 @@ public class NotificationCallbackService {
         if ("bulk_done".equals(action)) {
             handleBulkDone(parts[2], chatId, callbackId, client);
             return;
+        }
+
+        // SOIL_CHECK actions (issue #74) — payload это scheduleId SOIL_CHECK расписания,
+        // либо WATERING scheduleId для soil_water (CTA "Полить сейчас" после DRY).
+        switch (action) {
+            case "soil_dry" -> { handleSoilCheckResult(parts[2], "DRY",     chatId, messageId, callbackId, client); return; }
+            case "soil_wet" -> { handleSoilCheckResult(parts[2], "WET",     chatId, messageId, callbackId, client); return; }
+            case "soil_unk" -> { handleSoilCheckResult(parts[2], "UNKNOWN", chatId, messageId, callbackId, client); return; }
+            case "soil_water" -> { handleSoilCheckWaterNow(parts[2], chatId, messageId, callbackId, client); return; }
+            default -> { /* fallthrough — обычный done/snooze/skip */ }
         }
 
         Long scheduleId;
@@ -205,6 +218,7 @@ public class NotificationCallbackService {
             case WATERING -> "Полил";
             case MISTING -> "Опрыскал";
             case FERTILIZING -> "Удобрил";
+            case SOIL_CHECK -> "Проверил"; // unreachable, exhaustive switch
         };
     }
 
@@ -213,6 +227,7 @@ public class NotificationCallbackService {
             case WATERING -> "Следующий полив";
             case MISTING -> "Следующее опрыскивание";
             case FERTILIZING -> "Следующее удобрение";
+            case SOIL_CHECK -> "Следующая проверка грунта"; // unreachable, exhaustive switch
         };
     }
 
@@ -301,6 +316,192 @@ public class NotificationCallbackService {
             client.execute(msg);
         } catch (TelegramApiException e) {
             log.error("Failed to send bulk result message: {}", e.getMessage(), e);
+        }
+    }
+
+    // ====================================================================
+    // SOIL_CHECK (issue #74)
+    // ====================================================================
+
+    /**
+     * Обработка ответа на проверку грунта: DRY / WET / UNKNOWN.
+     *
+     * 1) Записываем CareHistory(SOIL_CHECK, note="soil:&lt;result&gt;"), считаем on_time
+     *    по тому же правилу 24h grace, что и для остальных типов.
+     * 2) Сдвигаем next_due_at SOIL_CHECK-расписания на now + interval.
+     * 3) Редактируем исходное сообщение: убираем кнопки, ставим итог.
+     * 4) Для DRY дополнительно шлём отдельное сообщение с CTA "💧 Полить сейчас"
+     *    — но только если у растения есть активное WATERING-расписание.
+     */
+    private void handleSoilCheckResult(
+            String rawScheduleId,
+            String result,
+            Long chatId,
+            Integer messageId,
+            String callbackId,
+            TelegramClient client
+    ) {
+        Long scheduleId;
+        try {
+            scheduleId = Long.parseLong(rawScheduleId);
+        } catch (NumberFormatException e) {
+            answerCallback(client, callbackId, "❌ Неверный ID");
+            return;
+        }
+
+        Optional<CareSchedule> opt = careScheduleRepository.findById(scheduleId);
+        if (opt.isEmpty()) {
+            answerCallback(client, callbackId, "❌ Расписание не найдено");
+            return;
+        }
+        CareSchedule schedule = opt.get();
+
+        if (schedule.getTaskType() != TaskType.SOIL_CHECK) {
+            answerCallback(client, callbackId, "❌ Неверный тип");
+            return;
+        }
+
+        Plant plant = schedule.getPlant();
+        if (plant.isArchived()) {
+            editMessage(client, chatId, messageId, "🗑 Растение уже удалено.");
+            answerCallback(client, callbackId, "");
+            return;
+        }
+
+        LocalDateTime now = LocalDateTime.now();
+
+        // Дедуп — двойной тап. Дубликат считаем по последней SOIL_CHECK-записи.
+        Optional<CareHistory> last = careHistoryRepository
+                .findFirstByPlantIdAndTaskTypeOrderByDoneAtDesc(plant.getId(), TaskType.SOIL_CHECK);
+        if (last.isPresent() && last.get().getDoneAt().plusSeconds(DEDUP_SECONDS).isAfter(now)) {
+            answerCallback(client, callbackId, "Уже отмечено!");
+            return;
+        }
+
+        boolean wasOnTime = isOnTime(schedule.getNextDueAt(), now);
+
+        CareHistory history = CareHistory.builder()
+                .plant(plant)
+                .taskType(TaskType.SOIL_CHECK)
+                .doneAt(now)
+                .onTime(wasOnTime)
+                .note("soil:" + result)
+                .build();
+        careHistoryRepository.save(history);
+
+        schedule.rescheduleFrom(now);
+        careScheduleRepository.save(schedule);
+
+        String nextDateStr = schedule.getNextDueAt().toLocalDate().format(DATE_FMT);
+
+        // 3) Edit оригинальное сообщение — итог проверки.
+        String summary = switch (result) {
+            case "DRY"     -> "✅ Грунт сухой. Следующая проверка — " + nextDateStr;
+            case "WET"     -> "💧 Грунт влажный. Полив пока не нужен.\nСледующая проверка — " + nextDateStr;
+            case "UNKNOWN" -> "🤷 Ок. Проверь пальцем/палочкой на 2–3 см вглубь.\n"
+                              + "Следующая проверка — " + nextDateStr;
+            default        -> "Грунт проверен. Следующая проверка — " + nextDateStr;
+        };
+        editMessage(client, chatId, messageId, summary);
+
+        // 4) Если сухой — отдельным сообщением предлагаем полить.
+        if ("DRY".equals(result)) {
+            CareSchedule wateringSchedule = careScheduleRepository
+                    .findByPlantIdAndTaskType(plant.getId(), TaskType.WATERING)
+                    .filter(CareSchedule::isActive)
+                    .orElse(null);
+
+            if (wateringSchedule != null) {
+                sendSoilDryFollowUp(chatId, plant.getName(), wateringSchedule.getId(), client);
+            }
+        }
+
+        answerCallback(client, callbackId, switch (result) {
+            case "DRY" -> "Записано: сухо";
+            case "WET" -> "Записано: влажно";
+            default    -> "Записано";
+        });
+
+        log.info("Soil check result for plant {} (schedule {}): {}",
+                plant.getId(), scheduleId, result);
+    }
+
+    /**
+     * CTA после DRY: "💧 Полить сейчас" — переиспользует обычный markScheduleDone
+     * для WATERING-расписания того же растения.
+     */
+    private void handleSoilCheckWaterNow(
+            String rawWateringScheduleId,
+            Long chatId,
+            Integer messageId,
+            String callbackId,
+            TelegramClient client
+    ) {
+        Long wateringScheduleId;
+        try {
+            wateringScheduleId = Long.parseLong(rawWateringScheduleId);
+        } catch (NumberFormatException e) {
+            answerCallback(client, callbackId, "❌ Неверный ID");
+            return;
+        }
+
+        Optional<CareSchedule> opt = careScheduleRepository.findById(wateringScheduleId);
+        if (opt.isEmpty() || opt.get().getTaskType() != TaskType.WATERING) {
+            answerCallback(client, callbackId, "❌ Расписание полива не найдено");
+            return;
+        }
+        CareSchedule wateringSchedule = opt.get();
+        Plant plant = wateringSchedule.getPlant();
+
+        if (plant.isArchived()) {
+            editMessage(client, chatId, messageId, "🗑 Растение уже удалено.");
+            answerCallback(client, callbackId, "");
+            return;
+        }
+
+        LocalDateTime now = LocalDateTime.now();
+        boolean marked = markScheduleDone(wateringSchedule, now);
+
+        if (!marked) {
+            answerCallback(client, callbackId, "Уже отмечено!");
+            return;
+        }
+
+        String nextDateStr = wateringSchedule.getNextDueAt().toLocalDate().format(DATE_FMT);
+        editMessage(client, chatId, messageId,
+                "💧 Полил " + plant.getName() + ".\nСледующий полив — " + nextDateStr);
+        answerCallback(client, callbackId, "Готово!");
+
+        log.info("Soil-check follow-up watering done: plant={}, schedule={}",
+                plant.getId(), wateringScheduleId);
+    }
+
+    private void sendSoilDryFollowUp(Long chatId, String plantName, Long wateringScheduleId,
+                                     TelegramClient client) {
+        InlineKeyboardButton waterBtn = InlineKeyboardButton.builder()
+                .text("💧 Полить сейчас")
+                .callbackData("v1:soil_water:" + wateringScheduleId)
+                .build();
+
+        InlineKeyboardButton snoozeBtn = InlineKeyboardButton.builder()
+                .text("⏰ Отложить полив")
+                .callbackData("v1:snooze:" + wateringScheduleId)
+                .build();
+
+        InlineKeyboardMarkup keyboard = InlineKeyboardMarkup.builder()
+                .keyboardRow(new InlineKeyboardRow(waterBtn, snoozeBtn))
+                .build();
+
+        SendMessage msg = SendMessage.builder()
+                .chatId(chatId.toString())
+                .text("Похоже, " + plantName + " пора полить.")
+                .replyMarkup(keyboard)
+                .build();
+
+        try {
+            client.execute(msg);
+        } catch (TelegramApiException e) {
+            log.error("Failed to send soil-dry follow-up: {}", e.getMessage(), e);
         }
     }
 
