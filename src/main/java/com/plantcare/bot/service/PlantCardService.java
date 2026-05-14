@@ -777,7 +777,8 @@ public class PlantCardService {
         return sb.toString();
     }
 
-    private String formatHistoryLine(CareHistory h, ZoneId tz) {
+    // package-private для unit-теста (PlantCardServiceWateringHistoryTest)
+    String formatHistoryLine(CareHistory h, ZoneId tz) {
         LocalDate doneDay = h.getDoneAt()
                 .atOffset(ZoneOffset.UTC)
                 .atZoneSameInstant(tz)
@@ -794,7 +795,44 @@ public class PlantCardService {
             // Здесь у нас нет CareSchedule, чтобы посчитать точно. Помечаем «с опозданием».
             status = "с опозданием";
         }
-        return date + " — " + emoji + " " + verb + " (" + status + ")";
+
+        // issue #71: для записей WATERING с заполненными деталями добавляем
+        // обильность и сухость грунта. Старые записи (до V10) и не-WATERING типы
+        // имеют was_abundant=NULL и soil_was_dry=NULL — для них формат прежний.
+        String details = wateringDetailsSuffix(h);
+        return date + " — " + emoji + " " + verb + details + " (" + status + ")";
+    }
+
+    /**
+     * Строит фрагмент строки истории с обильностью + сухостью грунта (issue #71).
+     * Возвращает пустую строку, если деталей нет (старая запись, bulk-полив,
+     * MISTING/FERTILIZING).
+     *
+     * <p>Примеры:
+     * <ul>
+     *   <li>HEAVY + DRY → {@code ", обильно, земля сухая"}</li>
+     *   <li>NORMAL + WET → {@code ", обычно, земля влажная"}</li>
+     *   <li>HEAVY + UNKNOWN → {@code ", обильно"}</li>
+     *   <li>оба null → {@code ""}</li>
+     * </ul>
+     */
+    private String wateringDetailsSuffix(CareHistory h) {
+        if (h.getTaskType() != TaskType.WATERING) {
+            return "";
+        }
+        Boolean abundant = h.getWasAbundant();
+        Boolean soilDry = h.getSoilWasDry();
+        if (abundant == null && soilDry == null) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder();
+        if (abundant != null) {
+            sb.append(", ").append(abundant ? "обильно" : "обычно");
+        }
+        if (soilDry != null) {
+            sb.append(", земля ").append(soilDry ? "сухая" : "влажная");
+        }
+        return sb.toString();
     }
 
     private InlineKeyboardMarkup buildHistoryKeyboard(
