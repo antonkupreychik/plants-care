@@ -3,6 +3,7 @@ package com.plantcare.bot.service;
 import com.plantcare.bot.domain.PlantTemplate;
 import com.plantcare.bot.domain.User;
 import com.plantcare.bot.domain.enums.ConversationState;
+import com.plantcare.bot.domain.enums.PlantEventType;
 import com.plantcare.bot.domain.enums.TaskType;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -41,6 +42,7 @@ public class MenuCallbackService {
     private final CalendarMenuService calendarMenuService;
     private final PlantTemplateService plantTemplateService;
     private final NotificationCallbackService notificationCallbackService;
+    private final PlantEventService plantEventService;
 
     private record LocationPreset(String name, String emoji) {
     }
@@ -533,6 +535,15 @@ public class MenuCallbackService {
             return;
         }
 
+        // Журнал событий (issue #76):
+        //   PLANT:EVENT:ADD:<plantId>[:LOC:<locId>]            — меню типов
+        //   PLANT:EVENT:SAVE:<plantId>:<TYPE>[:LOC:<locId>]    — сохранить событие
+        //   PLANT:EVENT:LIST:<plantId>:<page>[:LOC:<locId>]    — журнал с пагинацией
+        if (data.startsWith("PLANT:EVENT:")) {
+            handlePlantEventCallback(data, user, messageId, callbackId, client);
+            return;
+        }
+
         // Настройки: PLANT:SETTINGS:<id>[:LOC:<locId>]
         if (data.startsWith("PLANT:SETTINGS:")) {
             String[] parts = data.substring("PLANT:SETTINGS:".length()).split(":");
@@ -907,6 +918,89 @@ public class MenuCallbackService {
     @FunctionalInterface
     private interface EditPromptCallback {
         void run(User user, Long plantId, Integer messageId, String backTarget);
+    }
+
+    /**
+     * Журнал событий растения (issue #76).
+     *
+     * Форматы callback_data:
+     *   PLANT:EVENT:ADD:<plantId>[:LOC:<locId>]            — открыть меню типов
+     *   PLANT:EVENT:SAVE:<plantId>:<TYPE>[:LOC:<locId>]    — сохранить событие
+     *   PLANT:EVENT:LIST:<plantId>:<page>[:LOC:<locId>]    — журнал с пагинацией
+     */
+    private void handlePlantEventCallback(
+            String data, User user, Integer messageId, String callbackId, TelegramClient client
+    ) {
+        String[] parts = data.substring("PLANT:EVENT:".length()).split(":");
+        if (parts.length < 2) {
+            answerCallback(client, callbackId, "❌ Неверная команда");
+            return;
+        }
+
+        String action = parts[0];
+        Long plantId;
+        try {
+            plantId = Long.parseLong(parts[1]);
+        } catch (NumberFormatException e) {
+            answerCallback(client, callbackId, "❌ Неверный ID");
+            return;
+        }
+
+        switch (action) {
+            case "ADD" -> {
+                String backTarget = parseBackTarget(parts, 2);
+                plantCardService.showEventTypeMenu(user, plantId, messageId, backTarget, client);
+                answerCallback(client, callbackId, "");
+            }
+            case "SAVE" -> {
+                if (parts.length < 3) {
+                    answerCallback(client, callbackId, "❌ Неверная команда");
+                    return;
+                }
+                PlantEventType type;
+                try {
+                    type = PlantEventType.valueOf(parts[2]);
+                } catch (IllegalArgumentException e) {
+                    answerCallback(client, callbackId, "❌ Неизвестный тип события");
+                    return;
+                }
+                String backTarget = parseBackTarget(parts, 3);
+
+                PlantEventService.AddResult result = plantEventService.addEvent(user, plantId, type);
+
+                if (result.wasNotFound()) {
+                    answerCallback(client, callbackId, "❌ Растение не найдено");
+                    return;
+                }
+
+                String label = plantCardService.eventShortLabel(type);
+                String alertText = result.wasDuplicate()
+                        ? "Уже отмечено!"
+                        : "✅ Событие «" + label + "» сохранено в историю";
+                answerCallback(client, callbackId, alertText);
+
+                // Возвращаем юзера в карточку — он только что что-то сделал
+                // и логично увидеть актуальное состояние.
+                plantCardService.showPlantCard(user, plantId, messageId, backTarget, client);
+            }
+            case "LIST" -> {
+                if (parts.length < 3) {
+                    answerCallback(client, callbackId, "❌ Неверная команда");
+                    return;
+                }
+                int page;
+                try {
+                    page = Integer.parseInt(parts[2]);
+                } catch (NumberFormatException e) {
+                    answerCallback(client, callbackId, "❌ Неверная команда");
+                    return;
+                }
+                String backTarget = parseBackTarget(parts, 3);
+                plantCardService.showEventsScreen(user, plantId, page, messageId, backTarget, client);
+                answerCallback(client, callbackId, "");
+            }
+            default -> answerCallback(client, callbackId, "❌ Неизвестное действие");
+        }
     }
 
     /**

@@ -4,11 +4,14 @@ import com.plantcare.bot.domain.CareHistory;
 import com.plantcare.bot.domain.CareSchedule;
 import com.plantcare.bot.domain.Location;
 import com.plantcare.bot.domain.Plant;
+import com.plantcare.bot.domain.PlantEvent;
 import com.plantcare.bot.domain.User;
+import com.plantcare.bot.domain.enums.PlantEventType;
 import com.plantcare.bot.domain.enums.TaskType;
 import com.plantcare.bot.repository.PlantRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Page;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.telegram.telegrambots.meta.api.methods.AnswerCallbackQuery;
@@ -68,6 +71,7 @@ public class PlantCardService {
     private final MainMenuService mainMenuService;
     private final UserService userService;
     private final CareHistoryService careHistoryService;
+    private final PlantEventService plantEventService;
 
     // =================================================================
     // 1) Карточка "только что создано" — используется визардом создания
@@ -844,6 +848,181 @@ public class PlantCardService {
     }
 
     // =================================================================
+    // 3b) Журнал событий — выбор типа + просмотр списка (issue #76)
+    // =================================================================
+
+    /**
+     * Меню выбора типа события. Заменяет текущее сообщение (карточку) на
+     * вертикальный список из 4 типов + «Отмена».
+     */
+    @Transactional(readOnly = true)
+    public void showEventTypeMenu(
+            User user, Long plantId, Integer messageId, String backTarget, TelegramClient client
+    ) {
+        Plant plant = plantRepository.findByUserIdAndIdAndArchivedAtIsNull(user.getId(), plantId)
+                .orElse(null);
+        if (plant == null) {
+            sendTextMessage(user.getTelegramChatId(), "❌ Растение не найдено.", client);
+            return;
+        }
+
+        String text = "📝 *Добавить событие — " + escapeMd(plant.getName()) + "*\n\n"
+                + "Выбери тип события:";
+
+        List<InlineKeyboardRow> rows = new ArrayList<>();
+        for (PlantEventType type : PlantEventType.values()) {
+            rows.add(new InlineKeyboardRow(List.of(
+                    InlineKeyboardButton.builder()
+                            .text(eventEmoji(type) + " " + eventLabel(type))
+                            .callbackData("PLANT:EVENT:SAVE:" + plantId + ":" + type.name()
+                                    + backSuffix(backTarget))
+                            .build()
+            )));
+        }
+        rows.add(new InlineKeyboardRow(List.of(
+                InlineKeyboardButton.builder()
+                        .text("⬅️ Отмена")
+                        .callbackData(plantCardCallback(plantId, backTarget))
+                        .build()
+        )));
+
+        InlineKeyboardMarkup keyboard = InlineKeyboardMarkup.builder().keyboard(rows).build();
+        sendOrEditText(user.getTelegramChatId(), messageId, text, keyboard, client);
+    }
+
+    /**
+     * Журнал событий — постраничный список последних событий растения.
+     * Пагинация: {@link PlantEventService#EVENTS_PAGE_SIZE} на страницу,
+     * inline-кнопки {@code [← Назад] N/M [Вперёд →]}, если страниц больше одной.
+     */
+    public void showEventsScreen(
+            User user, Long plantId, int page, Integer messageId, String backTarget,
+            TelegramClient client
+    ) {
+        Plant plant = plantRepository.findByUserIdAndIdAndArchivedAtIsNull(user.getId(), plantId)
+                .orElse(null);
+        if (plant == null) {
+            sendTextMessage(user.getTelegramChatId(), "❌ Растение не найдено.", client);
+            return;
+        }
+
+        Page<PlantEvent> result = plantEventService.getEvents(user, plantId, page);
+        int safePage = result.getNumber();
+        int totalPages = Math.max(1, result.getTotalPages());
+
+        String text = buildEventsText(plant, result.getContent(), safePage, totalPages);
+        InlineKeyboardMarkup keyboard = buildEventsKeyboard(plant, safePage, totalPages, backTarget);
+
+        sendOrEditText(user.getTelegramChatId(), messageId, text, keyboard, client);
+    }
+
+    private String buildEventsText(Plant plant, List<PlantEvent> events, int page, int totalPages) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("📖 *Журнал событий — ").append(escapeMd(plant.getName())).append("*\n\n");
+
+        if (events.isEmpty()) {
+            sb.append("Здесь пока пусто. Нажми «📝 Добавить событие» в карточке, "
+                    + "чтобы зафиксировать пересадку, обрезку или другое разовое действие.");
+            return sb.toString();
+        }
+
+        for (PlantEvent e : events) {
+            String date = e.getEventDate().toLocalDate().format(HISTORY_DATE_FMT);
+            sb.append(date)
+                    .append(" — ")
+                    .append(eventEmoji(e.getEventType()))
+                    .append(" ")
+                    .append(eventLabel(e.getEventType()))
+                    .append("\n");
+        }
+
+        if (totalPages > 1) {
+            sb.append("\n_Страница ").append(page + 1).append(" из ").append(totalPages).append("_");
+        }
+        return sb.toString();
+    }
+
+    private InlineKeyboardMarkup buildEventsKeyboard(
+            Plant plant, int page, int totalPages, String backTarget
+    ) {
+        List<InlineKeyboardRow> rows = new ArrayList<>();
+
+        if (totalPages > 1) {
+            InlineKeyboardRow nav = new InlineKeyboardRow();
+            if (page > 0) {
+                nav.add(InlineKeyboardButton.builder()
+                        .text("← Назад")
+                        .callbackData("PLANT:EVENT:LIST:" + plant.getId() + ":" + (page - 1)
+                                + backSuffix(backTarget))
+                        .build());
+            }
+            // Индикатор страницы — клик ведёт сам в себя (no-op rerender).
+            nav.add(InlineKeyboardButton.builder()
+                    .text((page + 1) + "/" + totalPages)
+                    .callbackData("PLANT:EVENT:LIST:" + plant.getId() + ":" + page
+                            + backSuffix(backTarget))
+                    .build());
+            if (page < totalPages - 1) {
+                nav.add(InlineKeyboardButton.builder()
+                        .text("Вперёд →")
+                        .callbackData("PLANT:EVENT:LIST:" + plant.getId() + ":" + (page + 1)
+                                + backSuffix(backTarget))
+                        .build());
+            }
+            rows.add(nav);
+        }
+
+        // «Добавить событие» прямо отсюда — удобно, если юзер пришёл посмотреть
+        // и решил тут же зафиксировать новое.
+        rows.add(new InlineKeyboardRow(List.of(
+                InlineKeyboardButton.builder()
+                        .text("📝 Добавить событие")
+                        .callbackData("PLANT:EVENT:ADD:" + plant.getId() + backSuffix(backTarget))
+                        .build()
+        )));
+
+        rows.add(new InlineKeyboardRow(List.of(
+                InlineKeyboardButton.builder()
+                        .text("⬅️ К карточке")
+                        .callbackData(plantCardCallback(plant.getId(), backTarget))
+                        .build()
+        )));
+
+        return InlineKeyboardMarkup.builder().keyboard(rows).build();
+    }
+
+    private String eventLabel(PlantEventType type) {
+        return switch (type) {
+            case TRANSPLANT     -> "Пересадка / Смена горшка";
+            case SOIL_CHANGE    -> "Замена грунта / Досыпка";
+            case PRUNING        -> "Обрезка";
+            case PEST_TREATMENT -> "Обработка от вредителей";
+        };
+    }
+
+    private String eventEmoji(PlantEventType type) {
+        return switch (type) {
+            case TRANSPLANT     -> "🪴";
+            case SOIL_CHANGE    -> "🌱";
+            case PRUNING        -> "✂️";
+            case PEST_TREATMENT -> "🐛";
+        };
+    }
+
+    /**
+     * Короткий локализованный label типа события — используется в alert'ах после
+     * сохранения («Событие "Обрезка" сохранено в историю»). Без emoji, без слешей.
+     */
+    public String eventShortLabel(PlantEventType type) {
+        return switch (type) {
+            case TRANSPLANT     -> "Пересадка";
+            case SOIL_CHANGE    -> "Замена грунта";
+            case PRUNING        -> "Обрезка";
+            case PEST_TREATMENT -> "Обработка от вредителей";
+        };
+    }
+
+    // =================================================================
     // Рендер карточки
     // =================================================================
 
@@ -941,6 +1120,19 @@ public class PlantCardService {
                 .callbackData(plantSettingsCallback(plant.getId(), backTarget))
                 .build());
         rows.add(auxRow);
+
+        // 2b) Журнал событий (issue #76): добавить событие + просмотр журнала.
+        // Отдельный ряд, чтобы не смешивать с регулярным уходом и не перегружать auxRow.
+        InlineKeyboardRow eventsRow = new InlineKeyboardRow();
+        eventsRow.add(InlineKeyboardButton.builder()
+                .text("📝 Добавить событие")
+                .callbackData("PLANT:EVENT:ADD:" + plant.getId() + backSuffix(backTarget))
+                .build());
+        eventsRow.add(InlineKeyboardButton.builder()
+                .text("📖 События")
+                .callbackData("PLANT:EVENT:LIST:" + plant.getId() + ":0" + backSuffix(backTarget))
+                .build());
+        rows.add(eventsRow);
 
         // 3) Назад.
         rows.add(new InlineKeyboardRow(List.of(buildBackButton(backTarget))));
