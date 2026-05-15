@@ -99,9 +99,10 @@
                     </a>
                 </li>
                 <li>
-                    <span class="opacity-50 cursor-not-allowed">
-                        Stuck <span class="badge badge-ghost badge-xs ml-1">soon</span>
-                    </span>
+                    <a th:href="@{/admin/stuck}"
+                       th:classappend="${activeMenu == 'stuck'} ? 'active' : ''">
+                        Stuck
+                    </a>
                 </li>
                 <li>
                     <a th:href="@{/admin/scheduler}"

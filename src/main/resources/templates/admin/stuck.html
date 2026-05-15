@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      xmlns:layout="http://www.ultraq.net.nz/thymeleaf/layout"
+      layout:decorate="~{admin/_layout}"
+      lang="ru">
+<head>
+    <title>Stuck users</title>
+</head>
+<body>
+<section layout:fragment="content">
+
+    <div class="flex items-center justify-between mb-4">
+        <h1 class="text-2xl font-bold">Stuck users</h1>
+        <span class="text-xs text-base-content/60">
+            issue #59 · state ≠ IDLE, updated_at &lt; now() − 24h
+        </span>
+    </div>
+
+    <!-- Пустой список — повод порадоваться -->
+    <div th:if="${#lists.isEmpty(stuck)}"
+         class="alert alert-success">
+        <div>
+            <h2 class="font-bold text-lg">Все юзеры в порядке 🌱</h2>
+            <p class="text-sm">Никто не застрял в визарде дольше 24 часов.</p>
+        </div>
+    </div>
+
+    <!-- Bulk-форма оборачивает таблицу: один submit = массовый сброс -->
+    <form th:if="${not #lists.isEmpty(stuck)}"
+          method="post"
+          th:action="@{/admin/stuck/reset-bulk}"
+          id="bulk-form"
+          th:attr="data-count=${#lists.size(stuck)}"
+          onsubmit="return confirmBulk(this);">
+        <div class="card bg-base-100 shadow">
+            <div class="card-body">
+
+                <div class="flex flex-wrap items-center gap-3 mb-3">
+                    <span class="text-sm text-base-content/70">
+                        Найдено застрявших:
+                        <span class="font-bold" th:text="${#lists.size(stuck)}">0</span>
+                    </span>
+                    <span class="flex-1"></span>
+                    <button type="submit"
+                            id="bulk-submit"
+                            class="btn btn-sm btn-warning"
+                            disabled>
+                        🔄 Сбросить выбранных
+                        (<span id="selected-count">0</span>)
+                    </button>
+                </div>
+
+                <div class="overflow-x-auto">
+                    <table class="table table-sm">
+                        <thead>
+                        <tr>
+                            <th class="w-8">
+                                <input type="checkbox" id="select-all"
+                                       class="checkbox checkbox-sm" />
+                            </th>
+                            <th>Юзер</th>
+                            <th>Состояние</th>
+                            <th class="text-right">Застрял</th>
+                            <th>state_data</th>
+                            <th class="text-right">Действие</th>
+                        </tr>
+                        </thead>
+                        <tbody>
+                        <tr th:each="u : ${stuck}"
+                            th:classappend="${u.severity == 'error'} ? 'bg-error/5' : 'bg-warning/5'">
+                            <td>
+                                <input type="checkbox"
+                                       name="userIds"
+                                       class="checkbox checkbox-sm row-check"
+                                       th:value="${u.userId}" />
+                            </td>
+                            <td>
+                                <div class="text-sm" th:text="${u.userLabel}">@user (123)</div>
+                                <div class="text-xs text-base-content/50"
+                                     th:text="${u.updatedAt}">2026-05-01T12:00</div>
+                            </td>
+                            <td>
+                                <code class="text-xs" th:text="${u.conversationState}">
+                                    AWAITING_PLANT_NAME
+                                </code>
+                            </td>
+                            <td class="text-right">
+                                <span th:text="${u.stuckHours} + ' ч'"
+                                      th:classappend="${u.severity == 'error'}
+                                                ? 'text-error font-bold'
+                                                : 'text-warning'">25 ч</span>
+                            </td>
+                            <td>
+                                <details th:if="${u.stateData != null and not #strings.isEmpty(u.stateData)}">
+                                    <summary class="cursor-pointer text-xs text-base-content/70">
+                                        показать
+                                    </summary>
+                                    <pre class="text-xs bg-base-200 rounded p-2 mt-1 overflow-x-auto"
+                                         th:text="${u.stateData}">{}</pre>
+                                </details>
+                                <span th:unless="${u.stateData != null and not #strings.isEmpty(u.stateData)}"
+                                      class="text-xs text-base-content/40">—</span>
+                            </td>
+                            <td class="text-right">
+                                <!--
+                                  Одиночный сброс — отдельная форма с action существующего
+                                  /admin/users/{id}/reset-state (Task 2). Чтобы submit
+                                  одиночной формы не отправил bulk-форму, помещаем её ВНЕ
+                                  bulk-формы — но Thymeleaf/HTML не поддерживает nested
+                                  formов. Решение: form="" на кнопке через formaction.
+                                -->
+                                <button type="submit"
+                                        class="btn btn-xs btn-ghost"
+                                        formnovalidate
+                                        formmethod="post"
+                                        th:formaction="@{'/admin/users/' + ${u.userId} + '/reset-state'}"
+                                        onclick="event.stopPropagation(); return confirm('Сбросить состояние этого юзера?');"
+                                        title="Сбросить state в IDLE">
+                                    🔄
+                                </button>
+                            </td>
+                        </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </form>
+
+    <script>
+        (function () {
+            const selectAll = document.getElementById('select-all');
+            const submitBtn = document.getElementById('bulk-submit');
+            const counter = document.getElementById('selected-count');
+            const checks = () => Array.from(document.querySelectorAll('.row-check'));
+
+            const updateUi = () => {
+                const selected = checks().filter(c => c.checked).length;
+                counter.textContent = String(selected);
+                submitBtn.disabled = selected === 0;
+
+                // sync «выбрать всех»: галка стоит, если все выбраны; снимается иначе
+                if (selectAll) {
+                    const all = checks();
+                    selectAll.checked = all.length > 0 && all.every(c => c.checked);
+                    selectAll.indeterminate = selected > 0 && selected < all.length;
+                }
+            };
+
+            if (selectAll) {
+                selectAll.addEventListener('change', () => {
+                    checks().forEach(c => { c.checked = selectAll.checked; });
+                    updateUi();
+                });
+            }
+            checks().forEach(c => c.addEventListener('change', updateUi));
+            updateUi();
+        })();
+
+        function confirmBulk(form) {
+            const count = form.querySelectorAll('.row-check:checked').length;
+            if (count === 0) return false;
+            return confirm('Сбросить состояние у ' + count + ' юзеров?');
+        }
+    </script>
+
+</section>
+</body>
+</html>
