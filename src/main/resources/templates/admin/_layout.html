@@ -111,6 +111,7 @@
                     </a>
                 </li>
                 <li>
-                    <span class="opacity-50 cursor-not-allowed">
-                        Broadcast <span class="badge badge-ghost badge-xs ml-1">soon</span>
-                    </span>
+                    <a th:href="@{/admin/broadcast}"
+                       th:classappend="${activeMenu == 'broadcast'} ? 'active' : ''">
+                        Broadcast
+                    </a>

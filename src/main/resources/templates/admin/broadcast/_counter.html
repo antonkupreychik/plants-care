@@ -1,0 +1,11 @@
+<!--
+  HTMX-фрагмент: счётчик аудитории. Возвращается контроллером как
+  `admin/broadcast/_counter :: counter`.
+-->
+<div th:fragment="counter" xmlns:th="http://www.thymeleaf.org">
+    <span th:if="${count == 0}">Получат: <b>0</b> юзеров. Никого нет в этой выборке.</span>
+    <span th:unless="${count == 0}">
+        Получат: <b th:text="${count}">0</b>
+        <span th:text="${count == 1 ? 'юзер' : (count >= 2 and count <= 4 ? 'юзера' : 'юзеров')}">юзеров</span>.
+    </span>
+</div>
