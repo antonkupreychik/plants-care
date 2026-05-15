@@ -75,10 +75,12 @@ public class PlantCardService {
     private final UserService userService;
     private final CareHistoryService careHistoryService;
     private final PlantEventService plantEventService;
+    private final com.plantcare.bot.seasonal.service.SeasonalIntervalService seasonalIntervalService;
 
     // =================================================================
     // 1) Карточка "только что создано" — используется визардом создания
     // =================================================================
+
 
     /**
      * Финальный шаг создания растения. Теперь блокирующий: вместо немедленного
@@ -206,7 +208,20 @@ public class PlantCardService {
                         .append(taskName(schedule.getTaskType()))
                         .append(" каждые ")
                         .append(schedule.getIntervalDays())
-                        .append(" дн.\n");
+                        .append(" дн.");
+                // Если для этого растения сезонность активна — дописываем
+                // фактический интервал текущего сезона (issue #67).
+                if (seasonalIntervalService.isSeasonalActive(plant, plant.getUser())) {
+                    int eff = seasonalIntervalService.effectiveIntervalDays(
+                            plant, plant.getUser(), schedule.getIntervalDays());
+                    if (eff != schedule.getIntervalDays()) {
+                        text.append(" (сейчас ")
+                                .append(seasonalIntervalService.currentSeason(plant.getUser())
+                                        .displayName())
+                                .append(" → ").append(eff).append(" дн.)");
+                    }
+                }
+                text.append("\n");
             }
         }
 
@@ -343,6 +358,13 @@ public class PlantCardService {
                 InlineKeyboardButton.builder()
                         .text("🔔 Типы ухода")
                         .callbackData("PLANT:CARE_TYPES:" + plant.getId() + backSuffix(backTarget))
+                        .build()
+        )));
+
+        rows.add(new InlineKeyboardRow(List.of(
+                InlineKeyboardButton.builder()
+                        .text("🍂 Сезонность: " + formatSeasonalOverride(plant))
+                        .callbackData("PLANT:SEASONAL:" + plant.getId() + backSuffix(backTarget))
                         .build()
         )));
 
@@ -1228,38 +1250,54 @@ public class PlantCardService {
                         .callbackData("PLANT:CARE:" + plant.getId() + ":" + schedule.getTaskType().name())
                         .build());
             }
+
             rows.add(careRow);
         }
 
         // 2) Вспомогательные действия: Фото (если есть), История, Настройки.
         InlineKeyboardRow auxRow = new InlineKeyboardRow();
+
         if (plant.getPhotoFileId() != null && !plant.getPhotoFileId().isBlank()) {
             auxRow.add(InlineKeyboardButton.builder()
                     .text("📷 Фото")
                     .callbackData("PLANT:PHOTO:" + plant.getId() + backSuffix(backTarget))
                     .build());
         }
+
         auxRow.add(InlineKeyboardButton.builder()
                 .text("📜 История")
                 .callbackData("PLANT:HISTORY:" + plant.getId() + ":0" + backSuffix(backTarget))
                 .build());
+
         auxRow.add(InlineKeyboardButton.builder()
                 .text("⚙️ Настройки")
                 .callbackData(plantSettingsCallback(plant.getId(), backTarget))
                 .build());
+
         rows.add(auxRow);
+
+        // 2a) Диагностика растения (issue #73).
+        InlineKeyboardRow diagnosisRow = new InlineKeyboardRow();
+        diagnosisRow.add(InlineKeyboardButton.builder()
+                .text("🩺 Диагностика")
+                .callbackData("PLANT:DIAG:START:" + plant.getId())
+                .build());
+        rows.add(diagnosisRow);
 
         // 2b) Журнал событий (issue #76): добавить событие + просмотр журнала.
         // Отдельный ряд, чтобы не смешивать с регулярным уходом и не перегружать auxRow.
         InlineKeyboardRow eventsRow = new InlineKeyboardRow();
+
         eventsRow.add(InlineKeyboardButton.builder()
                 .text("📝 Добавить событие")
                 .callbackData("PLANT:EVENT:ADD:" + plant.getId() + backSuffix(backTarget))
                 .build());
+
         eventsRow.add(InlineKeyboardButton.builder()
                 .text("📖 События")
                 .callbackData("PLANT:EVENT:LIST:" + plant.getId() + ":0" + backSuffix(backTarget))
                 .build());
+
         rows.add(eventsRow);
 
         // 2c) Кнопка выключения акклиматизации (issue #75) — показываем только если режим активен.
@@ -1465,5 +1503,50 @@ public class PlantCardService {
             return text;
         }
         return text.substring(0, maxLength - 1) + "…";
+    }
+
+    /**
+     * Подпись для кнопки «🍂 Сезонность» в edit-menu растения (issue #67).
+     */
+    private static String formatSeasonalOverride(Plant plant) {
+        com.plantcare.bot.domain.enums.SeasonalOverride o = plant.getSeasonalOverride();
+        if (o == null) o = com.plantcare.bot.domain.enums.SeasonalOverride.INHERIT;
+        return switch (o) {
+            case INHERIT -> "Наследовать";
+            case ON      -> "Включена";
+            case OFF     -> "Выключена";
+        };
+    }
+
+    /**
+     * Циклическое переключение per-plant seasonal override (issue #67):
+     * INHERIT → ON → OFF → INHERIT. Вызывается из callback'а
+     * {@code PLANT:SEASONAL:<plantId>...} и перерисовывает edit-меню.
+     */
+    @Transactional
+    public void cycleSeasonalOverride(
+            User user, Long plantId, Integer messageId,
+            String backTarget, TelegramClient client
+    ) {
+        Plant plant = plantRepository.findByUserIdAndIdAndArchivedAtIsNull(user.getId(), plantId)
+                .orElse(null);
+        if (plant == null) {
+            log.warn("cycleSeasonalOverride: plant {} not found for user {}",
+                    plantId, user.getId());
+            return;
+        }
+        com.plantcare.bot.domain.enums.SeasonalOverride cur = plant.getSeasonalOverride();
+        if (cur == null) cur = com.plantcare.bot.domain.enums.SeasonalOverride.INHERIT;
+        com.plantcare.bot.domain.enums.SeasonalOverride next = switch (cur) {
+            case INHERIT -> com.plantcare.bot.domain.enums.SeasonalOverride.ON;
+            case ON      -> com.plantcare.bot.domain.enums.SeasonalOverride.OFF;
+            case OFF     -> com.plantcare.bot.domain.enums.SeasonalOverride.INHERIT;
+        };
+        plant.setSeasonalOverride(next);
+        plantRepository.save(plant);
+        log.info("Plant {} seasonal override: {} → {} (user {})",
+                plantId, cur, next, user.getId());
+
+        showSettingsScreen(user, plantId, messageId, backTarget, client);
     }
 }

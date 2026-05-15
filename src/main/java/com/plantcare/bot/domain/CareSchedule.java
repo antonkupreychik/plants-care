@@ -68,6 +68,16 @@ public class CareSchedule extends BaseEntity {
      * Используется при отметке "сделано": от actualDoneAt + intervalDays.
      */
     public void rescheduleFrom(LocalDateTime from) {
-        this.nextDueAt = from.plusDays(intervalDays);
+        rescheduleFrom(from, this.intervalDays);
+    }
+
+    /**
+     * Та же логика, но с явным интервалом — для случаев, когда вызывающий
+     * хочет применить сезонную корректировку или другой расчёт (issue #67).
+     * Базовый {@code intervalDays} на entity не трогаем — он представляет
+     * настройку юзера, а не «фактический» сезонный интервал.
+     */
+    public void rescheduleFrom(LocalDateTime from, int intervalDaysOverride) {
+        this.nextDueAt = from.plusDays(intervalDaysOverride);
     }
 }
