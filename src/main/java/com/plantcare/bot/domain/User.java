@@ -62,6 +62,17 @@ public class User extends BaseEntity {
     @Builder.Default
     private Map<String, Object> stateData = new HashMap<>();
 
+    /**
+     * Per-user feature flags (issue #78). Хранятся как JSONB-объект:
+     * {@code { "sharing": "true", "experiment_a": "variant_b" }}.
+     * Проверка делается через {@link #hasFeature(String)} — это убирает
+     * вопросы о null-map'ах и приведении типов в местах вызова.
+     */
+    @Type(JsonType.class)
+    @Column(name = "feature_flags", columnDefinition = "jsonb", nullable = false)
+    @Builder.Default
+    private Map<String, Object> featureFlags = new HashMap<>();
+
     @Column(name = "is_blocked", nullable = false)
     @Builder.Default
     private boolean blocked = false;
@@ -77,5 +88,17 @@ public class User extends BaseEntity {
 
     public boolean isPaused() {
         return pausedUntil != null && pausedUntil.isAfter(LocalDateTime.now().truncatedTo(ChronoUnit.MICROS));
+    }
+
+    /**
+     * Включён ли указанный feature flag для юзера. Значение интерпретируется как
+     * boolean по правилу «строка "true"» — это совпадает с описанием из issue
+     * ({@code additionalData["featureCode"] == "true"}). Любое другое значение
+     * (отсутствие ключа, "false", произвольный variant string) → {@code false}.
+     */
+    public boolean hasFeature(String flagCode) {
+        if (flagCode == null || featureFlags == null) return false;
+        Object v = featureFlags.get(flagCode);
+        return v != null && "true".equals(String.valueOf(v));
     }
 }

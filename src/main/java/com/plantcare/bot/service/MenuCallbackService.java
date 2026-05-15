@@ -5,6 +5,7 @@ import com.plantcare.bot.domain.User;
 import com.plantcare.bot.domain.enums.ConversationState;
 import com.plantcare.bot.domain.enums.PlantEventType;
 import com.plantcare.bot.domain.enums.TaskType;
+import com.plantcare.bot.domain.featureflag.FeatureFlag;
 import com.plantcare.bot.util.TimezoneSupport;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -84,6 +85,13 @@ public class MenuCallbackService {
 
         // Календарь (issue #52). Формат: cal:week:<offset> где offset — int.
         if (data.startsWith("cal:week:")) {
+            // Защита feature-flag (issue #78): если у юзера висит старое сообщение
+            // с inline-кнопками пагинации, callback может прийти даже когда флаг
+            // выключен. Отвечаем понятным сообщением, дальше не пускаем.
+            if (!user.hasFeature(FeatureFlag.CALENDAR)) {
+                answerCallback(client, callbackId, "Функция временно недоступна");
+                return;
+            }
             handleCalendarWeekCallback(data, callbackId, messageId, client, user);
             return;
         }
@@ -157,7 +165,14 @@ public class MenuCallbackService {
             }
 
             case "CALENDAR" -> {
-                // Календарь (issue #52). Шлём новым сообщением — листание неделями
+                // Календарь (issue #52). Скрыт за feature flag (issue #78).
+                // Если у юзера осталось старое сообщение с кнопкой «Календарь» —
+                // мягко отвечаем что функция недоступна, без show'а.
+                if (!user.hasFeature(FeatureFlag.CALENDAR)) {
+                    answerCallback(client, callbackId, "Функция временно недоступна");
+                    return;
+                }
+                // Шлём новым сообщением — листание неделями
                 // уже будет EditMessageText по этому сообщению.
                 calendarMenuService.sendCalendar(user, client);
                 answerCallback(client, callbackId, "");

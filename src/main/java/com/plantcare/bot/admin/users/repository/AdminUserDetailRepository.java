@@ -48,7 +48,8 @@ public class AdminUserDetailRepository {
                 rs.getString("conversation_state"),
                 rs.getBoolean("is_blocked"),
                 ts(rs.getTimestamp("created_at")),
-                List.of(), List.of(), List.of() // Списки инициализируем пустыми
+                List.of(), List.of(), List.of(), // Списки инициализируем пустыми
+                java.util.Set.of()                // feature flags подставит Service
         );
     }
 

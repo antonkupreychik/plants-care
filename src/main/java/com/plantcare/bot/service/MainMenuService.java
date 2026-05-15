@@ -3,6 +3,7 @@ package com.plantcare.bot.service;
 import com.plantcare.bot.domain.CareSchedule;
 import com.plantcare.bot.domain.Location;
 import com.plantcare.bot.domain.User;
+import com.plantcare.bot.domain.featureflag.FeatureFlag;
 import com.plantcare.bot.repository.CareScheduleRepository;
 import com.plantcare.bot.repository.PlantRepository;
 import lombok.RequiredArgsConstructor;
@@ -55,7 +56,7 @@ public class MainMenuService {
                 .chatId(user.getTelegramChatId().toString())
                 .text(buildMenuText(plantCount, todaySchedules, locations, userStreak))
                 .parseMode("Markdown")
-                .replyMarkup(buildMenuKeyboard())
+                .replyMarkup(buildMenuKeyboard(user))
                 .build();
 
         try {
@@ -190,7 +191,30 @@ public class MainMenuService {
         };
     }
 
-    private InlineKeyboardMarkup buildMenuKeyboard() {
+    private InlineKeyboardMarkup buildMenuKeyboard(User user) {
+        // Календарь скрыт за feature flag (issue #78): пока обкатываем
+        // на узком круге, в общем меню кнопки нет. Когда раскатим — уберём
+        // условие или сменим логику на «по умолчанию включён».
+        boolean calendarEnabled = user.hasFeature(FeatureFlag.CALENDAR);
+
+        // Когда календаря нет, нижняя строка содержит только «Настройки» —
+        // оставляем её отдельной кнопкой во всю ширину, а не парой.
+        InlineKeyboardRow bottomRow = calendarEnabled
+                ? new InlineKeyboardRow(List.of(
+                        InlineKeyboardButton.builder()
+                                .text("📅 Календарь")
+                                .callbackData("MENU:CALENDAR")
+                                .build(),
+                        InlineKeyboardButton.builder()
+                                .text("⚙️ Настройки")
+                                .callbackData("MENU:SETTINGS")
+                                .build()))
+                : new InlineKeyboardRow(List.of(
+                        InlineKeyboardButton.builder()
+                                .text("⚙️ Настройки")
+                                .callbackData("MENU:SETTINGS")
+                                .build()));
+
         return InlineKeyboardMarkup.builder()
                 .keyboardRow(new InlineKeyboardRow(List.of(
                         InlineKeyboardButton.builder()
@@ -208,16 +232,7 @@ public class MainMenuService {
                                 .callbackData("MENU:LOCATIONS")
                                 .build()
                 )))
-                .keyboardRow(new InlineKeyboardRow(List.of(
-                        InlineKeyboardButton.builder()
-                                .text("📅 Календарь")
-                                .callbackData("MENU:CALENDAR")
-                                .build(),
-                        InlineKeyboardButton.builder()
-                                .text("⚙️ Настройки")
-                                .callbackData("MENU:SETTINGS")
-                                .build()
-                )))
+                .keyboardRow(bottomRow)
                 .build();
     }
 

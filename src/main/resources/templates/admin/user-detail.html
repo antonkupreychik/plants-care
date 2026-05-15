@@ -222,6 +222,96 @@
             </div>
         </div>
     </div>
+
+    <!-- Feature flags (issue #78) -->
+    <div class="card bg-base-100 shadow mt-4">
+        <div class="card-body">
+            <h2 class="card-title">
+                🚩 Feature flags
+                <span class="text-xs font-normal text-base-content/60">
+                    (issue #78 · per-user)
+                </span>
+            </h2>
+
+            <p class="text-sm text-base-content/70">
+                Включить экспериментальную фичу только этому юзеру. Известные флаги
+                рендерятся toggle'ами ниже; ad-hoc можно добавить через форму внизу.
+            </p>
+
+            <!-- Известные флаги — каталог -->
+            <div class="space-y-2 mt-2">
+                <div th:each="code : ${flagCatalog}"
+                     class="flex items-center justify-between p-2 rounded bg-base-200">
+                    <div>
+                        <div class="font-mono text-sm" th:text="${code}">sharing</div>
+                        <div class="text-xs text-base-content/60"
+                             th:text="${flagDescriptions[code]}">desc</div>
+                    </div>
+                    <form method="post"
+                          th:if="${not user.enabledFeatureFlags.contains(code)}"
+                          th:action="@{|/admin/users/${user.id}/flags/set|}">
+                        <input type="hidden" name="code" th:value="${code}"/>
+                        <input type="hidden" name="enabled" value="true"/>
+                        <button type="submit" class="btn btn-sm btn-success">
+                            🚩 Включить
+                        </button>
+                    </form>
+                    <form method="post"
+                          th:if="${user.enabledFeatureFlags.contains(code)}"
+                          th:action="@{|/admin/users/${user.id}/flags/clear|}">
+                        <input type="hidden" name="code" th:value="${code}"/>
+                        <button type="submit" class="btn btn-sm btn-error">
+                            🏳️ Выключить
+                        </button>
+                    </form>
+                </div>
+            </div>
+
+            <!-- Ad-hoc флаги (включены у юзера, но не в каталоге) -->
+            <div th:with="adhoc=${user.enabledFeatureFlags.?[!#lists.contains(flagCatalog, #this)]}"
+                 th:if="${not #lists.isEmpty(adhoc)}"
+                 class="mt-4">
+                <h3 class="text-sm font-semibold mb-2">Ad-hoc флаги</h3>
+                <div class="flex flex-wrap gap-2">
+                    <span th:each="code : ${adhoc}"
+                          class="badge badge-warning gap-2">
+                        <span class="font-mono" th:text="${code}">experiment_x</span>
+                        <form method="post" class="inline"
+                              th:action="@{|/admin/users/${user.id}/flags/clear|}">
+                            <input type="hidden" name="code" th:value="${code}"/>
+                            <button type="submit"
+                                    class="btn btn-xs btn-ghost btn-circle"
+                                    title="Снять флаг">✕</button>
+                        </form>
+                    </span>
+                </div>
+            </div>
+
+            <!-- Форма для произвольного флага -->
+            <div class="border-t pt-3 mt-4">
+                <form method="post"
+                      th:action="@{|/admin/users/${user.id}/flags/set|}"
+                      class="flex flex-wrap items-end gap-2">
+                    <label class="form-control flex-1 min-w-48">
+                        <span class="label-text text-xs">Произвольный код флага</span>
+                        <input type="text" name="code"
+                               class="input input-bordered input-sm font-mono"
+                               placeholder="experiment_abc"
+                               pattern="[a-z][a-z0-9_]{1,63}"
+                               title="латиница в нижнем регистре, цифры, подчёркивания (2..64 символа)"
+                               required />
+                    </label>
+                    <input type="hidden" name="enabled" value="true"/>
+                    <button type="submit" class="btn btn-sm btn-primary">
+                        ➕ Добавить
+                    </button>
+                </form>
+                <p class="text-xs text-base-content/60 mt-1">
+                    Допустимый формат: <code>[a-z][a-z0-9_]{1,63}</code>.
+                </p>
+            </div>
+        </div>
+    </div>
 </section>
 </body>
 </html>
