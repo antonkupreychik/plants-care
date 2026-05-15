@@ -100,6 +100,47 @@ public class User extends BaseEntity {
     @Column(name = "weather_last_rh")
     private Integer weatherLastRh;
 
+    // ===== Seasonal intervals (issue #67) — глобальные настройки юзера =====
+
+    /** Учитывать сезоны при расчёте next_due_at; default false — opt-in. */
+    @Column(name = "seasonal_enabled", nullable = false)
+    @Builder.Default
+    private boolean seasonalEnabled = false;
+
+    /** Режим: MULTIPLIER (коэф) или FIXED (фиксированные интервалы). */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "seasonal_mode", nullable = false, length = 16)
+    @Builder.Default
+    private com.plantcare.bot.domain.enums.SeasonalMode seasonalMode =
+            com.plantcare.bot.domain.enums.SeasonalMode.MULTIPLIER;
+
+    /** Границы сезонов хранятся как MMDD: 401 = 1 апреля, 1001 = 1 октября. */
+    @Column(name = "summer_start_mmdd", nullable = false)
+    @Builder.Default
+    private int summerStartMmdd = 401;
+
+    @Column(name = "winter_start_mmdd", nullable = false)
+    @Builder.Default
+    private int winterStartMmdd = 1001;
+
+    /** Коэффициент для лета (NUMERIC(3,2) в БД). По умолчанию 0.80. */
+    @Column(name = "summer_multiplier", nullable = false, precision = 3, scale = 2)
+    @Builder.Default
+    private java.math.BigDecimal summerMultiplier = new java.math.BigDecimal("0.80");
+
+    /** Коэффициент для зимы. По умолчанию 1.20. */
+    @Column(name = "winter_multiplier", nullable = false, precision = 3, scale = 2)
+    @Builder.Default
+    private java.math.BigDecimal winterMultiplier = new java.math.BigDecimal("1.20");
+
+    /** Фиксированный интервал на лето (для режима FIXED), null → fallback на базовый. */
+    @Column(name = "summer_interval_override_days")
+    private Integer summerIntervalOverrideDays;
+
+    /** Фиксированный интервал на зиму (для режима FIXED), null → fallback на базовый. */
+    @Column(name = "winter_interval_override_days")
+    private Integer winterIntervalOverrideDays;
+
     @UpdateTimestamp
     @Column(name = "updated_at", nullable = false)
     private LocalDateTime updatedAt;

@@ -1,0 +1,844 @@
+From dd5a2667698fb690012a79c75f226bee44130cf8 Mon Sep 17 00:00:00 2001
+From: Claude <claude@anthropic.com>
+Date: Fri, 15 May 2026 17:12:12 +0000
+Subject: [PATCH 1/3] =?UTF-8?q?feat(seasonal):=20core=20=E2=80=94=20domain?=
+ =?UTF-8?q?=20+=20SeasonResolver=20+=20IntervalService=20(#67,=201/3)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+First commit of the seasonal-intervals feature. Storage, enums, and the
+pure-logic services for resolving the current season and computing the
+effective interval. No integration with next_due_at yet — that's commit
+2/3; UI is 3/3. This commit alone is dormant and changes nothing about
+runtime behaviour.
+
+Storage (V17 migration):
+  - users.seasonal_enabled (default false)
+  - users.seasonal_mode VARCHAR(16) with CHECK IN ('MULTIPLIER','FIXED')
+  - users.summer_start_mmdd / winter_start_mmdd as INT MMDD (401 = Apr 1,
+    1001 = Oct 1) — pure integer comparison instead of date parsing
+  - users.summer_multiplier / winter_multiplier as NUMERIC(3,2),
+    defaults 0.80 / 1.20 (per issue AC)
+  - users.summer_interval_override_days / winter_interval_override_days
+    INTEGER nullable — for FIXED mode; null → fallback to base
+  - plants.seasonal_override VARCHAR(8) CHECK IN
+    ('INHERIT','ON','OFF'), default INHERIT
+  - No indexes — these columns are only read in single-user / single-plant
+    context, never in bulk «find all where X».
+
+Enums (domain.enums):
+  - Season — SUMMER / WINTER, with displayName() for UI.
+  - SeasonalMode — MULTIPLIER (× base) / FIXED (override days).
+  - SeasonalOverride — INHERIT / ON / OFF (per-plant decision).
+
+User entity: 8 new fields with the obvious getters/setters via Lombok.
+Plant entity: seasonalOverride field, defaulting to INHERIT for builder.
+
+SeasonResolver:
+  - currentSeason(user) — convenience for «now».
+  - seasonAt(user, ZonedDateTime) — the testable variant. Resolves
+    user's TZ via TimezoneSupport, computes MMDD as month*100+day, then
+    delegates to classify().
+  - classify(mmdd, summerStartMmdd, winterStartMmdd) is the pure
+    integer-only function. Two cases:
+    * summerStart <= winterStart (Northern hemisphere defaults):
+      SUMMER iff mmdd ∈ [summerStart, winterStart).
+    * summerStart > winterStart (Southern hemisphere / inverted):
+      wrap-around — SUMMER iff mmdd >= summerStart OR mmdd < winterStart.
+
+SeasonalIntervalService:
+  - effectiveIntervalDays(plant, user, baseIntervalDays) — main entry
+    point that integration code (commit 2/3) will use.
+  - effectiveIntervalDaysAt(plant, user, base, when) — same with explicit
+    time, for projection / tests.
+  - isSeasonalActive(plant, user) — combines global setting with per-plant
+    override. Treats null override as INHERIT for paranoia.
+  - In MULTIPLIER mode: BigDecimal(base) × multiplier, scale=0 HALF_UP.
+    null multiplier falls back to base.
+  - In FIXED mode: returns the season's override-days if set, else base.
+  - Result is always clamp(1..60) — per AC, prevents user-config disasters
+    like 0-day cycles or 6-month silence.
+
+Tests:
+  - SeasonResolverTest, 13 cases via @ParameterizedTest covering both
+    hemisphere modes and boundary dates (Apr 1, Sep 30, Oct 1, Mar 31).
+    Plus 5 cases for the user-facing seasonAt with TZ awareness:
+    July/December in Minsk, edge case where UTC and Asia/Tokyo land on
+    different calendar days, and the season-start boundaries.
+  - SeasonalIntervalServiceTest, 14 cases covering: combined active
+    logic (5 cases — every cell of global × override matrix incl. null);
+    MULTIPLIER mode (parameterized base/expected pairs incl. clamp at
+    both ends); FIXED mode (override / fallback / clamp); disabled
+    fast-path returning base; clamp still applies even with disabled.
+---
+ .../java/com/plantcare/bot/domain/Plant.java  |  14 ++
+ .../java/com/plantcare/bot/domain/User.java   |  41 ++++
+ .../plantcare/bot/domain/enums/Season.java    |  22 ++
+ .../bot/domain/enums/SeasonalMode.java        |  21 ++
+ .../bot/domain/enums/SeasonalOverride.java    |  21 ++
+ .../bot/seasonal/service/SeasonResolver.java  |  68 ++++++
+ .../service/SeasonalIntervalService.java      | 113 +++++++++
+ .../migration/V17__add_seasonal_intervals.sql |  34 +++
+ .../seasonal/service/SeasonResolverTest.java  | 118 ++++++++++
+ .../service/SeasonalIntervalServiceTest.java  | 218 ++++++++++++++++++
+ 10 files changed, 670 insertions(+)
+ create mode 100644 src/main/java/com/plantcare/bot/domain/enums/Season.java
+ create mode 100644 src/main/java/com/plantcare/bot/domain/enums/SeasonalMode.java
+ create mode 100644 src/main/java/com/plantcare/bot/domain/enums/SeasonalOverride.java
+ create mode 100644 src/main/java/com/plantcare/bot/seasonal/service/SeasonResolver.java
+ create mode 100644 src/main/java/com/plantcare/bot/seasonal/service/SeasonalIntervalService.java
+ create mode 100644 src/main/resources/db/migration/V17__add_seasonal_intervals.sql
+ create mode 100644 src/test/java/com/plantcare/bot/seasonal/service/SeasonResolverTest.java
+ create mode 100644 src/test/java/com/plantcare/bot/seasonal/service/SeasonalIntervalServiceTest.java
+
+diff --git a/src/main/java/com/plantcare/bot/domain/Plant.java b/src/main/java/com/plantcare/bot/domain/Plant.java
+index de63ff3..b5060c8 100644
+--- a/src/main/java/com/plantcare/bot/domain/Plant.java
++++ b/src/main/java/com/plantcare/bot/domain/Plant.java
+@@ -3,6 +3,8 @@ package com.plantcare.bot.domain;
+ import com.plantcare.bot.domain.base.BaseEntity;
+ import jakarta.persistence.Column;
+ import jakarta.persistence.Entity;
++import jakarta.persistence.EnumType;
++import jakarta.persistence.Enumerated;
+ import jakarta.persistence.FetchType;
+ import jakarta.persistence.JoinColumn;
+ import jakarta.persistence.ManyToOne;
+@@ -72,6 +74,18 @@ public class Plant extends BaseEntity {
+     @Column(name = "acclimation_checkin_next_at")
+     private LocalDateTime acclimationCheckinNextAt;
+ 
++    /**
++     * Применять ли сезонную корректировку интервалов для этого растения (issue #67).
++     * INHERIT — следовать глобальной настройке юзера;
++     * ON  — сезонность включена даже если глобально выкл;
++     * OFF — сезонность не применяется даже если глобально вкл.
++     */
++    @Enumerated(EnumType.STRING)
++    @Column(name = "seasonal_override", nullable = false, length = 8)
++    @Builder.Default
++    private com.plantcare.bot.domain.enums.SeasonalOverride seasonalOverride =
++            com.plantcare.bot.domain.enums.SeasonalOverride.INHERIT;
++
+     @OneToMany(mappedBy = "plant")
+     @Builder.Default
+     private List<CareSchedule> schedules = new ArrayList<>();
+diff --git a/src/main/java/com/plantcare/bot/domain/User.java b/src/main/java/com/plantcare/bot/domain/User.java
+index 5bcc609..e755cdd 100644
+--- a/src/main/java/com/plantcare/bot/domain/User.java
++++ b/src/main/java/com/plantcare/bot/domain/User.java
+@@ -100,6 +100,47 @@ public class User extends BaseEntity {
+     @Column(name = "weather_last_rh")
+     private Integer weatherLastRh;
+ 
++    // ===== Seasonal intervals (issue #67) — глобальные настройки юзера =====
++
++    /** Учитывать сезоны при расчёте next_due_at; default false — opt-in. */
++    @Column(name = "seasonal_enabled", nullable = false)
++    @Builder.Default
++    private boolean seasonalEnabled = false;
++
++    /** Режим: MULTIPLIER (коэф) или FIXED (фиксированные интервалы). */
++    @Enumerated(EnumType.STRING)
++    @Column(name = "seasonal_mode", nullable = false, length = 16)
++    @Builder.Default
++    private com.plantcare.bot.domain.enums.SeasonalMode seasonalMode =
++            com.plantcare.bot.domain.enums.SeasonalMode.MULTIPLIER;
++
++    /** Границы сезонов хранятся как MMDD: 401 = 1 апреля, 1001 = 1 октября. */
++    @Column(name = "summer_start_mmdd", nullable = false)
++    @Builder.Default
++    private int summerStartMmdd = 401;
++
++    @Column(name = "winter_start_mmdd", nullable = false)
++    @Builder.Default
++    private int winterStartMmdd = 1001;
++
++    /** Коэффициент для лета (NUMERIC(3,2) в БД). По умолчанию 0.80. */
++    @Column(name = "summer_multiplier", nullable = false, precision = 3, scale = 2)
++    @Builder.Default
++    private java.math.BigDecimal summerMultiplier = new java.math.BigDecimal("0.80");
++
++    /** Коэффициент для зимы. По умолчанию 1.20. */
++    @Column(name = "winter_multiplier", nullable = false, precision = 3, scale = 2)
++    @Builder.Default
++    private java.math.BigDecimal winterMultiplier = new java.math.BigDecimal("1.20");
++
++    /** Фиксированный интервал на лето (для режима FIXED), null → fallback на базовый. */
++    @Column(name = "summer_interval_override_days")
++    private Integer summerIntervalOverrideDays;
++
++    /** Фиксированный интервал на зиму (для режима FIXED), null → fallback на базовый. */
++    @Column(name = "winter_interval_override_days")
++    private Integer winterIntervalOverrideDays;
++
+     @UpdateTimestamp
+     @Column(name = "updated_at", nullable = false)
+     private LocalDateTime updatedAt;
+diff --git a/src/main/java/com/plantcare/bot/domain/enums/Season.java b/src/main/java/com/plantcare/bot/domain/enums/Season.java
+new file mode 100644
+index 0000000..5981b13
+--- /dev/null
++++ b/src/main/java/com/plantcare/bot/domain/enums/Season.java
+@@ -0,0 +1,22 @@
++package com.plantcare.bot.domain.enums;
++
++/**
++ * Сезон (issue #67). Используется при расчёте эффективного интервала ухода.
++ * Никаких «весны» и «осени» в первой итерации — это AC: «лето и зима как минимум».
++ * Границы между ними настраиваемые: всё, что не лето — зима.
++ */
++public enum Season {
++    SUMMER,
++    WINTER;
++
++    public boolean isSummer() { return this == SUMMER; }
++    public boolean isWinter() { return this == WINTER; }
++
++    /** Подпись для UI («лето» / «зима»). */
++    public String displayName() {
++        return switch (this) {
++            case SUMMER -> "лето";
++            case WINTER -> "зима";
++        };
++    }
++}
+diff --git a/src/main/java/com/plantcare/bot/domain/enums/SeasonalMode.java b/src/main/java/com/plantcare/bot/domain/enums/SeasonalMode.java
+new file mode 100644
+index 0000000..2c41553
+--- /dev/null
++++ b/src/main/java/com/plantcare/bot/domain/enums/SeasonalMode.java
+@@ -0,0 +1,21 @@
++package com.plantcare.bot.domain.enums;
++
++/**
++ * Способ применения сезонности (issue #67).
++ *
++ * <ul>
++ *   <li>{@link #MULTIPLIER} — умножаем базовый интервал растения на коэффициент
++ *       сезона ({@code summer_multiplier} или {@code winter_multiplier}). Дефолтный
++ *       режим: проще и предсказуемее, без необходимости настраивать каждое растение
++ *       отдельно.</li>
++ *   <li>{@link #FIXED} — для сезона используется фиксированный интервал
++ *       ({@code summer_interval_override_days} / {@code winter_interval_override_days}).
++ *       Если значение для сезона не задано (null) — fallback на базовый интервал
++ *       растения. Удобно когда юзеру комфортнее думать «летом 5 дней, зимой 14»,
++ *       а не в коэффициентах.</li>
++ * </ul>
++ */
++public enum SeasonalMode {
++    MULTIPLIER,
++    FIXED
++}
+diff --git a/src/main/java/com/plantcare/bot/domain/enums/SeasonalOverride.java b/src/main/java/com/plantcare/bot/domain/enums/SeasonalOverride.java
+new file mode 100644
+index 0000000..d07e4b3
+--- /dev/null
++++ b/src/main/java/com/plantcare/bot/domain/enums/SeasonalOverride.java
+@@ -0,0 +1,21 @@
++package com.plantcare.bot.domain.enums;
++
++/**
++ * Per-plant решение по поводу сезонности (issue #67).
++ *
++ * <ul>
++ *   <li>{@link #INHERIT} — следовать глобальной настройке юзера. Дефолт для всех
++ *       новых растений: ровно тот случай, для которого глобальная настройка
++ *       и придумана.</li>
++ *   <li>{@link #ON} — сезонность включена для этого растения, даже если у юзера
++ *       глобально выключена. Полезно для конкретных «привередливых» растений.</li>
++ *   <li>{@link #OFF} — сезонность не применяется к этому растению, даже если у
++ *       юзера глобально включена. Полезно для растений без выраженной сезонности
++ *       (например, кактусов).</li>
++ * </ul>
++ */
++public enum SeasonalOverride {
++    INHERIT,
++    ON,
++    OFF
++}
+diff --git a/src/main/java/com/plantcare/bot/seasonal/service/SeasonResolver.java b/src/main/java/com/plantcare/bot/seasonal/service/SeasonResolver.java
+new file mode 100644
+index 0000000..33f2ac9
+--- /dev/null
++++ b/src/main/java/com/plantcare/bot/seasonal/service/SeasonResolver.java
+@@ -0,0 +1,68 @@
++package com.plantcare.bot.seasonal.service;
++
++import com.plantcare.bot.domain.User;
++import com.plantcare.bot.domain.enums.Season;
++import com.plantcare.bot.util.TimezoneSupport;
++import org.springframework.stereotype.Service;
++
++import java.time.LocalDate;
++import java.time.ZoneId;
++import java.time.ZonedDateTime;
++
++/**
++ * Определяет текущий сезон для конкретного юзера на основе его настроек
++ * границ сезонов (issue #67).
++ *
++ * <p>Границы хранятся как MMDD-целые числа: 401 = 1 апреля, 1001 = 1 октября.
++ * Это позволяет легко сравнивать даты числовым операторами без парсинга.
++ *
++ * <p>«Лето» — диапазон от {@code summerStartMmdd} (включительно) до
++ * {@code winterStartMmdd} (исключительно). Всё остальное — «зима». Это
++ * автоматически обрабатывает зимний wrap-around через новый год: если
++ * сегодня 15 января, MMDD = 115, что меньше 401 → не лето → зима. ✓
++ *
++ * <p>Сезон определяется в TZ юзера, а не в TZ сервера: иначе бы граница
++ * сезона срабатывала в разное время для разных юзеров (и тестируемость
++ * страдала бы).
++ */
++@Service
++public class SeasonResolver {
++
++    /** Текущий сезон для юзера в его TZ. */
++    public Season currentSeason(User user) {
++        return seasonAt(user, ZonedDateTime.now(TimezoneSupport.zoneOf(user)));
++    }
++
++    /** Сезон на произвольный момент (для тестов и projection-планирования). */
++    public Season seasonAt(User user, ZonedDateTime when) {
++        ZoneId zone = TimezoneSupport.zoneOf(user);
++        LocalDate localDate = when.withZoneSameInstant(zone).toLocalDate();
++        int mmdd = localDate.getMonthValue() * 100 + localDate.getDayOfMonth();
++        return classify(mmdd, user.getSummerStartMmdd(), user.getWinterStartMmdd());
++    }
++
++    /**
++     * Чистая функция для тестируемости — без User. Принимает MMDD текущей даты
++     * и MMDD границ сезонов.
++     *
++     * <p>Алгоритм: «лето» — это полуинтервал [summerStart, winterStart).
++     * Любое значение MMDD вне этого интервала → «зима». Для дефолтных границ
++     * (summer=401, winter=1001) лето идёт с 1 апреля включительно по
++     * 30 сентября включительно, что точно соответствует AC.
++     */
++    public Season classify(int currentMmdd, int summerStartMmdd, int winterStartMmdd) {
++        // Защита от настроек «start лета > start зимы» (т.е. лето пересекает
++        // новый год — нетипично, но возможно для южного полушария).
++        // Тогда «лето» — это [summerStart, конец года] ∪ [начало года, winterStart).
++        if (summerStartMmdd <= winterStartMmdd) {
++            return (currentMmdd >= summerStartMmdd && currentMmdd < winterStartMmdd)
++                    ? Season.SUMMER
++                    : Season.WINTER;
++        } else {
++            // Wrap-around: лето с октября по март.
++            return (currentMmdd >= summerStartMmdd || currentMmdd < winterStartMmdd)
++                    ? Season.SUMMER
++                    : Season.WINTER;
++        }
++    }
++}
+diff --git a/src/main/java/com/plantcare/bot/seasonal/service/SeasonalIntervalService.java b/src/main/java/com/plantcare/bot/seasonal/service/SeasonalIntervalService.java
+new file mode 100644
+index 0000000..c638c1b
+--- /dev/null
++++ b/src/main/java/com/plantcare/bot/seasonal/service/SeasonalIntervalService.java
+@@ -0,0 +1,113 @@
++package com.plantcare.bot.seasonal.service;
++
++import com.plantcare.bot.domain.Plant;
++import com.plantcare.bot.domain.User;
++import com.plantcare.bot.domain.enums.Season;
++import com.plantcare.bot.domain.enums.SeasonalOverride;
++import lombok.RequiredArgsConstructor;
++import org.springframework.stereotype.Service;
++
++import java.math.BigDecimal;
++import java.math.RoundingMode;
++import java.time.ZonedDateTime;
++
++/**
++ * Центральная точка для расчёта «фактического» интервала ухода с учётом
++ * сезонности (issue #67).
++ *
++ * <p>Поведение {@link #effectiveIntervalDays}:
++ * <ol>
++ *   <li>Если сезонность для этого растения выключена (по комбинации
++ *       глобальной настройки и {@code plant.seasonalOverride}) → возвращаем
++ *       базовый интервал как есть.</li>
++ *   <li>Иначе определяем текущий сезон через {@link SeasonResolver}.</li>
++ *   <li>В режиме MULTIPLIER: {@code round(base * multiplier(season))}.</li>
++ *   <li>В режиме FIXED: возвращаем {@code interval_override_days(season)},
++ *       если задан, иначе fallback на базовый интервал.</li>
++ *   <li>Результат всегда clamp'ится в [{@value #MIN_INTERVAL_DAYS}..{@value #MAX_INTERVAL_DAYS}]
++ *       чтобы случайные настройки не привели к 0-дневному циклу или
++ *       полугодовому забвению.</li>
++ * </ol>
++ *
++ * <p>Все методы детерминированы и без побочных эффектов: они только читают
++ * настройки. Где использовать — в местах расчёта {@code next_due_at},
++ * например после нажатия «Полил».
++ */
++@Service
++@RequiredArgsConstructor
++public class SeasonalIntervalService {
++
++    public static final int MIN_INTERVAL_DAYS = 1;
++    public static final int MAX_INTERVAL_DAYS = 60;
++
++    private final SeasonResolver seasonResolver;
++
++    /** Эффективный интервал для растения в его текущем сезоне. */
++    public int effectiveIntervalDays(Plant plant, User user, int baseIntervalDays) {
++        return effectiveIntervalDaysAt(plant, user, baseIntervalDays,
++                ZonedDateTime.now());
++    }
++
++    /**
++     * Для тестов и projection: позволяет передать конкретный момент времени.
++     */
++    public int effectiveIntervalDaysAt(Plant plant, User user, int baseIntervalDays,
++                                       ZonedDateTime when) {
++        if (!isSeasonalActive(plant, user)) {
++            return clamp(baseIntervalDays);
++        }
++        Season season = seasonResolver.seasonAt(user, when);
++        int seasonal = switch (user.getSeasonalMode()) {
++            case MULTIPLIER -> applyMultiplier(baseIntervalDays, user, season);
++            case FIXED      -> applyFixedOverride(baseIntervalDays, user, season);
++        };
++        return clamp(seasonal);
++    }
++
++    /**
++     * Учитывает все три уровня решения «применять ли сезонность»:
++     * глобальная настройка юзера + per-plant override.
++     */
++    public boolean isSeasonalActive(Plant plant, User user) {
++        SeasonalOverride override = plant.getSeasonalOverride();
++        if (override == null) override = SeasonalOverride.INHERIT;
++        return switch (override) {
++            case ON      -> true;                       // форс-вкл
++            case OFF     -> false;                      // форс-выкл
++            case INHERIT -> user.isSeasonalEnabled();   // как у юзера
++        };
++    }
++
++    /** Хелпер для UI — какой сезон сейчас (для отображения «сейчас: лето»). */
++    public Season currentSeason(User user) {
++        return seasonResolver.currentSeason(user);
++    }
++
++    // ===================================================================
++    // private
++    // ===================================================================
++
++    private int applyMultiplier(int base, User user, Season season) {
++        BigDecimal m = season.isSummer()
++                ? user.getSummerMultiplier()
++                : user.getWinterMultiplier();
++        if (m == null) return base;
++        return BigDecimal.valueOf(base)
++                .multiply(m)
++                .setScale(0, RoundingMode.HALF_UP)
++                .intValue();
++    }
++
++    private int applyFixedOverride(int base, User user, Season season) {
++        Integer override = season.isSummer()
++                ? user.getSummerIntervalOverrideDays()
++                : user.getWinterIntervalOverrideDays();
++        return override != null ? override : base;
++    }
++
++    private static int clamp(int v) {
++        if (v < MIN_INTERVAL_DAYS) return MIN_INTERVAL_DAYS;
++        if (v > MAX_INTERVAL_DAYS) return MAX_INTERVAL_DAYS;
++        return v;
++    }
++}
+diff --git a/src/main/resources/db/migration/V17__add_seasonal_intervals.sql b/src/main/resources/db/migration/V17__add_seasonal_intervals.sql
+new file mode 100644
+index 0000000..fda2606
+--- /dev/null
++++ b/src/main/resources/db/migration/V17__add_seasonal_intervals.sql
+@@ -0,0 +1,34 @@
++-- Issue #67: Сезонные интервалы (лето/зима).
++-- Поля на users — глобальная конфигурация: вкл/выкл, режим, границы сезонов,
++-- мультипликаторы и фиксированные override-интервалы.
++-- Поле на plants — per-plant решение «следовать глобальной / форс-вкл / форс-выкл».
++
++ALTER TABLE users
++    ADD COLUMN seasonal_enabled                    BOOLEAN          NOT NULL DEFAULT FALSE,
++    ADD COLUMN seasonal_mode                       VARCHAR(16)      NOT NULL DEFAULT 'MULTIPLIER',
++    -- Границы сезонов хранятся как «MMDD»: 0401 = 1 апреля, 1001 = 1 октября.
++    -- Хранить INT, а не строку — проще сравнивать диапазоны без парсинга.
++    ADD COLUMN summer_start_mmdd                   INTEGER          NOT NULL DEFAULT 401,
++    ADD COLUMN winter_start_mmdd                   INTEGER          NOT NULL DEFAULT 1001,
++    -- Дефолты по issue: лето 0.8 (чаще), зима 1.2 (реже).
++    -- NUMERIC(3,2) — точность 0.01, диапазон 0.10..9.99 более чем достаточен.
++    ADD COLUMN summer_multiplier                   NUMERIC(3, 2)    NOT NULL DEFAULT 0.80,
++    ADD COLUMN winter_multiplier                   NUMERIC(3, 2)    NOT NULL DEFAULT 1.20,
++    -- Опциональные фиксированные интервалы для режима FIXED.
++    -- nullable: если null → fallback на базовый интервал растения.
++    ADD COLUMN summer_interval_override_days       INTEGER,
++    ADD COLUMN winter_interval_override_days       INTEGER,
++    -- CHECK на режим — экономит проверку в коде.
++    ADD CONSTRAINT chk_users_seasonal_mode
++        CHECK (seasonal_mode IN ('MULTIPLIER', 'FIXED'));
++
++ALTER TABLE plants
++    -- INHERIT — следует глобальной настройке юзера;
++    -- ON — сезонность включена для этого растения даже если глобально выкл;
++    -- OFF — сезонность не применяется даже если глобально вкл.
++    ADD COLUMN seasonal_override VARCHAR(8) NOT NULL DEFAULT 'INHERIT',
++    ADD CONSTRAINT chk_plants_seasonal_override
++        CHECK (seasonal_override IN ('INHERIT', 'ON', 'OFF'));
++
++-- Никаких индексов: эти поля читаются только в контексте конкретного юзера /
++-- растения (через PK / FK), не в bulk-запросах «найди всех у кого X».
+diff --git a/src/test/java/com/plantcare/bot/seasonal/service/SeasonResolverTest.java b/src/test/java/com/plantcare/bot/seasonal/service/SeasonResolverTest.java
+new file mode 100644
+index 0000000..f9e83d1
+--- /dev/null
++++ b/src/test/java/com/plantcare/bot/seasonal/service/SeasonResolverTest.java
+@@ -0,0 +1,118 @@
++package com.plantcare.bot.seasonal.service;
++
++import com.plantcare.bot.domain.User;
++import com.plantcare.bot.domain.enums.Season;
++import org.junit.jupiter.api.BeforeEach;
++import org.junit.jupiter.api.DisplayName;
++import org.junit.jupiter.api.Nested;
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.params.ParameterizedTest;
++import org.junit.jupiter.params.provider.CsvSource;
++
++import java.time.ZoneId;
++import java.time.ZonedDateTime;
++
++import static org.assertj.core.api.Assertions.assertThat;
++
++@DisplayName("SeasonResolver — определение сезона (issue #67)")
++class SeasonResolverTest {
++
++    private SeasonResolver resolver;
++    private User user;
++
++    @BeforeEach
++    void setUp() {
++        resolver = new SeasonResolver();
++        user = User.builder()
++                .telegramChatId(100L)
++                .timezone("Europe/Minsk")
++                .summerStartMmdd(401)
++                .winterStartMmdd(1001)
++                .build();
++    }
++
++    @Nested
++    @DisplayName("classify (pure function)")
++    class Classify {
++
++        @ParameterizedTest(name = "MMDD={0} с границами {1}..{2} → {3}")
++        @CsvSource({
++                // Дефолтные границы: лето 401..1001
++                "401, 401, 1001, SUMMER",   // граница лета — лето
++                "501, 401, 1001, SUMMER",   // 1 мая
++                "715, 401, 1001, SUMMER",   // середина июля
++                "930, 401, 1001, SUMMER",   // последний день лета (30 сентября)
++                "1001, 401, 1001, WINTER",  // граница зимы — зима
++                "1215, 401, 1001, WINTER",  // декабрь
++                "101, 401, 1001, WINTER",   // январь — зима
++                "331, 401, 1001, WINTER",   // 31 марта — последний день зимы
++                "201, 401, 1001, WINTER",   // 1 февраля — определённо зима
++
++                // Wrap-around (например южное полушарие — лето пересекает новый год)
++                "1101, 1001, 401, SUMMER",  // лето с октября по март, ноябрь → лето
++                "101, 1001, 401, SUMMER",   // январь — тоже лето
++                "401, 1001, 401, WINTER",   // граница зимы
++                "601, 1001, 401, WINTER",   // июнь — зима
++        })
++        @DisplayName("Pure classify учитывает обычный и wrap-around случаи")
++        void shouldClassifyByMmdd(int mmdd, int summerStart, int winterStart,
++                                  Season expected) {
++            assertThat(resolver.classify(mmdd, summerStart, winterStart))
++                    .isEqualTo(expected);
++        }
++    }
++
++    @Nested
++    @DisplayName("seasonAt (с User + TZ)")
++    class SeasonAtWithTz {
++
++        @Test
++        @DisplayName("Europe/Minsk, июль → SUMMER")
++        void julyIsSummerInMinsk() {
++            ZonedDateTime now = ZonedDateTime.of(
++                    2026, 7, 15, 12, 0, 0, 0, ZoneId.of("Europe/Minsk"));
++            assertThat(resolver.seasonAt(user, now)).isEqualTo(Season.SUMMER);
++        }
++
++        @Test
++        @DisplayName("Europe/Minsk, декабрь → WINTER")
++        void decemberIsWinterInMinsk() {
++            ZonedDateTime now = ZonedDateTime.of(
++                    2026, 12, 15, 12, 0, 0, 0, ZoneId.of("Europe/Minsk"));
++            assertThat(resolver.seasonAt(user, now)).isEqualTo(Season.WINTER);
++        }
++
++        @Test
++        @DisplayName("Январь по UTC, но юзер в Asia/Tokyo (UTC+9) — дата та же")
++        void shouldUseUserTzNotServerTz() {
++            // 1 января 23:00 UTC = 2 января 08:00 в Tokyo. Январь — зима в обеих.
++            user.setTimezone("Asia/Tokyo");
++            ZonedDateTime nowUtc = ZonedDateTime.of(
++                    2026, 1, 1, 23, 0, 0, 0, ZoneId.of("UTC"));
++            assertThat(resolver.seasonAt(user, nowUtc)).isEqualTo(Season.WINTER);
++        }
++
++        @Test
++        @DisplayName("Граничный случай: ровно начало лета (1 апреля) → SUMMER")
++        void summerStartBoundary() {
++            ZonedDateTime exact = ZonedDateTime.of(
++                    2026, 4, 1, 0, 0, 0, 0, ZoneId.of("Europe/Minsk"));
++            assertThat(resolver.seasonAt(user, exact)).isEqualTo(Season.SUMMER);
++        }
++
++        @Test
++        @DisplayName("Граничный случай: ровно начало зимы (1 октября) → WINTER")
++        void winterStartBoundary() {
++            ZonedDateTime exact = ZonedDateTime.of(
++                    2026, 10, 1, 0, 0, 0, 0, ZoneId.of("Europe/Minsk"));
++            assertThat(resolver.seasonAt(user, exact)).isEqualTo(Season.WINTER);
++        }
++    }
++
++    @Test
++    @DisplayName("currentSeason использует ZonedDateTime.now() — smoke test")
++    void currentSeasonReturnsNonNull() {
++        Season s = resolver.currentSeason(user);
++        assertThat(s).isIn(Season.SUMMER, Season.WINTER);
++    }
++}
+diff --git a/src/test/java/com/plantcare/bot/seasonal/service/SeasonalIntervalServiceTest.java b/src/test/java/com/plantcare/bot/seasonal/service/SeasonalIntervalServiceTest.java
+new file mode 100644
+index 0000000..7e0821c
+--- /dev/null
++++ b/src/test/java/com/plantcare/bot/seasonal/service/SeasonalIntervalServiceTest.java
+@@ -0,0 +1,218 @@
++package com.plantcare.bot.seasonal.service;
++
++import com.plantcare.bot.domain.Plant;
++import com.plantcare.bot.domain.User;
++import com.plantcare.bot.domain.enums.Season;
++import com.plantcare.bot.domain.enums.SeasonalMode;
++import com.plantcare.bot.domain.enums.SeasonalOverride;
++import org.junit.jupiter.api.BeforeEach;
++import org.junit.jupiter.api.DisplayName;
++import org.junit.jupiter.api.Nested;
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.api.extension.ExtendWith;
++import org.junit.jupiter.params.ParameterizedTest;
++import org.junit.jupiter.params.provider.CsvSource;
++import org.mockito.Mock;
++import org.mockito.junit.jupiter.MockitoExtension;
++import org.mockito.junit.jupiter.MockitoSettings;
++import org.mockito.quality.Strictness;
++
++import java.math.BigDecimal;
++import java.time.ZoneId;
++import java.time.ZonedDateTime;
++
++import static org.assertj.core.api.Assertions.assertThat;
++import static org.mockito.ArgumentMatchers.any;
++import static org.mockito.Mockito.when;
++
++@ExtendWith(MockitoExtension.class)
++@MockitoSettings(strictness = Strictness.LENIENT)
++@DisplayName("SeasonalIntervalService — расчёт эффективного интервала (issue #67)")
++class SeasonalIntervalServiceTest {
++
++    @Mock private SeasonResolver seasonResolver;
++
++    private SeasonalIntervalService service;
++    private User user;
++    private Plant plant;
++
++    @BeforeEach
++    void setUp() {
++        service = new SeasonalIntervalService(seasonResolver);
++
++        user = User.builder()
++                .telegramChatId(100L)
++                .timezone("Europe/Minsk")
++                .seasonalEnabled(true)
++                .seasonalMode(SeasonalMode.MULTIPLIER)
++                .summerMultiplier(new BigDecimal("0.80"))
++                .winterMultiplier(new BigDecimal("1.20"))
++                .build();
++
++        plant = Plant.builder()
++                .name("Monstera")
++                .seasonalOverride(SeasonalOverride.INHERIT)
++                .build();
++    }
++
++    @Nested
++    @DisplayName("isSeasonalActive — combined logic")
++    class ActiveLogic {
++
++        @Test
++        @DisplayName("global=ON, plant=INHERIT → активна")
++        void globalOnInheritOn() {
++            user.setSeasonalEnabled(true);
++            plant.setSeasonalOverride(SeasonalOverride.INHERIT);
++            assertThat(service.isSeasonalActive(plant, user)).isTrue();
++        }
++
++        @Test
++        @DisplayName("global=OFF, plant=INHERIT → не активна")
++        void globalOffInheritOff() {
++            user.setSeasonalEnabled(false);
++            plant.setSeasonalOverride(SeasonalOverride.INHERIT);
++            assertThat(service.isSeasonalActive(plant, user)).isFalse();
++        }
++
++        @Test
++        @DisplayName("global=OFF, plant=ON → активна (forced)")
++        void plantOnOverridesGlobalOff() {
++            user.setSeasonalEnabled(false);
++            plant.setSeasonalOverride(SeasonalOverride.ON);
++            assertThat(service.isSeasonalActive(plant, user)).isTrue();
++        }
++
++        @Test
++        @DisplayName("global=ON, plant=OFF → НЕ активна (forced)")
++        void plantOffOverridesGlobalOn() {
++            user.setSeasonalEnabled(true);
++            plant.setSeasonalOverride(SeasonalOverride.OFF);
++            assertThat(service.isSeasonalActive(plant, user)).isFalse();
++        }
++
++        @Test
++        @DisplayName("plant.seasonalOverride == null → как INHERIT (paranoia)")
++        void nullOverrideTreatedAsInherit() {
++            plant.setSeasonalOverride(null);
++            user.setSeasonalEnabled(true);
++            assertThat(service.isSeasonalActive(plant, user)).isTrue();
++        }
++    }
++
++    @Nested
++    @DisplayName("effectiveIntervalDays — MULTIPLIER")
++    class Multiplier {
++
++        @BeforeEach
++        void enableSummer() {
++            when(seasonResolver.seasonAt(any(), any())).thenReturn(Season.SUMMER);
++        }
++
++        @ParameterizedTest(name = "base={0}, summer × 0.80 → {1}")
++        @CsvSource({
++                "10, 8",   // round(10 * 0.8) = 8
++                "5,  4",   // round(5 * 0.8) = 4
++                "7,  6",   // round(7 * 0.8) = 5.6 → 6 (HALF_UP)
++                "1,  1",   // clamp lower bound
++        })
++        @DisplayName("Лето: round(base * 0.8) с clamp ≥ 1")
++        void summerMultiplier(int base, int expected) {
++            assertThat(service.effectiveIntervalDaysAt(plant, user, base, now()))
++                    .isEqualTo(expected);
++        }
++
++        @Test
++        @DisplayName("Лето: base=1, multiplier=0.5 → 1 (clamp)")
++        void clampToMinDays() {
++            user.setSummerMultiplier(new BigDecimal("0.50"));
++            assertThat(service.effectiveIntervalDaysAt(plant, user, 1, now()))
++                    .isEqualTo(1);
++        }
++
++        @Test
++        @DisplayName("Зима: base=10 × 1.2 = 12")
++        void winterMultiplier() {
++            when(seasonResolver.seasonAt(any(), any())).thenReturn(Season.WINTER);
++            assertThat(service.effectiveIntervalDaysAt(plant, user, 10, now()))
++                    .isEqualTo(12);
++        }
++
++        @Test
++        @DisplayName("Clamp верхней границы: base=100, × 1.2 → 60")
++        void clampToMaxDays() {
++            when(seasonResolver.seasonAt(any(), any())).thenReturn(Season.WINTER);
++            assertThat(service.effectiveIntervalDaysAt(plant, user, 100, now()))
++                    .isEqualTo(60);
++        }
++    }
++
++    @Nested
++    @DisplayName("effectiveIntervalDays — FIXED")
++    class Fixed {
++
++        @BeforeEach
++        void setupFixed() {
++            user.setSeasonalMode(SeasonalMode.FIXED);
++        }
++
++        @Test
++        @DisplayName("Лето: override задан → используется override")
++        void summerWithOverride() {
++            user.setSummerIntervalOverrideDays(5);
++            when(seasonResolver.seasonAt(any(), any())).thenReturn(Season.SUMMER);
++
++            assertThat(service.effectiveIntervalDaysAt(plant, user, 10, now()))
++                    .isEqualTo(5);
++        }
++
++        @Test
++        @DisplayName("Зима: override не задан → fallback на base")
++        void winterFallbackToBase() {
++            user.setWinterIntervalOverrideDays(null);
++            when(seasonResolver.seasonAt(any(), any())).thenReturn(Season.WINTER);
++
++            assertThat(service.effectiveIntervalDaysAt(plant, user, 14, now()))
++                    .isEqualTo(14);
++        }
++
++        @Test
++        @DisplayName("Override > 60 → clamp до 60")
++        void overrideClampedToMax() {
++            user.setSummerIntervalOverrideDays(120);
++            when(seasonResolver.seasonAt(any(), any())).thenReturn(Season.SUMMER);
++
++            assertThat(service.effectiveIntervalDaysAt(plant, user, 10, now()))
++                    .isEqualTo(60);
++        }
++    }
++
++    @Nested
++    @DisplayName("Сезонность выключена → возвращает base (clamped)")
++    class Disabled {
++
++        @Test
++        @DisplayName("global=OFF → base без изменений")
++        void disabledReturnsBase() {
++            user.setSeasonalEnabled(false);
++
++            assertThat(service.effectiveIntervalDaysAt(plant, user, 10, now()))
++                    .isEqualTo(10);
++        }
++
++        @Test
++        @DisplayName("Даже когда сезонность выключена — clamp применяется")
++        void clampAppliesEvenWhenDisabled() {
++            user.setSeasonalEnabled(false);
++
++            assertThat(service.effectiveIntervalDaysAt(plant, user, 0, now()))
++                    .isEqualTo(1);  // clamp ≥ 1
++            assertThat(service.effectiveIntervalDaysAt(plant, user, 999, now()))
++                    .isEqualTo(60);  // clamp ≤ 60
++        }
++    }
++
++    private static ZonedDateTime now() {
++        return ZonedDateTime.of(2026, 7, 15, 12, 0, 0, 0, ZoneId.of("Europe/Minsk"));
++    }
++}
+-- 
+2.43.0
+

@@ -52,6 +52,7 @@ public class NotificationCallbackService {
     private final UserService userService;
     private final PlantCardService plantCardService;
     private final PlantAcclimationService plantAcclimationService;
+    private final com.plantcare.bot.seasonal.service.SeasonalIntervalService seasonalIntervalService;
 
     @Transactional
     public void handleCallback(CallbackQuery callbackQuery, TelegramClient client) {
@@ -420,7 +421,9 @@ public class NotificationCallbackService {
                 .build();
         careHistoryRepository.save(history);
 
-        schedule.rescheduleFrom(now);
+        int effective = seasonalIntervalService.effectiveIntervalDays(
+                plant, plant.getUser(), schedule.getIntervalDays());
+        schedule.rescheduleFrom(now, effective);
         careScheduleRepository.save(schedule);
 
         String nextDateStr = schedule.getNextDueAt().format(DATE_FMT);
@@ -470,7 +473,11 @@ public class NotificationCallbackService {
 
         careHistoryRepository.save(history);
 
-        schedule.rescheduleFrom(now);
+        // Сезонная корректировка интервала (issue #67): если выключено или
+        // не применимо к этому растению — вернётся базовый интервал.
+        int effective = seasonalIntervalService.effectiveIntervalDays(
+                plant, plant.getUser(), schedule.getIntervalDays());
+        schedule.rescheduleFrom(now, effective);
         careScheduleRepository.save(schedule);
 
         return true;

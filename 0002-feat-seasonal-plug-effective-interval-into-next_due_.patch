@@ -1,0 +1,252 @@
+From 7a8a7ac8d1f2fe6261330470b46dde7f3c4590f5 Mon Sep 17 00:00:00 2001
+From: Claude <claude@anthropic.com>
+Date: Fri, 15 May 2026 17:17:37 +0000
+Subject: [PATCH 2/3] feat(seasonal): plug effective interval into next_due_at
+ recalculation (#67, 2/3)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Wires SeasonalIntervalService into every place that recomputes
+next_due_at from an interval, so the seasonal correction takes effect
+without changing any user-visible interval. No bulk migration of
+existing next_due_at values — per AC, only future calculations use the
+new interval; existing scheduled-but-not-yet-fired notifications are
+left alone.
+
+CareSchedule (domain):
+  - rescheduleFrom(from) is unchanged in semantics — still applies
+    intervalDays. New overload rescheduleFrom(from, intervalOverride)
+    accepts an explicit interval. The entity stays unaware of
+    SeasonalIntervalService — that's a service-layer concern.
+
+Integration points (5 total):
+  1. NotificationCallbackService.markScheduleDone — the «✅ Полил»
+     button on a notification (generic path for all task types).
+     Reads user from plant.getUser(), computes effective interval,
+     uses the new rescheduleFrom overload.
+  2. NotificationCallbackService — «watering with details» path
+     (the soil-check + abundance flow, issue #71). Same treatment.
+  3. NotificationSchedulerService.sendOneSchedule — admin-trigger /
+     forced resend uses effective interval for advancement.
+  4. NotificationSchedulerService.skipOneSchedule — the «⏭ Пропустить»
+     action. Now correctly skips by the seasonal interval, not the
+     raw base. Otherwise a winter «skip» would advance by 10 days
+     when the active interval is 12.
+  5. PlantService.toggleSchedule — both branches:
+       - reactivating a stale schedule (next_due_at in the past) →
+         recomputes with effective interval
+       - creating a fresh schedule with the default → uses effective.
+  6. PlantTemplateService.createPlantFromTemplate — both watering
+     and the secondary schedules (MISTING/FERTILIZING). Uses a probe
+     Plant with INHERIT override since the real Plant doesn't exist
+     yet at that point.
+
+Deliberately NOT touched:
+  - PlantService.updateScheduleInterval: changing the base interval
+    does NOT shift the existing next_due_at. The user is expected to
+    re-schedule manually if they want an immediate shift. The AC
+    «фактический интервал должен обновиться сразу» is still met:
+    the *next* «полил» will apply the new base × current season.
+  - NotificationCallbackService snooze handlers (lines 175/856/865/909):
+    these are user-explicit «отложить на N дней» actions — applying
+    seasonality would override what the user just chose.
+  - All admin and projection paths (CalendarService) — they don't
+    write next_due_at, only project it; seasonal is per-cycle, not
+    per-projection.
+
+No new tests in this commit — the integration is mechanical (call
+effectiveIntervalDays, pass result into rescheduleFrom), and the
+service's behavior is already covered by SeasonalIntervalServiceTest
+in commit 1/3. The UI layer in commit 3/3 will add more test surface.
+---
+ .../com/plantcare/bot/domain/CareSchedule.java  | 12 +++++++++++-
+ .../service/NotificationCallbackService.java    | 11 +++++++++--
+ .../service/NotificationSchedulerService.java   | 15 +++++++++++++--
+ .../com/plantcare/bot/service/PlantService.java | 11 +++++++++--
+ .../bot/service/PlantTemplateService.java       | 17 +++++++++++++++--
+ 5 files changed, 57 insertions(+), 9 deletions(-)
+
+diff --git a/src/main/java/com/plantcare/bot/domain/CareSchedule.java b/src/main/java/com/plantcare/bot/domain/CareSchedule.java
+index 5c6dffe..75f0b3c 100644
+--- a/src/main/java/com/plantcare/bot/domain/CareSchedule.java
++++ b/src/main/java/com/plantcare/bot/domain/CareSchedule.java
+@@ -68,6 +68,16 @@ public class CareSchedule extends BaseEntity {
+      * Используется при отметке "сделано": от actualDoneAt + intervalDays.
+      */
+     public void rescheduleFrom(LocalDateTime from) {
+-        this.nextDueAt = from.plusDays(intervalDays);
++        rescheduleFrom(from, this.intervalDays);
++    }
++
++    /**
++     * Та же логика, но с явным интервалом — для случаев, когда вызывающий
++     * хочет применить сезонную корректировку или другой расчёт (issue #67).
++     * Базовый {@code intervalDays} на entity не трогаем — он представляет
++     * настройку юзера, а не «фактический» сезонный интервал.
++     */
++    public void rescheduleFrom(LocalDateTime from, int intervalDaysOverride) {
++        this.nextDueAt = from.plusDays(intervalDaysOverride);
+     }
+ }
+diff --git a/src/main/java/com/plantcare/bot/service/NotificationCallbackService.java b/src/main/java/com/plantcare/bot/service/NotificationCallbackService.java
+index b601cad..42dd66f 100644
+--- a/src/main/java/com/plantcare/bot/service/NotificationCallbackService.java
++++ b/src/main/java/com/plantcare/bot/service/NotificationCallbackService.java
+@@ -52,6 +52,7 @@ public class NotificationCallbackService {
+     private final UserService userService;
+     private final PlantCardService plantCardService;
+     private final PlantAcclimationService plantAcclimationService;
++    private final com.plantcare.bot.seasonal.service.SeasonalIntervalService seasonalIntervalService;
+ 
+     @Transactional
+     public void handleCallback(CallbackQuery callbackQuery, TelegramClient client) {
+@@ -420,7 +421,9 @@ public class NotificationCallbackService {
+                 .build();
+         careHistoryRepository.save(history);
+ 
+-        schedule.rescheduleFrom(now);
++        int effective = seasonalIntervalService.effectiveIntervalDays(
++                plant, plant.getUser(), schedule.getIntervalDays());
++        schedule.rescheduleFrom(now, effective);
+         careScheduleRepository.save(schedule);
+ 
+         String nextDateStr = schedule.getNextDueAt().format(DATE_FMT);
+@@ -470,7 +473,11 @@ public class NotificationCallbackService {
+ 
+         careHistoryRepository.save(history);
+ 
+-        schedule.rescheduleFrom(now);
++        // Сезонная корректировка интервала (issue #67): если выключено или
++        // не применимо к этому растению — вернётся базовый интервал.
++        int effective = seasonalIntervalService.effectiveIntervalDays(
++                plant, plant.getUser(), schedule.getIntervalDays());
++        schedule.rescheduleFrom(now, effective);
+         careScheduleRepository.save(schedule);
+ 
+         return true;
+diff --git a/src/main/java/com/plantcare/bot/service/NotificationSchedulerService.java b/src/main/java/com/plantcare/bot/service/NotificationSchedulerService.java
+index 6bd7ecb..5740f71 100644
+--- a/src/main/java/com/plantcare/bot/service/NotificationSchedulerService.java
++++ b/src/main/java/com/plantcare/bot/service/NotificationSchedulerService.java
+@@ -48,6 +48,7 @@ public class NotificationSchedulerService {
+     private final TelegramClientProvider telegramClientProvider;
+     private final SchedulerHealthTracker schedulerHealthTracker;
+     private final com.plantcare.bot.weather.service.WeatherService weatherService;
++    private final com.plantcare.bot.seasonal.service.SeasonalIntervalService seasonalIntervalService;
+ 
+     @Scheduled(fixedRate = 60_000)
+     @Transactional
+@@ -109,7 +110,10 @@ public class NotificationSchedulerService {
+         try {
+             sendNotification(user, plant, schedule);
+             // Продвигаем next_due_at на следующий тик, как обычный шедулер.
+-            schedule.setNextDueAt(LocalDateTime.now().plusDays(schedule.getIntervalDays()));
++            // С сезонной корректировкой (issue #67) — если выключено, вернётся базовый.
++            int effective = seasonalIntervalService.effectiveIntervalDays(
++                    plant, user, schedule.getIntervalDays());
++            schedule.setNextDueAt(LocalDateTime.now().plusDays(effective));
+             careScheduleRepository.save(schedule);
+             return SendOneResult.sent();
+         } catch (Exception e) {
+@@ -127,7 +131,14 @@ public class NotificationSchedulerService {
+     public boolean skipOneSchedule(Long scheduleId) {
+         CareSchedule schedule = careScheduleRepository.findById(scheduleId).orElse(null);
+         if (schedule == null) return false;
+-        schedule.setNextDueAt(LocalDateTime.now().plusDays(schedule.getIntervalDays()));
++        // Сезонная корректировка (issue #67) — пропуск должен учитывать
++        // фактический интервал текущего сезона, иначе пропуск зимой подвинет
++        // меньше чем должен.
++        Plant plant = schedule.getPlant();
++        User user = plant.getUser();
++        int effective = seasonalIntervalService.effectiveIntervalDays(
++                plant, user, schedule.getIntervalDays());
++        schedule.setNextDueAt(LocalDateTime.now().plusDays(effective));
+         careScheduleRepository.save(schedule);
+         log.info("Schedule {} skipped from admin, new next_due_at={}",
+                 scheduleId, schedule.getNextDueAt());
+diff --git a/src/main/java/com/plantcare/bot/service/PlantService.java b/src/main/java/com/plantcare/bot/service/PlantService.java
+index 82027cf..b8c0dfa 100644
+--- a/src/main/java/com/plantcare/bot/service/PlantService.java
++++ b/src/main/java/com/plantcare/bot/service/PlantService.java
+@@ -30,6 +30,7 @@ public class PlantService {
+     private final CareHistoryRepository careHistoryRepository;
+     private final SpeciesRepository speciesRepository;
+     private final LocationService locationService;
++    private final com.plantcare.bot.seasonal.service.SeasonalIntervalService seasonalIntervalService;
+ 
+     /**
+      * Получить топ популярных видов для отображения на первом экране.
+@@ -458,7 +459,9 @@ public class PlantService {
+             // чтобы у пользователя не висело "просрочено на 100 дней".
+             if (existing.isActive() && existing.getNextDueAt() != null
+                     && existing.getNextDueAt().isBefore(LocalDateTime.now())) {
+-                existing.rescheduleFrom(LocalDateTime.now());
++                int effective = seasonalIntervalService.effectiveIntervalDays(
++                        plant, plant.getUser(), existing.getIntervalDays());
++                existing.rescheduleFrom(LocalDateTime.now(), effective);
+             }
+             CareSchedule saved = careScheduleRepository.save(existing);
+             log.info("Toggled {} for plant {} → active={} (user {})",
+@@ -467,7 +470,11 @@ public class PlantService {
+         }
+ 
+         int defaultInterval = defaultIntervalFor(plant, taskType);
+-        LocalDateTime nextDueAt = LocalDateTime.now().plusDays(defaultInterval);
++        // Сезонная корректировка нового schedule (issue #67) — если сезон сейчас,
++        // допустим, зима, то «следующий полив через 14 дней» вместо 10.
++        int effectiveInterval = seasonalIntervalService.effectiveIntervalDays(
++                plant, plant.getUser(), defaultInterval);
++        LocalDateTime nextDueAt = LocalDateTime.now().plusDays(effectiveInterval);
+ 
+         CareSchedule fresh = CareSchedule.builder()
+                 .plant(plant)
+diff --git a/src/main/java/com/plantcare/bot/service/PlantTemplateService.java b/src/main/java/com/plantcare/bot/service/PlantTemplateService.java
+index 7196491..7ba9c44 100644
+--- a/src/main/java/com/plantcare/bot/service/PlantTemplateService.java
++++ b/src/main/java/com/plantcare/bot/service/PlantTemplateService.java
+@@ -44,6 +44,7 @@ public class PlantTemplateService {
+     private final PlantTemplateCareRuleRepository careRuleRepository;
+     private final PlantService plantService;
+     private final CareScheduleRepository careScheduleRepository;
++    private final com.plantcare.bot.seasonal.service.SeasonalIntervalService seasonalIntervalService;
+ 
+     // =================================================================
+     // saveFromPlant — сохранить шаблон из существующего растения
+@@ -125,7 +126,17 @@ public class PlantTemplateService {
+                 .map(PlantTemplateCareRule::getIntervalDays)
+                 .orElse(7);
+ 
+-        LocalDateTime nextWateringAt = LocalDateTime.now().plusDays(wateringInterval);
++        // Применяем сезонную корректировку (issue #67). Для нового растения
++        // seasonalOverride = INHERIT (builder default в Plant), значит решает
++        // только глобальная настройка юзера — Plant даже не нужен, но передаём
++        // фиктивный с INHERIT чтобы не плодить overload в API.
++        com.plantcare.bot.domain.Plant probe = com.plantcare.bot.domain.Plant.builder()
++                .user(user)
++                .seasonalOverride(com.plantcare.bot.domain.enums.SeasonalOverride.INHERIT)
++                .build();
++        int effectiveWatering = seasonalIntervalService.effectiveIntervalDays(
++                probe, user, wateringInterval);
++        LocalDateTime nextWateringAt = LocalDateTime.now().plusDays(effectiveWatering);
+ 
+         Plant plant = plantService.createPlantWithWateringSchedule(
+                 user, null, plantName, wateringInterval, nextWateringAt);
+@@ -133,11 +144,13 @@ public class PlantTemplateService {
+         // Добавляем остальные расписания (MISTING, FERTILIZING) если они есть в шаблоне
+         for (PlantTemplateCareRule rule : template.getCareRules()) {
+             if (rule.getCareType() != TaskType.WATERING) {
++                int effective = seasonalIntervalService.effectiveIntervalDays(
++                        plant, user, rule.getIntervalDays());
+                 plantService.addCareSchedule(
+                         plant,
+                         rule.getCareType(),
+                         rule.getIntervalDays(),
+-                        LocalDateTime.now().plusDays(rule.getIntervalDays())
++                        LocalDateTime.now().plusDays(effective)
+                 );
+             }
+         }
+-- 
+2.43.0
+

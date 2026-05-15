@@ -44,6 +44,7 @@ public class PlantTemplateService {
     private final PlantTemplateCareRuleRepository careRuleRepository;
     private final PlantService plantService;
     private final CareScheduleRepository careScheduleRepository;
+    private final com.plantcare.bot.seasonal.service.SeasonalIntervalService seasonalIntervalService;
 
     // =================================================================
     // saveFromPlant — сохранить шаблон из существующего растения
@@ -125,7 +126,17 @@ public class PlantTemplateService {
                 .map(PlantTemplateCareRule::getIntervalDays)
                 .orElse(7);
 
-        LocalDateTime nextWateringAt = LocalDateTime.now().plusDays(wateringInterval);
+        // Применяем сезонную корректировку (issue #67). Для нового растения
+        // seasonalOverride = INHERIT (builder default в Plant), значит решает
+        // только глобальная настройка юзера — Plant даже не нужен, но передаём
+        // фиктивный с INHERIT чтобы не плодить overload в API.
+        com.plantcare.bot.domain.Plant probe = com.plantcare.bot.domain.Plant.builder()
+                .user(user)
+                .seasonalOverride(com.plantcare.bot.domain.enums.SeasonalOverride.INHERIT)
+                .build();
+        int effectiveWatering = seasonalIntervalService.effectiveIntervalDays(
+                probe, user, wateringInterval);
+        LocalDateTime nextWateringAt = LocalDateTime.now().plusDays(effectiveWatering);
 
         Plant plant = plantService.createPlantWithWateringSchedule(
                 user, null, plantName, wateringInterval, nextWateringAt);
@@ -133,11 +144,13 @@ public class PlantTemplateService {
         // Добавляем остальные расписания (MISTING, FERTILIZING) если они есть в шаблоне
         for (PlantTemplateCareRule rule : template.getCareRules()) {
             if (rule.getCareType() != TaskType.WATERING) {
+                int effective = seasonalIntervalService.effectiveIntervalDays(
+                        plant, user, rule.getIntervalDays());
                 plantService.addCareSchedule(
                         plant,
                         rule.getCareType(),
                         rule.getIntervalDays(),
-                        LocalDateTime.now().plusDays(rule.getIntervalDays())
+                        LocalDateTime.now().plusDays(effective)
                 );
             }
         }

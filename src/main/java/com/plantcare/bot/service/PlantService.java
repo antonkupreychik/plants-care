@@ -30,6 +30,7 @@ public class PlantService {
     private final CareHistoryRepository careHistoryRepository;
     private final SpeciesRepository speciesRepository;
     private final LocationService locationService;
+    private final com.plantcare.bot.seasonal.service.SeasonalIntervalService seasonalIntervalService;
 
     /**
      * Получить топ популярных видов для отображения на первом экране.
@@ -317,7 +318,7 @@ public class PlantService {
     /**
      * Лимит длины заметки. Колонка plants.notes — TEXT, ограничение чисто UX-овое.
      */
-    public static final int NOTE_MAX_LENGTH = 500;
+    public static final int NOTE_MAX_LENGTH = 2000;
 
     /**
      * Переименование растения. Имя валидируется тем же правилом, что и при создании.
@@ -458,7 +459,9 @@ public class PlantService {
             // чтобы у пользователя не висело "просрочено на 100 дней".
             if (existing.isActive() && existing.getNextDueAt() != null
                     && existing.getNextDueAt().isBefore(LocalDateTime.now())) {
-                existing.rescheduleFrom(LocalDateTime.now());
+                int effective = seasonalIntervalService.effectiveIntervalDays(
+                        plant, plant.getUser(), existing.getIntervalDays());
+                existing.rescheduleFrom(LocalDateTime.now(), effective);
             }
             CareSchedule saved = careScheduleRepository.save(existing);
             log.info("Toggled {} for plant {} → active={} (user {})",
@@ -467,7 +470,11 @@ public class PlantService {
         }
 
         int defaultInterval = defaultIntervalFor(plant, taskType);
-        LocalDateTime nextDueAt = LocalDateTime.now().plusDays(defaultInterval);
+        // Сезонная корректировка нового schedule (issue #67) — если сезон сейчас,
+        // допустим, зима, то «следующий полив через 14 дней» вместо 10.
+        int effectiveInterval = seasonalIntervalService.effectiveIntervalDays(
+                plant, plant.getUser(), defaultInterval);
+        LocalDateTime nextDueAt = LocalDateTime.now().plusDays(effectiveInterval);
 
         CareSchedule fresh = CareSchedule.builder()
                 .plant(plant)

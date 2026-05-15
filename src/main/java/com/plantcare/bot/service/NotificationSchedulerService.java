@@ -48,6 +48,7 @@ public class NotificationSchedulerService {
     private final TelegramClientProvider telegramClientProvider;
     private final SchedulerHealthTracker schedulerHealthTracker;
     private final com.plantcare.bot.weather.service.WeatherService weatherService;
+    private final com.plantcare.bot.seasonal.service.SeasonalIntervalService seasonalIntervalService;
 
     @Scheduled(fixedRate = 60_000)
     @Transactional
@@ -109,7 +110,10 @@ public class NotificationSchedulerService {
         try {
             sendNotification(user, plant, schedule);
             // Продвигаем next_due_at на следующий тик, как обычный шедулер.
-            schedule.setNextDueAt(LocalDateTime.now().plusDays(schedule.getIntervalDays()));
+            // С сезонной корректировкой (issue #67) — если выключено, вернётся базовый.
+            int effective = seasonalIntervalService.effectiveIntervalDays(
+                    plant, user, schedule.getIntervalDays());
+            schedule.setNextDueAt(LocalDateTime.now().plusDays(effective));
             careScheduleRepository.save(schedule);
             return SendOneResult.sent();
         } catch (Exception e) {
@@ -127,7 +131,14 @@ public class NotificationSchedulerService {
     public boolean skipOneSchedule(Long scheduleId) {
         CareSchedule schedule = careScheduleRepository.findById(scheduleId).orElse(null);
         if (schedule == null) return false;
-        schedule.setNextDueAt(LocalDateTime.now().plusDays(schedule.getIntervalDays()));
+        // Сезонная корректировка (issue #67) — пропуск должен учитывать
+        // фактический интервал текущего сезона, иначе пропуск зимой подвинет
+        // меньше чем должен.
+        Plant plant = schedule.getPlant();
+        User user = plant.getUser();
+        int effective = seasonalIntervalService.effectiveIntervalDays(
+                plant, user, schedule.getIntervalDays());
+        schedule.setNextDueAt(LocalDateTime.now().plusDays(effective));
         careScheduleRepository.save(schedule);
         log.info("Schedule {} skipped from admin, new next_due_at={}",
                 scheduleId, schedule.getNextDueAt());

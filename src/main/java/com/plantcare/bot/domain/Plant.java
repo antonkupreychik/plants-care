@@ -3,6 +3,8 @@ package com.plantcare.bot.domain;
 import com.plantcare.bot.domain.base.BaseEntity;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
@@ -71,6 +73,18 @@ public class Plant extends BaseEntity {
      */
     @Column(name = "acclimation_checkin_next_at")
     private LocalDateTime acclimationCheckinNextAt;
+
+    /**
+     * Применять ли сезонную корректировку интервалов для этого растения (issue #67).
+     * INHERIT — следовать глобальной настройке юзера;
+     * ON  — сезонность включена даже если глобально выкл;
+     * OFF — сезонность не применяется даже если глобально вкл.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "seasonal_override", nullable = false, length = 8)
+    @Builder.Default
+    private com.plantcare.bot.domain.enums.SeasonalOverride seasonalOverride =
+            com.plantcare.bot.domain.enums.SeasonalOverride.INHERIT;
 
     @OneToMany(mappedBy = "plant")
     @Builder.Default
