@@ -30,6 +30,7 @@ public class PlantsCareBot implements LongPollingSingleThreadUpdateConsumer, Tel
     private static final String LOCATION_CALLBACK_PREFIX = "LOCATION:";
     private static final String PLANT_CALLBACK_PREFIX = "PLANT:";
     private static final String CALENDAR_CALLBACK_PREFIX = "cal:";
+    private static final String WEATHER_CALLBACK_PREFIX = "WEATHER:";
 
     private final TelegramClient telegramClient;
     private final CommandContainer commandContainer;
@@ -91,13 +92,23 @@ public class PlantsCareBot implements LongPollingSingleThreadUpdateConsumer, Tel
                         data.startsWith(MENU_CALLBACK_PREFIX) ||
                                 data.startsWith(LOCATION_CALLBACK_PREFIX) ||
                                 data.startsWith(PLANT_CALLBACK_PREFIX) ||
-                                data.startsWith(CALENDAR_CALLBACK_PREFIX)
+                                data.startsWith(CALENDAR_CALLBACK_PREFIX) ||
+                                data.startsWith(WEATHER_CALLBACK_PREFIX)
                 )) {
                     String userName = getUserName(update);
                     User user = userService.findOrCreate(chatId, userName);
 
                     menuCallbackService.handleCallback(update.getCallbackQuery(), telegramClient, user);
                     return;
+                }
+
+                // Диагностика: если callback_data есть, но ни одному prefix не
+                // соответствует — это потерянный callback. Без этого лога
+                // юзер видит «спиннер крутится → исчезает по таймауту» и в
+                // логах ничего нет. История с WEATHER: была именно такой.
+                if (data != null) {
+                    log.warn("Unhandled callback (no matching prefix): data='{}', chatId={}",
+                            data, chatId);
                 }
             }
 

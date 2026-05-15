@@ -6,6 +6,7 @@ import com.plantcare.bot.domain.User;
 import com.plantcare.bot.domain.featureflag.FeatureFlag;
 import com.plantcare.bot.repository.CareScheduleRepository;
 import com.plantcare.bot.repository.PlantRepository;
+import com.plantcare.bot.weather.service.WeatherService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -35,6 +36,7 @@ public class MainMenuService {
     private final CareScheduleRepository careScheduleRepository;
     private final LocationService locationService;
     private final CareHistoryService careHistoryService;
+    private final WeatherService weatherService;
 
     public void sendMainMenu(User user, TelegramClient client) {
         long plantCount = plantRepository.countByUserIdAndArchivedAtIsNull(user.getId());
@@ -52,9 +54,20 @@ public class MainMenuService {
         // короткие серии не должны давить на эго в духе "ваш стрик 1 день".
         int userStreak = careHistoryService.computeUserStreak(user.getId(), user.getTimezone());
 
+        String text = buildMenuText(plantCount, todaySchedules, locations, userStreak);
+
+        // Погодная подсказка для блока полива (issue #69). Одна строка на меню,
+        // а не на каждую задачу — иначе текст растёт линейно по количеству
+        // растений. Если погода не настроена или Open-Meteo молчит — ничего
+        // не добавляется, меню рендерится как раньше.
+        String weatherHint = buildWeatherHintForWatering(user, todaySchedules);
+        if (!weatherHint.isEmpty()) {
+            text = text + "\n\n" + weatherHint;
+        }
+
         SendMessage message = SendMessage.builder()
                 .chatId(user.getTelegramChatId().toString())
-                .text(buildMenuText(plantCount, todaySchedules, locations, userStreak))
+                .text(text)
                 .parseMode("Markdown")
                 .replyMarkup(buildMenuKeyboard(user))
                 .build();
@@ -65,6 +78,23 @@ public class MainMenuService {
         } catch (TelegramApiException e) {
             log.error("Failed to send menu to user {}: {}", user.getTelegramChatId(), e.getMessage(), e);
         }
+    }
+
+    /**
+     * Возвращает подсказку про текущую влажность, если:
+     *   1) у юзера погода включена и есть локация,
+     *   2) среди сегодняшних задач есть хотя бы один WATERING,
+     *   3) Open-Meteo (или кеш) вернул значение.
+     * Иначе — пустая строка, caller просто не добавляет ничего к меню.
+     */
+    private String buildWeatherHintForWatering(User user, List<CareSchedule> todaySchedules) {
+        if (!user.isWeatherUsable()) return "";
+        boolean hasWatering = todaySchedules.stream()
+                .anyMatch(s -> s.getTaskType() == com.plantcare.bot.domain.enums.TaskType.WATERING);
+        if (!hasWatering) return "";
+        return weatherService.getCurrentHumidity(user)
+                .map(com.plantcare.bot.weather.dto.HumidityInfo::renderLine)
+                .orElse("");
     }
 
     private String buildMenuText(

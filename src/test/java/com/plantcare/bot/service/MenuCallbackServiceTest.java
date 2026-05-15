@@ -31,6 +31,7 @@ import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKe
 
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 
 @ExtendWith(MockitoExtension.class)
 @DisplayName("Unit-тесты для MenuCallbackService")
@@ -61,6 +62,7 @@ class MenuCallbackServiceTest {
         testUser = User.builder()
                 .telegramChatId(100L)
                 .timezone("UTC")
+                .featureFlags(Map.of("calendar", true))
                 .build();
 
         lenient().when(callbackQuery.getId()).thenReturn("cb-1");

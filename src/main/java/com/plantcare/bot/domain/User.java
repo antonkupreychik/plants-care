@@ -77,6 +77,29 @@ public class User extends BaseEntity {
     @Builder.Default
     private boolean blocked = false;
 
+    // ===== Weather integration (issue #69) =====
+
+    /** Учитывать погоду в рекомендациях; default false — opt-in через настройки. */
+    @Column(name = "weather_enabled", nullable = false)
+    @Builder.Default
+    private boolean weatherEnabled = false;
+
+    /** Широта точки, по которой запрашиваем Open-Meteo. */
+    @Column(name = "weather_lat")
+    private Double weatherLat;
+
+    /** Долгота. */
+    @Column(name = "weather_lon")
+    private Double weatherLon;
+
+    /** Когда последний раз ходили в Open-Meteo (для 60-мин кеша). */
+    @Column(name = "weather_last_fetch_at")
+    private LocalDateTime weatherLastFetchAt;
+
+    /** Последнее значение RH (relative humidity, %), нужно для рендера из кеша. */
+    @Column(name = "weather_last_rh")
+    private Integer weatherLastRh;
+
     @UpdateTimestamp
     @Column(name = "updated_at", nullable = false)
     private LocalDateTime updatedAt;
@@ -100,5 +123,15 @@ public class User extends BaseEntity {
         if (flagCode == null || featureFlags == null) return false;
         Object v = featureFlags.get(flagCode);
         return v != null && "true".equals(String.valueOf(v));
+    }
+
+    /** Есть ли точка для запроса погоды (обе координаты заполнены). */
+    public boolean hasWeatherLocation() {
+        return weatherLat != null && weatherLon != null;
+    }
+
+    /** Погода реально используется в рекомендациях — toggle вкл + локация задана. */
+    public boolean isWeatherUsable() {
+        return weatherEnabled && hasWeatherLocation();
     }
 }

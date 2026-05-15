@@ -31,6 +31,14 @@ app:
     locations: classpath:db/migration
     baseline-on-migrate: true
 
+weather:
+  cache-minutes: 60          # дефолт 60
+  threshold-defer-ok: 80     # дефолт 80
+  threshold-do-not-defer: 35 # дефолт 35
+  open-meteo:
+    base-url: https://api.open-meteo.com/v1
+    timeout-seconds: 5
+
 admin:
   username: ${ADMIN_USERNAME:}
   password-bcrypt-hash: ${ADMIN_PASSWORD_BCRYPT_HASH:}

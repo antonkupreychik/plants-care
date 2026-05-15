@@ -46,6 +46,7 @@ public class MenuCallbackService {
     private final NotificationCallbackService notificationCallbackService;
     private final PlantEventService plantEventService;
     private final PlantAcclimationService plantAcclimationService;
+    private final com.plantcare.bot.weather.service.WeatherMenuService weatherMenuService;
 
     private record LocationPreset(String name, String emoji) {
     }
@@ -96,7 +97,53 @@ public class MenuCallbackService {
             return;
         }
 
+        // Погода (issue #69). WEATHER:TOGGLE / WEATHER:LOCATION.
+        if (data.startsWith("WEATHER:")) {
+            handleWeatherCallback(data, callbackId, messageId, client, user);
+            return;
+        }
+
         answerCallback(client, callbackId, "❌ Неизвестная команда");
+    }
+
+    private void handleWeatherCallback(
+            String data, String callbackId, Integer messageId,
+            TelegramClient client, User user
+    ) {
+        // Диагностика: без этого лога невозможно отличить «callback не дошёл» от
+        // «callback дошёл, но что-то внутри тихо упало». Telegram сам убирает
+        // спиннер по таймауту (~30s), даже если мы не ответили — это маскирует
+        // exceptions внутри handler'а.
+        log.info("Weather callback received: data={}, user={}, messageId={}",
+                data, user.getTelegramChatId(), messageId);
+
+        if (weatherMenuService == null) {
+            log.error("WeatherMenuService bean is NULL — Spring DI broken? "
+                    + "This means @RequiredArgsConstructor didn't pick up the new field. "
+                    + "Restart the app with a fresh build.");
+            answerCallback(client, callbackId, "Внутренняя ошибка (см. логи)");
+            return;
+        }
+
+        try {
+            switch (data) {
+                case "WEATHER:TOGGLE"   -> {
+                    weatherMenuService.toggleEnabled(user, messageId, client);
+                    answerCallback(client, callbackId, "");
+                }
+                case "WEATHER:LOCATION" -> {
+                    weatherMenuService.promptForLocation(user, client);
+                    answerCallback(client, callbackId, "");
+                }
+                default -> answerCallback(client, callbackId, "❌ Неизвестная команда погоды");
+            }
+        } catch (Exception e) {
+            // Иначе exception проглатывается outer dispatcher'ом и в логах
+            // его не видно — главный симптом «ничего не происходит».
+            log.error("Weather callback {} failed for user {}: {}",
+                    data, user.getTelegramChatId(), e.getMessage(), e);
+            answerCallback(client, callbackId, "Ошибка: " + e.getMessage());
+        }
     }
 
     private void handleCalendarWeekCallback(
@@ -191,6 +238,11 @@ public class MenuCallbackService {
             case "CHANGE_TZ" -> {
                 userService.updateState(user, ConversationState.AWAITING_TIMEZONE);
                 sendTimezonePrompt(user, client);
+                answerCallback(client, callbackId, "");
+            }
+
+            case "WEATHER" -> {
+                weatherMenuService.sendWeatherScreen(user, messageId, client);
                 answerCallback(client, callbackId, "");
             }
 
@@ -1139,6 +1191,12 @@ public class MenuCallbackService {
                         InlineKeyboardButton.builder()
                                 .text("🌍 Изменить регион")
                                 .callbackData("MENU:CHANGE_TZ")
+                                .build()
+                )))
+                .keyboardRow(new InlineKeyboardRow(List.of(
+                        InlineKeyboardButton.builder()
+                                .text("🌦 Погода")
+                                .callbackData("MENU:WEATHER")
                                 .build()
                 )))
                 .keyboardRow(new InlineKeyboardRow(List.of(

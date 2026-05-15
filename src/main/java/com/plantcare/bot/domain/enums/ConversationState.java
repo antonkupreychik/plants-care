@@ -40,5 +40,8 @@ public enum ConversationState {
     // Пользовательские шаблоны (issue #68)
     AWAITING_TEMPLATE_NAME,            // ввод имени при сохранении шаблона
     AWAITING_PLANT_NAME_FROM_TEMPLATE, // ввод имени растения при создании из шаблона
-    AWAITING_TEMPLATE_RENAME           // ввод нового имени при переименовании шаблона
+    AWAITING_TEMPLATE_RENAME,          // ввод нового имени при переименовании шаблона
+
+    // Интеграция с погодой (issue #69)
+    AWAITING_WEATHER_LOCATION          // ожидаем location-сообщение для weather_lat/lon
 }
