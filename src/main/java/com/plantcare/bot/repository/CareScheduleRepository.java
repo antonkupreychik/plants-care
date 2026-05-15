@@ -28,6 +28,23 @@ public interface CareScheduleRepository extends JpaRepository<CareSchedule, Long
         """)
     List<CareSchedule> findDueSchedules(@Param("now") LocalDateTime now);
 
+    /**
+     * Для админ-страницы (issue #59): все активные расписания, которые
+     * сработают в окне (now; horizon]. В отличие от {@code findDueSchedules}
+     * не отсекает уже просроченные — админ должен видеть и их тоже.
+     */
+    @Query("""
+        SELECT s FROM CareSchedule s
+        JOIN FETCH s.plant p
+        JOIN FETCH p.user u
+        WHERE s.active = true
+          AND s.nextDueAt <= :horizon
+          AND p.archivedAt IS NULL
+          AND u.blocked = false
+        ORDER BY s.nextDueAt ASC
+        """)
+    List<CareSchedule> findSchedulesDueBefore(@Param("horizon") LocalDateTime horizon);
+
     @Query("""
         SELECT s FROM CareSchedule s
         JOIN FETCH s.plant p

@@ -2,6 +2,8 @@ package com.plantcare.bot.admin.controller;
 
 import com.plantcare.bot.admin.dto.SpeciesListItem;
 import com.plantcare.bot.admin.exception.DuplicateSpeciesNameException;
+import com.plantcare.bot.admin.ratelimit.LoginRateLimitFilter;
+import com.plantcare.bot.admin.ratelimit.LoginRateLimiter;
 import com.plantcare.bot.admin.service.AdminSpeciesService;
 import com.plantcare.bot.domain.Species;
 import com.plantcare.bot.domain.enums.CareDifficulty;
@@ -29,6 +31,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class AdminSpeciesControllerTest {
 
     @Autowired private MockMvc mockMvc;
+
+    @MockitoBean private LoginRateLimiter loginRateLimiter;
 
     @MockitoBean
     private AdminSpeciesService adminSpeciesService;
