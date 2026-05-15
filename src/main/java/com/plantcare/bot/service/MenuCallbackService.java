@@ -5,6 +5,7 @@ import com.plantcare.bot.domain.User;
 import com.plantcare.bot.domain.enums.ConversationState;
 import com.plantcare.bot.domain.enums.PlantEventType;
 import com.plantcare.bot.domain.enums.TaskType;
+import com.plantcare.bot.util.TimezoneSupport;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -463,7 +464,9 @@ public class MenuCallbackService {
                     return;
                 }
 
-                String nextDate = result.schedule().getNextDueAt().toLocalDate().format(DATE_FMT);
+                String nextDate = TimezoneSupport
+                        .dateInUserZone(result.schedule().getNextDueAt(), user)
+                        .format(DATE_FMT);
                 answerCallback(
                         client,
                         callbackId,

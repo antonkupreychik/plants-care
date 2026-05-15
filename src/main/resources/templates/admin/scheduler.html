@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      xmlns:layout="http://www.ultraq.net.nz/thymeleaf/layout"
+      layout:decorate="~{admin/_layout}"
+      lang="ru">
+<head>
+    <title>Scheduler health</title>
+</head>
+<body>
+<section layout:fragment="content">
+
+    <div class="flex items-center justify-between mb-4">
+        <h1 class="text-2xl font-bold">Scheduler</h1>
+        <span class="text-xs text-base-content/60">issue #59 · Phase 1</span>
+    </div>
+
+    <!-- Карточки сверху -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+
+        <!-- Последний tick -->
+        <div class="stats shadow bg-base-100" th:with="h=${page.health}">
+            <div class="stat">
+                <div class="stat-title">Последний tick</div>
+                <!--
+                  Цвет: <90с зелёный, 90-300 жёлтый, >300 красный (по issue #59).
+                  Логика SchedulerHealth.from(): ≤300с = HEALTHY, иначе STALE.
+                  Для жёлтой зоны (90-300) добавляем расчёт прямо в шаблоне.
+                -->
+                <div class="stat-value text-2xl"
+                     th:classappend="${h.unknown}
+                            ? 'text-base-content/50'
+                            : (${h.secondsAgo &lt; 90}
+                                ? 'text-success'
+                                : (${h.secondsAgo &lt;= 300}
+                                    ? 'text-warning'
+                                    : 'text-error'))"
+                     th:text="${h.unknown} ? '— нет данных' : ${h.humanAgo()}">—</div>
+                <div class="stat-desc">tick назад</div>
+            </div>
+        </div>
+
+        <!-- Расписаний в очереди -->
+        <div class="stats shadow bg-base-100">
+            <div class="stat">
+                <div class="stat-title">В очереди</div>
+                <div class="stat-value"
+                     th:classappend="${page.schedulesInQueue} > 50 ? 'text-warning' : ''"
+                     th:text="${page.schedulesInQueue}">0</div>
+                <div class="stat-desc">due ≤ now()</div>
+            </div>
+        </div>
+
+        <!-- Отправлено за 24h -->
+        <div class="stats shadow bg-base-100">
+            <div class="stat">
+                <div class="stat-title">Отправлено за 24h</div>
+                <div class="stat-value" th:text="${page.sentLast24h}">0</div>
+                <div class="stat-desc">notifications_log</div>
+            </div>
+        </div>
+
+        <!-- Ошибок за 24h -->
+        <div class="stats shadow bg-base-100">
+            <div class="stat">
+                <div class="stat-title">Ошибок за 24h</div>
+                <div class="stat-value text-base-content/50"
+                     th:text="${page.errorsPlaceholder} ? '—' : ${page.errorsLast24h}">—</div>
+                <div class="stat-desc">Phase 2</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Ручной триггер -->
+    <div class="card bg-base-100 shadow mb-6">
+        <div class="card-body">
+            <h2 class="card-title text-base">Ручной запуск tick</h2>
+            <p class="text-sm text-base-content/70">
+                Прогоняет шедулер один раз вручную. Идемпотентно: дедуп в
+                <code>notifications_log</code> предотвращает повторные пуши за
+                12-часовое окно.
+            </p>
+            <form method="post" th:action="@{/admin/scheduler/trigger}"
+                  onsubmit="return confirm('Запустить tick прямо сейчас?');"
+                  class="card-actions">
+                <button type="submit"
+                        id="trigger-btn"
+                        class="btn btn-primary btn-sm"
+                        th:disabled="${page.triggerCooldownSecondsLeft &gt; 0}"
+                        th:attr="data-cooldown=${page.triggerCooldownSecondsLeft}"
+                        th:text="${page.triggerCooldownSecondsLeft &gt; 0}
+                                ? ('⏳ Жди ' + ${page.triggerCooldownSecondsLeft} + ' сек')
+                                : '🚀 Триггернуть'">
+                    🚀 Триггернуть
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Отправки по часам — таблица (график в Phase 2) -->
+    <div class="card bg-base-100 shadow mb-6">
+        <div class="card-body">
+            <h2 class="card-title text-base">Отправки по часам (за последние 24h)</h2>
+            <p class="text-sm text-base-content/70 mb-2">
+                Часы в порядке от старого к новому относительно текущего момента.
+                Зона: <code th:text="${adminZone}">UTC</code>. График — Phase 2.
+            </p>
+            <div class="overflow-x-auto">
+                <table class="table table-sm">
+                    <thead>
+                    <tr>
+                        <th>Час</th>
+                        <th class="text-right">Отправлено</th>
+                        <th>Bar</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    <!--
+                      Примитивный ASCII-бар: ширина = count * 4 px, max-100px.
+                      Этого достаточно, чтобы увидеть пики, не подключая chart-библиотеку.
+                    -->
+                    <tr th:each="b : ${page.sendsByHour}">
+                        <td class="font-mono" th:text="${b.hourLabel}">00:00</td>
+                        <td class="text-right" th:text="${b.count}">0</td>
+                        <td>
+                            <div class="bg-primary h-2 rounded"
+                                 th:style="'width: ' + (${b.count} > 25 ? '100' : ${b.count * 4}) + 'px'">
+                            </div>
+                        </td>
+                    </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Очередь уведомлений: due now + upcoming на 24h -->
+    <div class="card bg-base-100 shadow">
+        <div class="card-body">
+            <div class="flex items-baseline justify-between">
+                <h2 class="card-title text-base">Очередь уведомлений (24h окно)</h2>
+                <span class="text-xs text-base-content/60"
+                      th:text="'Всего: ' + ${#lists.size(page.queue)}">0</span>
+            </div>
+
+            <div th:if="${page.queueTruncated}" class="alert alert-warning text-sm py-2 mt-1">
+                Показаны первые 200 — в БД больше. Стоит посмотреть, всё ли в порядке.
+            </div>
+
+            <div th:if="${#lists.isEmpty(page.queue)}" class="text-sm text-base-content/60 py-4">
+                Пусто. В ближайшие 24 часа никакие пуши не запланированы 🌱
+            </div>
+
+            <div class="overflow-x-auto" th:unless="${#lists.isEmpty(page.queue)}">
+                <table class="table table-sm">
+                    <thead>
+                    <tr>
+                        <th>Когда</th>
+                        <th>Задача</th>
+                        <th>Растение</th>
+                        <th>Юзер</th>
+                        <th>Интервал</th>
+                        <th class="text-right">Действия</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    <tr th:each="q : ${page.queue}"
+                        th:classappend="${q.overdue} ? 'bg-warning/10' : ''">
+                        <td>
+                            <span th:text="${q.dueAtHuman}">через 5 мин</span>
+                            <!-- Маленький бейдж overdue/paused для быстрой ориентации -->
+                            <span th:if="${q.overdue}"
+                                  class="badge badge-warning badge-xs ml-1">просрочка</span>
+                            <span th:if="${q.paused}"
+                                  class="badge badge-ghost badge-xs ml-1">⏸ пауза</span>
+                        </td>
+                        <td>
+                            <span th:text="${q.taskEmoji}">💧</span>
+                            <span class="text-xs font-mono" th:text="${q.taskType}">WATERING</span>
+                        </td>
+                        <td th:text="${q.plantName}">Монстера</td>
+                        <td>
+                            <div class="text-xs">
+                                <span th:if="${q.username != null and !q.username.isBlank()}"
+                                      th:text="'@' + ${q.username}">@user</span>
+                                <span th:if="${q.username == null or q.username.isBlank()}"
+                                      class="text-base-content/50">—</span>
+                            </div>
+                            <div class="text-xs font-mono text-base-content/60"
+                                 th:text="${q.chatId}">123</div>
+                        </td>
+                        <td class="text-xs text-base-content/60">
+                            <span th:text="${q.intervalDays} + ' дн'">7 дн</span>
+                        </td>
+                        <td class="text-right">
+                            <div class="join">
+                                <!-- Send (normal): пройдёт через filters -->
+                                <form method="post"
+                                      th:action="@{'/admin/scheduler/schedule/' + ${q.scheduleId} + '/send'}"
+                                      onsubmit="return confirm('Отправить сейчас этому юзеру?');"
+                                      class="join-item">
+                                    <button type="submit"
+                                            class="btn btn-xs btn-primary join-item"
+                                            title="Отправить сейчас (соблюдая паузу/quiet/дедуп)">
+                                        📤
+                                    </button>
+                                </form>
+                                <!-- Force send: обходит фильтры -->
+                                <form method="post"
+                                      th:action="@{'/admin/scheduler/schedule/' + ${q.scheduleId} + '/send'}"
+                                      onsubmit="return confirm('Принудительная отправка обходит паузу, quiet-hours и дедуп. Точно?');"
+                                      class="join-item">
+                                    <input type="hidden" name="force" value="true">
+                                    <button type="submit"
+                                            class="btn btn-xs btn-warning join-item"
+                                            title="Принудительно (игнор паузы/quiet-hours/дедупа)">
+                                        ⚡
+                                    </button>
+                                </form>
+                                <!-- Skip: продвинуть next_due_at -->
+                                <form method="post"
+                                      th:action="@{'/admin/scheduler/schedule/' + ${q.scheduleId} + '/skip'}"
+                                      onsubmit="return confirm('Пропустить ближайший пуш? next_due_at сдвинется на интервал.');"
+                                      class="join-item">
+                                    <button type="submit"
+                                            class="btn btn-xs btn-ghost join-item"
+                                            title="Пропустить (next_due_at += interval_days)">
+                                        ⏭
+                                    </button>
+                                </form>
+                            </div>
+                        </td>
+                    </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="text-xs text-base-content/60 mt-2">
+                📤 — обычная отправка (фильтры применяются),
+                ⚡ — принудительно (игнор паузы/quiet/дедупа),
+                ⏭ — пропустить.
+            </div>
+        </div>
+    </div>
+
+    <!--
+      Cooldown countdown: при заблокированной кнопке тикаем раз в секунду,
+      обновляя текст. По достижении нуля разблокируем кнопку и возвращаем
+      исходный текст. Никаких reload'ов — иначе page «мигает» каждую секунду.
+
+      Без th:inline здесь, чтобы не было путаницы с Thymeleaf-плейсхолдерами:
+      число секунд читаем из data-атрибута кнопки.
+    -->
+    <script>
+        (function () {
+            const btn = document.getElementById('trigger-btn');
+            if (!btn) return;
+            let remaining = parseInt(btn.getAttribute('data-cooldown') || '0', 10);
+            if (!Number.isFinite(remaining) || remaining <= 0) return;
+
+            const tick = () => {
+                remaining -= 1;
+                if (remaining <= 0) {
+                    btn.disabled = false;
+                    btn.textContent = '🚀 Триггернуть';
+                    return;
+                }
+                btn.textContent = '⏳ Жди ' + remaining + ' сек';
+                setTimeout(tick, 1000);
+            };
+            setTimeout(tick, 1000);
+        })();
+    </script>
+</section>
+</body>
+</html>

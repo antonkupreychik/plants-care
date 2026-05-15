@@ -7,6 +7,7 @@ import com.plantcare.bot.domain.User;
 import com.plantcare.bot.domain.enums.TaskType;
 import com.plantcare.bot.repository.CareHistoryRepository;
 import com.plantcare.bot.repository.CareScheduleRepository;
+import com.plantcare.bot.util.TimezoneSupport;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -21,6 +22,7 @@ import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKe
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 import org.telegram.telegrambots.meta.generics.TelegramClient;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Optional;
@@ -524,6 +526,14 @@ public class NotificationCallbackService {
     }
 
     /**
+     * Конвертация UTC-{@code LocalDateTime} в {@code LocalDate} в TZ юзера.
+     * Делегирует в {@link TimezoneSupport}.
+     */
+    private LocalDate inUserZone(LocalDateTime utc, User user) {
+        return TimezoneSupport.dateInUserZone(utc, user);
+    }
+
+    /**
      * Обработка callback v1:bulk_done:&lt;locationId&gt; (issue #19).
      *
      * Карточку локации НЕ редактируем (по ТЗ не трогаем старые сообщения),
@@ -669,7 +679,10 @@ public class NotificationCallbackService {
         schedule.rescheduleFrom(now);
         careScheduleRepository.save(schedule);
 
-        String nextDateStr = schedule.getNextDueAt().toLocalDate().format(DATE_FMT);
+        // Дата в TZ юзера — иначе у юзеров в +3..+5 «следующая проверка — DD.MM»
+        // может показывать на сутки раньше, если scheduler.rescheduleFrom
+        // выставил время поздно вечером по UTC.
+        String nextDateStr = inUserZone(schedule.getNextDueAt(), plant.getUser()).format(DATE_FMT);
 
         // 3) Edit оригинальное сообщение — итог проверки.
         String summary = switch (result) {
@@ -744,7 +757,8 @@ public class NotificationCallbackService {
             return;
         }
 
-        String nextDateStr = wateringSchedule.getNextDueAt().toLocalDate().format(DATE_FMT);
+        String nextDateStr = inUserZone(wateringSchedule.getNextDueAt(), plant.getUser())
+                .format(DATE_FMT);
         editMessage(client, chatId, messageId,
                 "💧 Полил " + plant.getName() + ".\nСледующий полив — " + nextDateStr);
         answerCallback(client, callbackId, "Готово!");

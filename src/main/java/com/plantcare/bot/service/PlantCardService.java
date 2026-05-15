@@ -10,6 +10,7 @@ import com.plantcare.bot.domain.enums.ConversationState;
 import com.plantcare.bot.domain.enums.PlantEventType;
 import com.plantcare.bot.domain.enums.TaskType;
 import com.plantcare.bot.repository.PlantRepository;
+import com.plantcare.bot.util.TimezoneSupport;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
@@ -444,7 +445,7 @@ public class PlantCardService {
         text.append("🌿 ").append(escapeMd(plant.getName())).append("\n");
         text.append("📅 Каждые ").append(schedule.getIntervalDays()).append(" дн.\n");
         text.append("⏰ Следующий: ")
-                .append(schedule.getNextDueAt().toLocalDate().format(DATE_FMT))
+                .append(inUserZone(schedule.getNextDueAt(), plant.getUser()).format(DATE_FMT))
                 .append("\n");
 
         String taskCode = schedule.getTaskType().name();
@@ -945,13 +946,20 @@ public class PlantCardService {
     }
 
     private ZoneId parseUserZone(User user) {
-        String tz = user.getTimezone();
-        if (tz == null || tz.isBlank()) return ZoneOffset.UTC;
-        try {
-            return ZoneId.of(tz);
-        } catch (Exception e) {
-            return ZoneOffset.UTC;
-        }
+        return TimezoneSupport.zoneOf(user);
+    }
+
+    /**
+     * Конвертация «голого» {@link LocalDateTime} (он хранится в БД в UTC)
+     * в {@link LocalDate} в TZ юзера. Делегирует в {@link TimezoneSupport}.
+     */
+    private LocalDate inUserZone(LocalDateTime utc, User user) {
+        return TimezoneSupport.dateInUserZone(utc, user);
+    }
+
+    /** «Сегодня» в TZ юзера — для корректных сравнений с {@link #inUserZone}. */
+    private LocalDate todayInUserZone(User user) {
+        return TimezoneSupport.todayInUserZone(user);
     }
 
     // =================================================================
@@ -1033,8 +1041,11 @@ public class PlantCardService {
             return sb.toString();
         }
 
+        // Даты событий — в TZ юзера, чтобы «01.05» не превратилось в «30.04»
+        // у юзеров в +3..+5 при создании события поздно вечером по UTC.
+        User user = plant.getUser();
         for (PlantEvent e : events) {
-            String date = e.getEventDate().toLocalDate().format(HISTORY_DATE_FMT);
+            String date = inUserZone(e.getEventDate(), user).format(HISTORY_DATE_FMT);
             sb.append(date)
                     .append(" — ")
                     .append(eventEmoji(e.getEventType()))
@@ -1149,7 +1160,7 @@ public class PlantCardService {
         // issue #75: баннер режима акклиматизации
         if (plant.isInAcclimation(LocalDateTime.now())) {
             sb.append("🆕 *Акклиматизация:* до ")
-                    .append(plant.getAcclimationUntil().toLocalDate().format(DATE_FMT))
+                    .append(inUserZone(plant.getAcclimationUntil(), plant.getUser()).format(DATE_FMT))
                     .append("\n");
         }
 
@@ -1169,10 +1180,13 @@ public class PlantCardService {
                 .sorted(Comparator.comparing(s -> s.getTaskType().ordinal()))
                 .toList();
 
-        LocalDate today = LocalDate.now();
+        // «Сегодня» считаем в TZ юзера — иначе у юзеров в +3..+5 ночью
+        // показывалось «вчера» вместо «сегодня» (today брался по UTC).
+        LocalDate today = todayInUserZone(plant.getUser());
 
         for (CareSchedule schedule : sorted) {
-            LocalDate due = schedule.getNextDueAt().toLocalDate();
+            // next_due_at хранится UTC; для отображения переводим в TZ юзера.
+            LocalDate due = inUserZone(schedule.getNextDueAt(), plant.getUser());
             String dueLabel;
 
             if (due.isBefore(today)) {

@@ -1,0 +1,45 @@
+<!--
+  HTMX-фрагмент: текущий прогресс рассылки. Опрашивается каждые 2 секунды
+  из broadcast.html. Когда status != RUNNING — внутри ответа есть hx-swap-oob
+  атрибут который остановит polling.
+-->
+<div th:fragment="progress" xmlns:th="http://www.thymeleaf.org"
+     th:with="processed=${b.sentCount + b.failedCount + b.blockedCount},
+              percent=${b.totalCount > 0 ? (processed * 100 / b.totalCount) : 0}">
+
+    <div class="flex justify-between items-baseline mb-1">
+        <span class="text-sm">
+            <span th:text="${b.status}">RUNNING</span> ·
+            <span th:text="${processed}">5</span> / <span th:text="${b.totalCount}">10</span>
+            (<span th:text="${percent}">50</span>%)
+        </span>
+        <span class="text-xs text-base-content/60">
+            ✅ <span th:text="${b.sentCount}">5</span> ·
+            ⏸ <span th:text="${b.blockedCount}">0</span> ·
+            ❌ <span th:text="${b.failedCount}">0</span>
+        </span>
+    </div>
+
+    <progress class="progress w-full" th:value="${processed}" th:max="${b.totalCount}">
+    </progress>
+
+    <!--
+      Если status терминальный — отдельным элементом сигнализируем HTMX'у остановить
+      polling. Это делается через hx-swap-oob: внешний контейнер с polling
+      hx-get="..." hx-trigger="load, every 2s" сам уберёт триггер если мы отдадим
+      out-of-band замену контейнера без hx-trigger.
+      Простейший вариант: в случае терминального состояния пишем сообщение
+      «Завершено. Обновите страницу для финального лога.» и админ нажимает F5.
+    -->
+    <div th:if="${b.terminal}" class="alert alert-info mt-2 text-sm py-2">
+        ✅ Рассылка завершена со статусом <b th:text="${b.status}">DONE</b>.
+        <a th:href="@{/admin/broadcast}" class="link link-primary ml-1">Обновить страницу</a>,
+        чтобы увидеть финальную запись в логе.
+    </div>
+</div>
+
+<!-- Возвращается когда broadcast не найден (например удалён) -->
+<div th:fragment="notFound" xmlns:th="http://www.thymeleaf.org"
+     class="alert alert-error text-sm">
+    Рассылка не найдена.
+</div>

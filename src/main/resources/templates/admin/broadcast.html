@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      xmlns:layout="http://www.ultraq.net.nz/thymeleaf/layout"
+      layout:decorate="~{admin/_layout}"
+      lang="ru">
+<head>
+    <title>Broadcast</title>
+</head>
+<body>
+<section layout:fragment="content">
+
+    <div class="flex items-center justify-between mb-4">
+        <h1 class="text-2xl font-bold">Broadcast</h1>
+        <span class="text-xs text-base-content/60">issue #60 · MAX 4000 символов</span>
+    </div>
+
+    <!-- Активная рассылка: блок прогресса наверху -->
+    <div th:if="${running != null}" class="card bg-base-100 shadow mb-4 border-2 border-warning">
+        <div class="card-body p-4">
+            <div class="flex items-baseline justify-between">
+                <h2 class="card-title text-base">
+                    ⏳ Идёт рассылка
+                    <span class="text-xs text-base-content/60"
+                          th:text="'id=' + ${running.id} + ', запустил ' + ${running.sentBy}">
+                    </span>
+                </h2>
+                <form method="post" th:action="@{'/admin/broadcast/' + ${running.id} + '/stop'}"
+                      onsubmit="return confirm('Остановить рассылку? Уже отправленные не отзываются.');">
+                    <button type="submit" class="btn btn-sm btn-error">⏹ Остановить</button>
+                </form>
+            </div>
+            <!-- HTMX polling — обновляет inner-блок каждые 2 секунды -->
+            <div hx-get="" th:attr="hx-get=@{'/admin/broadcast/' + ${running.id} + '/progress'}"
+                 hx-trigger="load, every 2s"
+                 hx-swap="innerHTML">
+                Загрузка прогресса...
+            </div>
+        </div>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+
+        <!-- ФОРМА -->
+        <form method="post" th:action="@{/admin/broadcast/send}"
+              id="broadcast-form"
+              onsubmit="return confirmBroadcast(this);"
+              class="card bg-base-100 shadow">
+            <div class="card-body space-y-3">
+
+                <label class="form-control">
+                    <span class="label-text text-sm font-semibold">Текст сообщения</span>
+                    <textarea name="text"
+                              id="text"
+                              class="textarea textarea-bordered h-40"
+                              maxlength="4000"
+                              required
+                              placeholder="Привет! Бот будет недоступен..."
+                              hx-get="/admin/broadcast/preview"
+                              hx-trigger="keyup changed delay:300ms"
+                              hx-target="#preview-box"
+                              hx-include="[name='text']"
+                              hx-swap="innerHTML"></textarea>
+                    <span class="label-text-alt text-xs text-base-content/60">
+                        Текст уходит как Telegram MarkdownV2 с обязательным
+                        escape — спецсимволы (* _ [ ] и т.д.) рендерятся как
+                        литералы. Если нужно форматирование, добавим позже
+                        вторым режимом.
+                    </span>
+                </label>
+
+                <div>
+                    <span class="label-text text-sm font-semibold">Аудитория</span>
+                    <div class="space-y-1 mt-1"
+                         hx-get="/admin/broadcast/count"
+                         hx-trigger="change from:[name='filter'], change from:[name='timezones']"
+                         hx-target="#count-box"
+                         hx-include="[name='filter'], [name='timezones']"
+                         hx-swap="innerHTML">
+                        <label class="label cursor-pointer justify-start gap-2 py-1"
+                               th:each="a, st : ${audiences}">
+                            <input type="radio" name="filter"
+                                   th:value="${a.name()}"
+                                   class="radio radio-sm"
+                                   th:checked="${a == defaultFilter}" />
+                            <span class="label-text text-sm">
+                                <span th:switch="${a.name()}">
+                                    <span th:case="'ONLINE'">Только онлайн (не paused, не blocked)</span>
+                                    <span th:case="'ALL_EXCEPT_BLOCKED'">Все, кроме заблокированных</span>
+                                    <span th:case="'BY_TIMEZONE'">По таймзоне ↓</span>
+                                </span>
+                            </span>
+                        </label>
+                    </div>
+                    <select name="timezones" multiple
+                            class="select select-bordered select-sm w-full mt-2"
+                            th:if="${not #lists.isEmpty(timezones)}"
+                            hx-get="/admin/broadcast/count"
+                            hx-trigger="change"
+                            hx-target="#count-box"
+                            hx-include="[name='filter'], [name='timezones']"
+                            hx-swap="innerHTML">
+                        <option th:each="tz : ${timezones}"
+                                th:value="${tz}"
+                                th:text="${tz}">Europe/Riga</option>
+                    </select>
+                </div>
+
+                <div class="alert alert-info py-2 text-sm">
+                    <span id="count-box">Получат — выберите аудиторию</span>
+                </div>
+
+                <!-- Подтверждение SEND -->
+                <div class="border-t pt-3">
+                    <label class="form-control">
+                        <span class="label-text text-sm font-semibold text-warning">
+                            Подтверждение: введите SEND
+                        </span>
+                        <input type="text" name="confirm"
+                               id="confirm"
+                               class="input input-bordered input-sm"
+                               autocomplete="off"
+                               placeholder="SEND" />
+                    </label>
+                </div>
+
+                <div class="card-actions">
+                    <button type="submit"
+                            id="submit-btn"
+                            class="btn btn-primary"
+                            th:disabled="${running != null}">
+                        🚀 Запустить рассылку
+                    </button>
+                </div>
+            </div>
+        </form>
+
+        <!-- ПРЕДПРОСМОТР -->
+        <div class="card bg-base-100 shadow">
+            <div class="card-body">
+                <h2 class="card-title text-base">Предпросмотр</h2>
+                <div class="text-xs text-base-content/60">
+                    Текст после escape — ровно то, что уйдёт в Telegram (MarkdownV2).
+                </div>
+                <div id="preview-box"
+                     class="bg-base-200 rounded p-3 text-sm whitespace-pre-wrap min-h-32 font-mono">
+                    Здесь появится текст по мере набора.
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- ЛОГ ПОСЛЕДНИХ 20 -->
+    <div class="card bg-base-100 shadow mt-4">
+        <div class="card-body">
+            <h2 class="card-title text-base">Последние 20 рассылок</h2>
+            <div th:if="${#lists.isEmpty(recent)}" class="text-sm text-base-content/60">
+                Пока пусто.
+            </div>
+            <div th:unless="${#lists.isEmpty(recent)}" class="overflow-x-auto">
+                <table class="table table-sm">
+                    <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Когда</th>
+                        <th>Кто</th>
+                        <th>Фильтр</th>
+                        <th class="text-right">Всего</th>
+                        <th class="text-right">✅</th>
+                        <th class="text-right">⏸ blocked</th>
+                        <th class="text-right">❌ failed</th>
+                        <th>Статус</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    <tr th:each="b : ${recent}">
+                        <td th:text="${b.id}">1</td>
+                        <td class="text-xs" th:text="${b.createdAt}">2026-05-15</td>
+                        <td class="text-xs" th:text="${b.sentBy}">admin</td>
+                        <td><code class="text-xs" th:text="${b.audienceFilter}">ONLINE</code></td>
+                        <td class="text-right" th:text="${b.totalCount}">10</td>
+                        <td class="text-right text-success" th:text="${b.sentCount}">10</td>
+                        <td class="text-right text-base-content/60" th:text="${b.blockedCount}">0</td>
+                        <td class="text-right text-error" th:text="${b.failedCount}">0</td>
+                        <td>
+                            <span class="badge badge-sm"
+                                  th:classappend="${b.status.name() == 'DONE'} ? 'badge-success'
+                                          : (${b.status.name() == 'RUNNING'} ? 'badge-warning'
+                                          : (${b.status.name() == 'STOPPED'} ? 'badge-ghost'
+                                          : 'badge-error'))"
+                                  th:text="${b.status}">DONE</span>
+                        </td>
+                    </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Подтверждение перед submit: токен SEND обязателен.
+        function confirmBroadcast(form) {
+            const text = (form.querySelector('[name="text"]').value || '').trim();
+            if (!text) { alert('Текст пустой'); return false; }
+            const confirm = form.querySelector('[name="confirm"]').value;
+            if (confirm !== 'SEND') {
+                alert('Введите SEND для подтверждения (case-sensitive)');
+                return false;
+            }
+            const ok = window.confirm('Запустить рассылку прямо сейчас?');
+            return ok;
+        }
+
+        // Submit-button enable только когда введено ровно "SEND".
+        (function () {
+            const confirmInput = document.getElementById('confirm');
+            const submitBtn = document.getElementById('submit-btn');
+            if (!confirmInput || !submitBtn) return;
+            // Если есть атрибут disabled со стороны Thymeleaf (running != null),
+            // оставляем его в покое.
+            const wasInitiallyDisabled = submitBtn.disabled;
+            const update = () => {
+                if (wasInitiallyDisabled) return;
+                submitBtn.disabled = confirmInput.value !== 'SEND';
+            };
+            confirmInput.addEventListener('input', update);
+            update();
+        })();
+    </script>
+</section>
+</body>
+</html>

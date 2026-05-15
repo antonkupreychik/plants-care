@@ -24,6 +24,7 @@ import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKe
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardRow;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.ZoneId;
@@ -50,8 +51,112 @@ public class NotificationSchedulerService {
     @Scheduled(fixedRate = 60_000)
     @Transactional
     public void checkAndSendNotifications() {
+        executeTick();
+    }
+
+    /**
+     * Запустить tick синхронно из админ-панели (issue #59).
+     * Возвращает количество расписаний, которые tick подобрал и попытался
+     * обработать. Идемпотентность достигается за счёт дедупа в notifications_log
+     * (12-часовое окно) — повторный ручной вызов вскоре после автоматического
+     * не приведёт к двойным пушам.
+     */
+    @Transactional
+    public int triggerManually() {
+        log.info("Manual scheduler tick triggered (admin panel)");
+        return executeTick();
+    }
+
+    /**
+     * Отправить пуш по одному конкретному расписанию вручную из админки (issue #59).
+     *
+     * <p>Поведение зависит от {@code force}:
+     * <ul>
+     *   <li>{@code force=false} — применяются все обычные фильтры:
+     *       {@code user.paused}, {@code user.blocked}, {@code plant.archived},
+     *       quiet-hours и 12-часовой дедуп. Это «отправить как обычный шедулер».</li>
+     *   <li>{@code force=true} — обходит pause/quiet/dedup. Архивированное растение
+     *       и заблокированный юзер всё равно не получат push (некуда отправлять).
+     *       Это «диагностический пинок».</li>
+     * </ul>
+     *
+     * <p>В случае успеха продвигает {@code next_due_at} на следующий тик
+     * (как обычный шедулер) и пишет в {@code notifications_log}.
+     */
+    @Transactional
+    public SendOneResult sendOneSchedule(Long scheduleId, boolean force) {
+        CareSchedule schedule = careScheduleRepository.findById(scheduleId).orElse(null);
+        if (schedule == null) {
+            return SendOneResult.notFound();
+        }
+        if (!schedule.isActive()) {
+            return SendOneResult.skipped("Расписание неактивно");
+        }
+        Plant plant = schedule.getPlant();
+        if (plant.isArchived()) {
+            return SendOneResult.skipped("Растение архивировано");
+        }
+        User user = plant.getUser();
+        if (user.isBlocked()) {
+            return SendOneResult.skipped("Юзер заблокирован");
+        }
+
+        if (!force && !shouldSend(schedule, LocalDateTime.now())) {
+            return SendOneResult.skipped("Заблокировано фильтром (пауза/quiet-hours/дедуп)");
+        }
+
+        try {
+            sendNotification(user, plant, schedule);
+            // Продвигаем next_due_at на следующий тик, как обычный шедулер.
+            schedule.setNextDueAt(LocalDateTime.now().plusDays(schedule.getIntervalDays()));
+            careScheduleRepository.save(schedule);
+            return SendOneResult.sent();
+        } catch (Exception e) {
+            log.error("sendOneSchedule failed for schedule={}: {}", scheduleId, e.getMessage(), e);
+            return SendOneResult.failed(e.getMessage());
+        }
+    }
+
+    /**
+     * Пропустить ближайший пуш по расписанию (issue #59) — продвигает
+     * {@code next_due_at} на {@code +intervalDays}, не пишет {@code CareHistory}.
+     * Это та же семантика, что у кнопки «Пропустить» в боте.
+     */
+    @Transactional
+    public boolean skipOneSchedule(Long scheduleId) {
+        CareSchedule schedule = careScheduleRepository.findById(scheduleId).orElse(null);
+        if (schedule == null) return false;
+        schedule.setNextDueAt(LocalDateTime.now().plusDays(schedule.getIntervalDays()));
+        careScheduleRepository.save(schedule);
+        log.info("Schedule {} skipped from admin, new next_due_at={}",
+                scheduleId, schedule.getNextDueAt());
+        return true;
+    }
+
+    /** Результат {@link #sendOneSchedule}. */
+    public record SendOneResult(Status status, String reason) {
+        public enum Status { SENT, SKIPPED, NOT_FOUND, FAILED }
+
+        public static SendOneResult sent()                 { return new SendOneResult(Status.SENT, null); }
+        public static SendOneResult skipped(String reason) { return new SendOneResult(Status.SKIPPED, reason); }
+        public static SendOneResult notFound()             { return new SendOneResult(Status.NOT_FOUND, null); }
+        public static SendOneResult failed(String reason)  { return new SendOneResult(Status.FAILED, reason); }
+
+        public boolean isSent()      { return status == Status.SENT; }
+        public boolean isSkipped()   { return status == Status.SKIPPED; }
+        public boolean isNotFound()  { return status == Status.NOT_FOUND; }
+        public boolean isFailed()    { return status == Status.FAILED; }
+    }
+
+    /**
+     * Вся бизнес-логика тика. Вызывается из @Scheduled-обёртки и из ручного
+     * триггера админ-панели. Возвращает число найденных due-расписаний
+     * (то, что попало в очередь обработки до фильтров shouldSend и pause).
+     */
+    private int executeTick() {
         LocalDateTime now = LocalDateTime.now();
         List<CareSchedule> dueSchedules = careScheduleRepository.findDueSchedules(now);
+        int dueCount = dueSchedules.size();
 
         Map<Long, List<CareSchedule>> schedulesByUser = new LinkedHashMap<>();
 
@@ -123,6 +228,7 @@ public class NotificationSchedulerService {
         // AtomicReference.set() не участвует в JPA-транзакции, так что rollback
         // окружающего @Transactional на эту запись не повлияет.
         schedulerHealthTracker.recordTick();
+        return dueCount;
     }
 
     private boolean shouldSend(CareSchedule schedule, LocalDateTime now) {
@@ -157,7 +263,11 @@ public class NotificationSchedulerService {
             userZone = ZoneId.of("UTC");
         }
 
-        ZonedDateTime userNow = now.atZone(ZoneId.systemDefault()).withZoneSameInstant(userZone);
+        // Берём абсолютный момент через Instant.now() — независимо от JVM-зоны.
+        // Раньше брали now.atZone(systemDefault()), что предполагало JVM=UTC. При
+        // случайной переустановке TZ контейнера (TZ=Europe/Moscow на docker run)
+        // quiet-hours смещались бы на величину этой зоны. Instant.now() это исключает.
+        ZonedDateTime userNow = Instant.now().atZone(userZone);
         LocalTime userTime = userNow.toLocalTime();
 
         LocalTime start = user.getQuietHoursStart();

@@ -1,0 +1,19 @@
+<!--
+  HTMX-фрагмент: live-preview сообщения. Контроллер отдаёт сырой Markdown,
+  чтобы админ видел то же, что Telegram-парсер. Подсветка/рендеринг не делаем
+  специально (любая фронтенд-реализация будет отличаться от Telegram'а).
+-->
+<div th:fragment="preview" xmlns:th="http://www.thymeleaf.org">
+    <div th:if="${previewText == null or #strings.isEmpty(previewText)}"
+         class="text-base-content/40 text-sm">
+        Здесь появится текст по мере набора.
+    </div>
+    <div th:unless="${previewText == null or #strings.isEmpty(previewText)}"
+         class="text-sm">
+        <pre class="whitespace-pre-wrap break-words"
+             th:text="${previewText}">текст</pre>
+        <div class="text-xs text-base-content/60 mt-2 border-t pt-2">
+            Символов: <b th:text="${length}">0</b> / 4000
+        </div>
+    </div>
+</div>
