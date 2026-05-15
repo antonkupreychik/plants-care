@@ -24,6 +24,7 @@ import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKe
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardRow;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.ZoneId;
@@ -262,7 +263,11 @@ public class NotificationSchedulerService {
             userZone = ZoneId.of("UTC");
         }
 
-        ZonedDateTime userNow = now.atZone(ZoneId.systemDefault()).withZoneSameInstant(userZone);
+        // Берём абсолютный момент через Instant.now() — независимо от JVM-зоны.
+        // Раньше брали now.atZone(systemDefault()), что предполагало JVM=UTC. При
+        // случайной переустановке TZ контейнера (TZ=Europe/Moscow на docker run)
+        // quiet-hours смещались бы на величину этой зоны. Instant.now() это исключает.
+        ZonedDateTime userNow = Instant.now().atZone(userZone);
         LocalTime userTime = userNow.toLocalTime();
 
         LocalTime start = user.getQuietHoursStart();

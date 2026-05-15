@@ -14,6 +14,7 @@ import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKe
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardRow;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.ZoneId;
@@ -136,7 +137,9 @@ public class AcclimationSchedulerService {
             userZone = ZoneId.of("UTC");
         }
 
-        ZonedDateTime userNow = now.atZone(ZoneId.systemDefault()).withZoneSameInstant(userZone);
+        // См. комментарий в NotificationSchedulerService.isQuietHours — берём
+        // Instant.now(), чтобы не зависеть от JVM-зоны.
+        ZonedDateTime userNow = Instant.now().atZone(userZone);
         LocalTime userTime = userNow.toLocalTime();
 
         LocalTime start = user.getQuietHoursStart();

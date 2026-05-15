@@ -1,5 +1,6 @@
 package com.plantcare.bot.admin.scheduler.service;
 
+import com.plantcare.bot.admin.config.AdminProperties;
 import com.plantcare.bot.admin.dashboard.dto.SchedulerHealth;
 import com.plantcare.bot.admin.dashboard.health.SchedulerHealthProvider;
 import com.plantcare.bot.admin.scheduler.dto.QueuedNotificationDto;
@@ -8,13 +9,14 @@ import com.plantcare.bot.admin.scheduler.repository.AdminSchedulerRepository;
 import com.plantcare.bot.domain.CareSchedule;
 import com.plantcare.bot.repository.CareScheduleRepository;
 import com.plantcare.bot.service.NotificationSchedulerService;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -30,7 +32,6 @@ import java.util.concurrent.atomic.AtomicReference;
  * UX-стратегия, но без серверной защиты он лопается при F5 / параллельной вкладке.
  */
 @Service
-@RequiredArgsConstructor
 @Slf4j
 public class AdminSchedulerService {
 
@@ -49,10 +50,49 @@ public class AdminSchedulerService {
     private final CareScheduleRepository careScheduleRepository;
 
     /**
+     * TZ, в которой админу показываются часы/даты на /admin/scheduler.
+     * Берётся из {@code admin.dashboard.timezone}; если не задано —
+     * системный default (для прод-сервера на UTC получится UTC, и админ
+     * видит UTC же — это лучше, чем притворяться, что у нас локальное время).
+     */
+    private final ZoneId adminZone;
+
+    /**
      * Last successful manual trigger timestamp. Используется для cooldown.
      * {@code null} = триггер ни разу не нажимали в этой жизни процесса.
      */
     private final AtomicReference<Instant> lastTriggerAt = new AtomicReference<>();
+
+    public AdminSchedulerService(
+            AdminSchedulerRepository repository,
+            SchedulerHealthProvider healthProvider,
+            NotificationSchedulerService schedulerService,
+            CareScheduleRepository careScheduleRepository,
+            AdminProperties props
+    ) {
+        this.repository = repository;
+        this.healthProvider = healthProvider;
+        this.schedulerService = schedulerService;
+        this.careScheduleRepository = careScheduleRepository;
+        this.adminZone = resolveAdminZone(props);
+    }
+
+    private static ZoneId resolveAdminZone(AdminProperties props) {
+        String configured = props.getDashboard() == null ? null : props.getDashboard().getTimezone();
+        if (configured == null || configured.isBlank()) {
+            return ZoneId.systemDefault();
+        }
+        try {
+            return ZoneId.of(configured);
+        } catch (Exception e) {
+            return ZoneId.systemDefault();
+        }
+    }
+
+    /** Public для шаблона/контроллера, если потребуется показать «(в зоне X)». */
+    public ZoneId getAdminZone() {
+        return adminZone;
+    }
 
     public SchedulerPageDto buildPage() {
         LocalDateTime now = LocalDateTime.now();
@@ -61,10 +101,14 @@ public class AdminSchedulerService {
         SchedulerHealth health = healthProvider.currentHealth();
         long inQueue = repository.countSchedulesInQueue(now);
         long sent24h = repository.countSentSince(since);
-        Map<Integer, Long> byHour = repository.sentByHourSince(since);
+
+        // Часы группируем и показываем в админской TZ — на UTC-сервере
+        // это даёт админу понятный таймлайн «по моим часам», а не сдвинутый на N часов.
+        Map<Integer, Long> byHour = repository.sentByHourSince(since, adminZone.getId());
+        int currentHourAdmin = Instant.now().atZone(adminZone).getHour();
 
         List<SchedulerPageDto.HourBucket> buckets = new ArrayList<>(24);
-        for (int[] row : repository.hourlyTimeline(now, byHour)) {
+        for (int[] row : repository.hourlyTimeline(currentHourAdmin, byHour)) {
             String label = String.format("%02d:00", row[0]);
             buckets.add(new SchedulerPageDto.HourBucket(label, row[1]));
         }
@@ -123,11 +167,11 @@ public class AdminSchedulerService {
      * Человеко-читаемое расстояние до/от срока. «через N мин», «5 ч назад», «вчера»,
      * «23.05 14:30» для дат > 7 дней (для админ-просмотра — компактно).
      */
-    private static String humanizeDue(LocalDateTime due, LocalDateTime now) {
+    private String humanizeDue(LocalDateTime due, LocalDateTime now) {
         Duration d = Duration.between(now, due);
         long minutes = d.toMinutes();
         if (minutes <= -60 * 24) {
-            return due.format(java.time.format.DateTimeFormatter.ofPattern("dd.MM HH:mm"));
+            return formatInAdminZone(due);
         }
         if (minutes < 0) {
             long ago = -minutes;
@@ -138,7 +182,20 @@ public class AdminSchedulerService {
         if (minutes < 60)  return "через " + minutes + " мин";
         long hours = minutes / 60;
         if (hours < 24)    return "через " + hours + " ч";
-        return due.format(java.time.format.DateTimeFormatter.ofPattern("dd.MM HH:mm"));
+        return formatInAdminZone(due);
+    }
+
+    /**
+     * Форматирует UTC-LocalDateTime как «DD.MM HH:mm» в админской TZ.
+     * Решает баг: на UTC-сервере {@code due.format()} печатает время UTC,
+     * а админ ожидает свой часовой пояс — в результате «через 2 часа» (правда)
+     * рядом с «23.05 14:00» (UTC = 17:00 в RIga) выглядело противоречиво.
+     */
+    private String formatInAdminZone(LocalDateTime utcDateTime) {
+        return utcDateTime
+                .atOffset(ZoneOffset.UTC)
+                .atZoneSameInstant(adminZone)
+                .format(java.time.format.DateTimeFormatter.ofPattern("dd.MM HH:mm"));
     }
 
     /**

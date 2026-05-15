@@ -44,25 +44,32 @@ public class AdminSchedulerRepository {
     }
 
     /**
-     * Гистограмма отправок по часам за последние 24 часа.
-     * Группируем по {@code date_trunc('hour', sent_at)} в SQL, чтобы не тащить
-     * все записи в Java — на больших объёмах быстрее.
+     * Гистограмма отправок по часам за последние 24 часа в указанной TZ.
      *
-     * @return массив из 24 элементов: ключ — час (0..23 по локальному времени БД),
+     * <p>{@code sent_at} в БД — naive TIMESTAMP, хранится в UTC. SQL-выражение
+     * {@code (sent_at AT TIME ZONE 'UTC') AT TIME ZONE :tz} интерпретирует его
+     * как UTC и переводит в TZ админа, чтобы час в графике совпадал с тем, что
+     * админ видит на часах у себя на стене.
+     *
+     * @return массив из 24 элементов: ключ — час (0..23 в указанной TZ),
      *         значение — сколько отправок. Часы без отправок не возвращаются БД, но
      *         попадают в map с {@code 0}.
      */
-    public Map<Integer, Long> sentByHourSince(LocalDateTime since) {
+    public Map<Integer, Long> sentByHourSince(LocalDateTime since, String tzId) {
         Map<Integer, Long> result = new HashMap<>();
         for (int h = 0; h < 24; h++) {
             result.put(h, 0L);
         }
+        // GROUP BY 1 (по позиции в SELECT) — потому что Postgres не считает
+        // два одинаковых `EXTRACT(... AT TIME ZONE ?)` идентичными выражениями
+        // в SELECT и GROUP BY (параметр для планировщика — «чёрный ящик»).
         List<Map<String, Object>> rows = jdbcTemplate.queryForList("""
-                SELECT EXTRACT(HOUR FROM sent_at) AS hour, COUNT(*) AS cnt
+                SELECT EXTRACT(HOUR FROM (sent_at AT TIME ZONE 'UTC') AT TIME ZONE ?) AS hour,
+                       COUNT(*) AS cnt
                 FROM notifications_log
                 WHERE sent_at >= ?
-                GROUP BY EXTRACT(HOUR FROM sent_at)
-                """, since);
+                GROUP BY 1
+                """, tzId, since);
         for (Map<String, Object> row : rows) {
             int hour = ((Number) row.get("hour")).intValue();
             long cnt = ((Number) row.get("cnt")).longValue();
@@ -73,17 +80,14 @@ public class AdminSchedulerRepository {
 
     /**
      * Удобный helper для шаблона: 24 элемента в хронологическом порядке от старейшего
-     * к новейшему относительно «сейчас» (например, при now=14:30 первым идёт 15:00
-     * вчерашнего дня, последним — 14:00 сегодня).
+     * к новейшему относительно текущего часа (в той TZ, в которой группируем данные).
      *
-     * <p>Поведение: для каждого из 24 часовых слотов делаем lookup по часу (0..23) в
-     * результате {@link #sentByHourSince(LocalDateTime)}. Без сортировки по дате —
-     * для UX «сколько было в каждый час суток» этого достаточно; точная разбивка
-     * между «вчера/сегодня» — Phase 2 (полноценный график).
+     * <p>{@code currentHour} передаётся снаружи, потому что bucketing
+     * выполняется в админской TZ (см. {@link #sentByHourSince}), и «текущий час»
+     * тоже должен быть в этой TZ — иначе таймлайн сдвинется на разницу зон.
      */
-    public List<int[]> hourlyTimeline(LocalDateTime now, Map<Integer, Long> sentByHour) {
+    public List<int[]> hourlyTimeline(int currentHour, Map<Integer, Long> sentByHour) {
         List<int[]> timeline = new ArrayList<>(24);
-        int currentHour = now.getHour();
         for (int offset = 23; offset >= 0; offset--) {
             int hour = ((currentHour - offset) % 24 + 24) % 24;
             int count = sentByHour.getOrDefault(hour, 0L).intValue();

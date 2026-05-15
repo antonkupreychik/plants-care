@@ -32,6 +32,7 @@ public class AdminSchedulerController {
     public String page(Model model) {
         model.addAttribute("activeMenu", "scheduler");
         model.addAttribute("page", service.buildPage());
+        model.addAttribute("adminZone", service.getAdminZone().getId());
         return "admin/scheduler";
     }
 
