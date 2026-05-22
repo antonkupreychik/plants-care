@@ -41,6 +41,12 @@ public class ApiExceptionHandler {
                 .body(ApiErrorResponse.of("ACCESS_DENIED", "Access denied"));
     }
 
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<ApiErrorResponse> handleIllegalArgument(IllegalArgumentException e) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(ApiErrorResponse.of("BAD_REQUEST", e.getMessage()));
+    }
+
     @ExceptionHandler(RuntimeException.class)
     public ResponseEntity<ApiErrorResponse> handleRuntime(RuntimeException e) {
         log.error("Unhandled API error", e);

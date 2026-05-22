@@ -1,6 +1,7 @@
 package com.plantcare.bot.repository;
 
 import com.plantcare.bot.domain.Plant;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -14,6 +15,14 @@ import java.util.Optional;
 public interface PlantRepository extends JpaRepository<Plant, Long> {
 
     List<Plant> findAllByUserIdAndArchivedAtIsNullOrderByNameAsc(Long userId);
+
+    List<Plant> findAllByUserIdAndArchivedAtIsNullOrderByNameAsc(Long userId, Pageable pageable);
+
+    List<Plant> findAllByUserIdAndLocationIdAndArchivedAtIsNullOrderByNameAsc(
+            Long userId,
+            Long locationId,
+            Pageable pageable
+    );
 
     Optional<Plant> findByUserIdAndIdAndArchivedAtIsNull(Long userId, Long plantId);
 
