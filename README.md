@@ -68,6 +68,65 @@ echo 'testcontainers.reuse.enable=true' >> ~/.testcontainers.properties
 - **V1** — основная схема (7 таблиц, индексы, триггеры)
 - **V2** — сидинг 30 популярных видов растений в `species`
 
+## REST API
+
+Публичные эндпоинты, аутентификация не требуется.
+
+### Справочник видов растений
+
+| Метод | Путь | Описание |
+|-------|------|----------|
+| GET | `/api/v1/species` | Список видов с пагинацией |
+| GET | `/api/v1/species/{id}` | Детали вида по id |
+
+Параметры `GET /api/v1/species`:
+
+| Параметр | По умолчанию | Описание |
+|----------|--------------|----------|
+| `q` | `` (пусто) | Поиск по подстроке; если пустой — возвращаются все |
+| `page` | `0` | Номер страницы (0-based) |
+| `size` | `20` | Размер страницы; максимум 100 |
+
+Ответ `GET /api/v1/species`:
+```json
+{
+  "content": [
+    {
+      "id": 1,
+      "name": "Монстера",
+      "latinName": "Monstera deliciosa",
+      "wateringDays": 7,
+      "mistingDays": 3,
+      "fertilizingDays": 14,
+      "soilCheckDays": null,
+      "careDifficulty": "EASY",
+      "lightPreference": "INDIRECT"
+    }
+  ],
+  "page": 0,
+  "size": 20,
+  "totalElements": 30,
+  "totalPages": 2
+}
+```
+
+Ответ `GET /api/v1/species/{id}` — те же поля плюс `description`. При отсутствии записи — `404`.
+
+### Типы ухода
+
+`GET /api/v1/care-types` — статический список типов без пагинации:
+
+```json
+[
+  { "code": "WATERING",     "displayName": "Полив" },
+  { "code": "MISTING",      "displayName": "Опрыскивание" },
+  { "code": "FERTILIZING",  "displayName": "Подкормка" },
+  { "code": "SOIL_CHECK",   "displayName": "Проверка грунта" }
+]
+```
+
+Ответы кешируются на стороне сервера (TTL 1 час, Caffeine). Сброс кеша происходит автоматически при изменении данных через админку.
+
 ## Admin Panel
 
 Админка живёт на `/admin/**`. Логин/пароль из env-переменных:
