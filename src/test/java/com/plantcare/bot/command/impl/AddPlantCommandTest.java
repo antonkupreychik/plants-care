@@ -3,6 +3,7 @@ package com.plantcare.bot.command.impl;
 import com.plantcare.bot.domain.Species;
 import com.plantcare.bot.domain.User;
 import com.plantcare.bot.domain.enums.ConversationState;
+import com.plantcare.bot.service.MessageService;
 import com.plantcare.bot.service.PlantService;
 import com.plantcare.bot.service.UserService;
 import org.junit.jupiter.api.BeforeEach;
@@ -13,6 +14,8 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
 import org.telegram.telegrambots.meta.api.objects.Update;
 import org.telegram.telegrambots.meta.api.objects.message.Message;
@@ -26,9 +29,12 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
 @DisplayName("Unit-тесты для AddPlantCommand (/add)")
 class AddPlantCommandTest {
 
@@ -47,6 +53,9 @@ class AddPlantCommandTest {
     @Mock
     private PlantService plantService;
 
+    @Mock
+    private MessageService messageService;
+
     @InjectMocks
     private AddPlantCommand addPlantCommand;
 
@@ -61,6 +70,15 @@ class AddPlantCommandTest {
         when(update.getMessage()).thenReturn(message);
         when(message.getChatId()).thenReturn(chatId);
         when(userService.findByChatId(chatId)).thenReturn(Optional.of(testUser));
+
+        when(messageService.get(anyLong(), eq("command.add.prompt")))
+                .thenReturn("🌿 Давай добавим новое растение!\n\nЧто за растение? Вот популярные виды:");
+        when(messageService.get(anyLong(), eq("command.add.button.my_templates")))
+                .thenReturn("⭐ Из моих шаблонов");
+        when(messageService.get(anyLong(), eq("command.add.button.search")))
+                .thenReturn("🔍 Поиск");
+        when(messageService.get(anyLong(), eq("command.add.button.custom")))
+                .thenReturn("✨ Своё без шаблона");
     }
 
     @Test

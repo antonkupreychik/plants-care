@@ -2,6 +2,7 @@ package com.plantcare.bot.command.impl;
 
 import com.plantcare.bot.command.interfaces.BotCommand;
 import com.plantcare.bot.domain.User;
+import com.plantcare.bot.service.MessageService;
 import com.plantcare.bot.service.UserService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -17,6 +18,7 @@ import org.telegram.telegrambots.meta.generics.TelegramClient;
 public class CancelCommand implements BotCommand {
 
     private final UserService userService;
+    private final MessageService messageService;
 
     @Override
     public String getCommandName() {
@@ -33,7 +35,7 @@ public class CancelCommand implements BotCommand {
 
         SendMessage message = SendMessage.builder()
                 .chatId(chatId.toString())
-                .text("Действие отменено. Я готов к новым командам.")
+                .text(messageService.get(chatId, "command.cancel.confirmation"))
                 .build();
 
         try {

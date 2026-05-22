@@ -1,6 +1,7 @@
 package com.plantcare.bot.command.impl;
 
 import com.plantcare.bot.domain.User;
+import com.plantcare.bot.service.MessageService;
 import com.plantcare.bot.service.UserService;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -18,6 +19,7 @@ import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -38,6 +40,9 @@ class StartCommandTest {
 
     @Mock
     private MenuCommand menuCommand;
+
+    @Mock
+    private MessageService messageService;
 
     @InjectMocks
     private StartCommand startCommand;
@@ -62,6 +67,7 @@ class StartCommandTest {
         when(update.getMessage()).thenReturn(message);
         when(message.getChatId()).thenReturn(chatId);
         when(userService.findByChatId(chatId)).thenReturn(Optional.of(user));
+        when(messageService.get(eq(chatId), eq("command.start.greeting"))).thenReturn("greeting text");
 
         startCommand.execute(update, telegramClient);
 
