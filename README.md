@@ -68,6 +68,30 @@ echo 'testcontainers.reuse.enable=true' >> ~/.testcontainers.properties
 - **V1** — основная схема (7 таблиц, индексы, триггеры)
 - **V2** — сидинг 30 популярных видов растений в `species`
 
+## REST API
+
+Базовая инфраструктура REST API, доступна без аутентификации.
+
+| Путь | Описание |
+|---|---|
+| `GET /api/v1/health` | Liveness probe — возвращает `{"status":"UP"}` |
+| `/swagger-ui.html` | Swagger UI (OpenAPI 3) |
+| `/v3/api-docs` | OpenAPI JSON |
+
+Все ошибки `/api/**` возвращаются в едином формате:
+
+```json
+{
+  "error": {
+    "code": "NOT_FOUND",
+    "message": "Resource not found",
+    "details": null
+  }
+}
+```
+
+Поле `details` заполняется при ошибках валидации (`VALIDATION_ERROR`) — содержит список `[{"field": "...", "message": "..."}]`.
+
 ## Admin Panel
 
 Админка живёт на `/admin/**`. Логин/пароль из env-переменных:
