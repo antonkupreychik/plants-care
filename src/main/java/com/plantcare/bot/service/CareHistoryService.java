@@ -87,6 +87,23 @@ public class CareHistoryService {
     }
 
     /**
+     * Срез истории с реальным offset — для REST API (issue #86).
+     * Используется эндпоинтом GET /api/v1/plants/{id}/history?limit=N&offset=M.
+     *
+     * <p>Использует нативный SQL с LIMIT/OFFSET вместо page-based пагинации,
+     * чтобы offset=5, limit=20 возвращал записи 5-24, а не 0-19.
+     *
+     * @param plantId id растения
+     * @param offset  смещение от начала (0-based)
+     * @param limit   количество записей [1, 100]
+     */
+    @Transactional(readOnly = true)
+    public List<CareHistory> getHistoryPageWithLimit(Long plantId, int offset, int limit) {
+        int safeOffset = Math.max(0, offset);
+        return careHistoryRepository.findActiveByPlantIdWithRealOffset(plantId, limit, safeOffset);
+    }
+
+    /**
      * Сколько всего активных записей у растения — для пагинатора и для решения
      * показывать ли блок статистики (≥ MIN_ACTIONS_FOR_STATS).
      */

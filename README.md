@@ -67,16 +67,32 @@ echo 'testcontainers.reuse.enable=true' >> ~/.testcontainers.properties
 
 - **V1** — основная схема (7 таблиц, индексы, триггеры)
 - **V2** — сидинг 30 популярных видов растений в `species`
+- **V15** — добавляет `client_id VARCHAR(64) NULL` в `care_history` с partial unique index `WHERE client_id IS NOT NULL`. Колонка nullable — записи из Telegram-бота остаются с NULL без конфликтов
 
 ## REST API
 
-Базовая инфраструктура REST API, доступна без аутентификации.
+Идентификация пользователя во всех `/api/v1/**` эндпоинтах (кроме `/health`) — заголовок `X-Chat-Id: <telegramChatId>`.
 
-| Путь | Описание |
-|---|---|
-| `GET /api/v1/health` | Liveness probe — возвращает `{"status":"UP"}` |
-| `/swagger-ui.html` | Swagger UI (OpenAPI 3) |
-| `/v3/api-docs` | OpenAPI JSON |
+### Инфраструктура
+
+| Путь | Метод | Описание |
+|---|---|---|
+| `/api/v1/health` | `GET` | Liveness probe — возвращает `{"status":"UP"}` |
+| `/swagger-ui.html` | — | Swagger UI (OpenAPI 3) |
+| `/v3/api-docs` | — | OpenAPI JSON |
+
+### События ухода (issue #86)
+
+| Путь | Метод | Статус ответа | Описание |
+|---|---|---|---|
+| `/api/v1/care-events` | `POST` | 201 | Регистрация ухода (WATER/SPRAY/FERTILIZE). Поле `clientId` обеспечивает идемпотентность: повторный запрос с тем же `clientId` возвращает существующую запись без дублирования |
+| `/api/v1/care-events/{id}` | `DELETE` | 204 | Отмена события через compensation pattern: запись не удаляется физически, создаётся компенсирующая запись |
+| `/api/v1/plants/{id}/history` | `GET` | 200 | История ухода за растением с offset-пагинацией. Query params: `limit` [1–100], default 20; `offset`, default 0. Проверяет ownership растения |
+| `/api/v1/today` | `GET` | 200 | Задачи ухода на сегодня в таймзоне пользователя |
+| `/api/v1/calendar` | `GET` | 200 | Расписание за произвольный период. Query params: `from`, `to` (ISO date). Диапазон не более 60 дней. Дни без задач в ответ не включаются |
+| `/api/v1/stats/streak` | `GET` | 200 | Текущий стрик растения (последовательные выполнения без пропусков). Query param: `plantId` |
+
+### Формат ошибок
 
 Все ошибки `/api/**` возвращаются в едином формате:
 

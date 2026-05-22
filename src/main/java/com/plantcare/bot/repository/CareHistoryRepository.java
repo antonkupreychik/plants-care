@@ -75,4 +75,33 @@ public interface CareHistoryRepository extends JpaRepository<CareHistory, Long> 
      */
     long countByPlantIdAndTaskTypeAndDoneAtAfter(
             Long plantId, TaskType taskType, LocalDateTime after);
+
+    /**
+     * Поиск по client_id для идемпотентности REST API (issue #86).
+     * client_id генерирует мобильный клиент при POST /api/v1/care-events;
+     * повторный запрос с тем же client_id вернёт уже существующую запись.
+     */
+    Optional<CareHistory> findByClientId(String clientId);
+
+    /**
+     * Постраничный листинг истории с реальным offset (не page-based).
+     *
+     * <p>Используется REST API GET /api/v1/plants/{id}/history?limit=N&offset=M.
+     * Нативный запрос нужен потому, что Spring Data {@link org.springframework.data.domain.PageRequest}
+     * вычисляет смещение как page * size — при offset=5, limit=20 это даёт page=0, что неверно.
+     *
+     * @param plantId id растения
+     * @param limit   количество записей
+     * @param offset  смещение от начала (0-based)
+     * @return срез истории
+     */
+    @Query(value = "SELECT * FROM care_history h " +
+            "WHERE h.plant_id = :plantId AND h.cancelled_by IS NULL " +
+            "ORDER BY h.done_at DESC " +
+            "LIMIT :limit OFFSET :offset", nativeQuery = true)
+    List<CareHistory> findActiveByPlantIdWithRealOffset(
+            @Param("plantId") Long plantId,
+            @Param("limit") int limit,
+            @Param("offset") int offset
+    );
 }
