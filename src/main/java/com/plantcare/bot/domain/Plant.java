@@ -1,8 +1,11 @@
 package com.plantcare.bot.domain;
 
 import com.plantcare.bot.domain.base.BaseEntity;
+import com.plantcare.bot.domain.enums.PhotoProgressFrequency;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
@@ -71,6 +74,29 @@ public class Plant extends BaseEntity {
      */
     @Column(name = "acclimation_checkin_next_at")
     private LocalDateTime acclimationCheckinNextAt;
+
+    /**
+     * Фото-прогресс (issue #72): частота пушей «обнови фото».
+     * {@code OFF} (дефолт) — выключено. {@code P2W} — раз в 2 недели, {@code P1M} — раз в месяц.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "photo_progress_frequency", nullable = false, length = 8)
+    @Builder.Default
+    private PhotoProgressFrequency photoProgressFrequency = PhotoProgressFrequency.OFF;
+
+    /**
+     * Когда шедулер должен прислать следующий prompt «сделай фото».
+     * {@code null} — фото-прогресс выключен либо ещё не запланирован.
+     */
+    @Column(name = "next_photo_due_at")
+    private LocalDateTime nextPhotoDueAt;
+
+    /**
+     * Когда последний раз слали prompt. Используется как анти-спам в шедулере
+     * (не повторять prompt чаще раза в сутки на одно растение).
+     */
+    @Column(name = "last_photo_prompt_sent_at")
+    private LocalDateTime lastPhotoPromptSentAt;
 
     @OneToMany(mappedBy = "plant")
     @Builder.Default
