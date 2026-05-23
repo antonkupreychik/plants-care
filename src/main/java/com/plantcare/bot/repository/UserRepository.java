@@ -1,7 +1,9 @@
 package com.plantcare.bot.repository;
 
 import com.plantcare.bot.domain.User;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -15,6 +17,18 @@ public interface UserRepository extends JpaRepository<User, Long> {
     boolean existsByTelegramChatId(Long telegramChatId);
 
     Optional<User> findByTelegramChatId(Long telegramChatId);
+
+    /** Issue #79: lookup for public {@code GET /calendar/{token}.ics}. */
+    Optional<User> findByCalendarToken(String calendarToken);
+
+    /**
+     * Issue #79: pessimistic SELECT FOR UPDATE used during lazy calendar-token
+     * generation, чтобы два параллельных нажатия на кнопку «Экспорт» не
+     * сгенерили два разных токена для одного юзера.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT u FROM User u WHERE u.id = :id")
+    Optional<User> findByIdForUpdate(@Param("id") Long id);
 
     @Modifying
     @Query(value = """
