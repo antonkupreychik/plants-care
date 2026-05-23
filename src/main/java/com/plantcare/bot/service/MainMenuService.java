@@ -5,6 +5,7 @@ import com.plantcare.bot.domain.Location;
 import com.plantcare.bot.domain.User;
 import com.plantcare.bot.repository.CareScheduleRepository;
 import com.plantcare.bot.repository.PlantRepository;
+import com.plantcare.bot.util.TimezoneSupport;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -19,6 +20,7 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -29,6 +31,9 @@ import java.util.Map;
 @Service
 @RequiredArgsConstructor
 public class MainMenuService {
+
+    private static final DateTimeFormatter VACATION_DATE_FMT =
+            DateTimeFormatter.ofPattern("dd.MM");
 
     private final PlantRepository plantRepository;
     private final CareScheduleRepository careScheduleRepository;
@@ -51,11 +56,13 @@ public class MainMenuService {
         // короткие серии не должны давить на эго в духе "ваш стрик 1 день".
         int userStreak = careHistoryService.computeUserStreak(user.getId(), user.getTimezone());
 
+        boolean paused = user.isPaused();
+
         SendMessage message = SendMessage.builder()
                 .chatId(user.getTelegramChatId().toString())
-                .text(buildMenuText(plantCount, todaySchedules, locations, userStreak))
+                .text(buildMenuText(plantCount, todaySchedules, locations, userStreak, user, paused))
                 .parseMode("Markdown")
-                .replyMarkup(buildMenuKeyboard())
+                .replyMarkup(buildMenuKeyboard(paused))
                 .build();
 
         try {
@@ -70,11 +77,20 @@ public class MainMenuService {
             long plantCount,
             List<CareSchedule> todaySchedules,
             List<Location> locations,
-            int userStreak
+            int userStreak,
+            User user,
+            boolean paused
     ) {
         StringBuilder sb = new StringBuilder();
 
         sb.append("🏠 *Главное меню*\n\n");
+
+        // issue #53: баннер отпуска идёт первой строкой, чтобы юзер сразу видел статус.
+        if (paused) {
+            String date = TimezoneSupport.dateInUserZone(user.getPausedUntil(), user)
+                    .format(VACATION_DATE_FMT);
+            sb.append("🏖 *Отпуск до ").append(date).append("*\n\n");
+        }
 
         if (userStreak >= CareHistoryService.MIN_USER_STREAK_TO_SHOW) {
             sb.append("🔥 Твой стрик: ").append(userStreak).append(" ")
@@ -190,8 +206,20 @@ public class MainMenuService {
         };
     }
 
-    private InlineKeyboardMarkup buildMenuKeyboard() {
-        return InlineKeyboardMarkup.builder()
+    private InlineKeyboardMarkup buildMenuKeyboard(boolean paused) {
+        InlineKeyboardMarkup.InlineKeyboardMarkupBuilder builder = InlineKeyboardMarkup.builder();
+
+        // issue #53: верхняя строка-баннер с возвратом из отпуска, если активен.
+        if (paused) {
+            builder.keyboardRow(new InlineKeyboardRow(List.of(
+                    InlineKeyboardButton.builder()
+                            .text("🌿 Вернуться сейчас")
+                            .callbackData("MENU:VACATION_END")
+                            .build()
+            )));
+        }
+
+        builder
                 .keyboardRow(new InlineKeyboardRow(List.of(
                         InlineKeyboardButton.builder()
                                 .text("➕ Добавить растение")
@@ -217,8 +245,9 @@ public class MainMenuService {
                                 .text("⚙️ Настройки")
                                 .callbackData("MENU:SETTINGS")
                                 .build()
-                )))
-                .build();
+                )));
+
+        return builder.build();
     }
 
     private LocalDateTime getEndOfTodayInUtc(String timezone) {

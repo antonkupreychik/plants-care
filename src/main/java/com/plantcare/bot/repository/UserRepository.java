@@ -63,5 +63,46 @@ public interface UserRepository extends JpaRepository<User, Long> {
     /** Уникальные таймзоны для multi-select в форме рассылки. */
     @Query("SELECT DISTINCT u.timezone FROM User u WHERE u.blocked = false ORDER BY u.timezone")
     java.util.List<String> findDistinctTimezones();
+
+    // ===== Vacation mode (issue #53) =====
+
+    /**
+     * Юзеры, чей отпуск заканчивается в окне {@code [from; to)}. Окно
+     * полуоткрытое — чтобы при hourly-тике каждый юзер попал ровно один раз
+     * (см. VacationSchedulerService).
+     */
+    @Query("""
+        SELECT u FROM User u
+         WHERE u.blocked = false
+           AND u.pausedUntil IS NOT NULL
+           AND u.pausedUntil >= :from
+           AND u.pausedUntil < :to
+        """)
+    java.util.List<User> findVacationEndingBetween(
+            @Param("from") java.time.LocalDateTime from,
+            @Param("to") java.time.LocalDateTime to
+    );
+
+    /**
+     * Юзеры, у которых отпуск уже завершился (или вот-вот завершится) и кому
+     * нужно отправить «welcome back» + сбросить paused_until.
+     */
+    @Query("""
+        SELECT u FROM User u
+         WHERE u.blocked = false
+           AND u.pausedUntil IS NOT NULL
+           AND u.pausedUntil <= :now
+        """)
+    java.util.List<User> findVacationEnded(@Param("now") java.time.LocalDateTime now);
+
+    /**
+     * Issue #53: атомарно сбрасывает paused_until только если он ещё не null.
+     * Возвращает число обновлённых строк — 0 значит юзер уже вернулся сам
+     * («Вернуться сейчас») между findVacationEnded и обработкой, и
+     * welcome-back посылать НЕ надо (иначе будет дубль сообщения).
+     */
+    @Modifying
+    @Query("UPDATE User u SET u.pausedUntil = NULL WHERE u.id = :id AND u.pausedUntil IS NOT NULL")
+    int clearPausedUntilIfActive(@Param("id") Long id);
 }
 

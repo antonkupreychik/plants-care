@@ -40,5 +40,8 @@ public enum ConversationState {
     // Пользовательские шаблоны (issue #68)
     AWAITING_TEMPLATE_NAME,            // ввод имени при сохранении шаблона
     AWAITING_PLANT_NAME_FROM_TEMPLATE, // ввод имени растения при создании из шаблона
-    AWAITING_TEMPLATE_RENAME           // ввод нового имени при переименовании шаблона
+    AWAITING_TEMPLATE_RENAME,          // ввод нового имени при переименовании шаблона
+
+    // Отпуск (issue #53)
+    AWAITING_VACATION_DAYS             // ввод числа дней отпуска при выборе «Другое»
 }

@@ -117,4 +117,23 @@ public interface CareScheduleRepository extends JpaRepository<CareSchedule, Long
             @Param("locationId") Long locationId,
             @Param("taskType") TaskType taskType
     );
+
+    /**
+     * Все просроченные активные расписания юзера (issue #53, welcome-back список).
+     * JOIN FETCH plant — потому что в результирующем экране нужно имя растения,
+     * вне открытой сессии.
+     */
+    @Query("""
+        SELECT s FROM CareSchedule s
+        JOIN FETCH s.plant p
+        WHERE p.user.id = :userId
+          AND p.archivedAt IS NULL
+          AND s.active = true
+          AND s.nextDueAt <= :asOf
+        ORDER BY s.nextDueAt ASC
+        """)
+    List<CareSchedule> findOverdueForUser(
+            @Param("userId") Long userId,
+            @Param("asOf") LocalDateTime asOf
+    );
 }
