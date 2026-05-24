@@ -15,16 +15,15 @@ spring:
     hikari:
       maximum-pool-size: 10
       minimum-idle: 2
-
-app:
-  species:
-    search-limit: 5
-
-  # Issue #79: публичная подписка на .ics календарь.
-  calendar:
-    base-url: ${CALENDAR_BASE_URL:https://example.com}
-    event-window-days: 90
-
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+    # out-of-order=true: фича-ветки мерджатся в разном порядке, миграция
+    # с меньшим номером (V15) может прийти после уже применённой большей (V16).
+    # Без этого флага прод-Flyway откажется применять V15. Контент миграций
+    # независим друг от друга — порядок применения внутри одного релиза не критичен.
+    out-of-order: true
   jpa:
     open-in-view: false
     hibernate:
@@ -35,15 +34,14 @@ app:
           time_zone: UTC
         format_sql: false
 
-  flyway:
-    enabled: true
-    locations: classpath:db/migration
-    baseline-on-migrate: true
-    # out-of-order=true: фича-ветки мерджатся в разном порядке, миграция
-    # с меньшим номером (V15) может прийти после уже применённой большей (V16).
-    # Без этого флага прод-Flyway откажется применять V15. Контент миграций
-    # независим друг от друга — порядок применения внутри одного релиза не критичен.
-    out-of-order: true
+app:
+  species:
+    search-limit: 5
+
+  # Issue #79: публичная подписка на .ics календарь.
+  calendar:
+    base-url: ${CALENDAR_BASE_URL:https://example.com}
+    event-window-days: 90
 
 weather:
   cache-minutes: 60          # дефолт 60
@@ -107,3 +105,5 @@ logging:
   level:
     root: INFO
     com.plantcare.bot: DEBUG
+
+kind: Application
