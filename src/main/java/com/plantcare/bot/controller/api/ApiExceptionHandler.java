@@ -42,9 +42,15 @@ public class ApiExceptionHandler {
     }
 
     @ExceptionHandler(IllegalArgumentException.class)
-    public ResponseEntity<ApiErrorResponse> handleIllegalArgument(IllegalArgumentException e) {
+    public ResponseEntity<ApiErrorResponse> handleBadRequest(IllegalArgumentException e) {
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                 .body(ApiErrorResponse.of("BAD_REQUEST", e.getMessage()));
+    }
+
+    @ExceptionHandler(IllegalStateException.class)
+    public ResponseEntity<ApiErrorResponse> handleConflict(IllegalStateException e) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(ApiErrorResponse.of("CONFLICT", e.getMessage()));
     }
 
     @ExceptionHandler(RuntimeException.class)

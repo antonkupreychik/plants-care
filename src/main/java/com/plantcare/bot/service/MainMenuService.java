@@ -5,6 +5,7 @@ import com.plantcare.bot.domain.Location;
 import com.plantcare.bot.domain.User;
 import com.plantcare.bot.repository.CareScheduleRepository;
 import com.plantcare.bot.repository.PlantRepository;
+import com.plantcare.bot.util.TimeUtils;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -15,10 +16,8 @@ import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKe
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 import org.telegram.telegrambots.meta.generics.TelegramClient;
 
+import java.time.Clock;
 import java.time.LocalDateTime;
-import java.time.LocalTime;
-import java.time.ZoneId;
-import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -34,11 +33,12 @@ public class MainMenuService {
     private final CareScheduleRepository careScheduleRepository;
     private final LocationService locationService;
     private final CareHistoryService careHistoryService;
+    private final Clock clock;
 
     public void sendMainMenu(User user, TelegramClient client) {
         long plantCount = plantRepository.countByUserIdAndArchivedAtIsNull(user.getId());
 
-        LocalDateTime endOfTodayUtc = getEndOfTodayInUtc(user.getTimezone());
+        LocalDateTime endOfTodayUtc = TimeUtils.endOfTodayInUtc(user.getTimezone(), clock);
 
         List<CareSchedule> todaySchedules = careScheduleRepository.findUserSchedulesDueBefore(
                 user.getId(),
@@ -221,21 +221,4 @@ public class MainMenuService {
                 .build();
     }
 
-    private LocalDateTime getEndOfTodayInUtc(String timezone) {
-        ZoneId userZone;
-
-        try {
-            userZone = ZoneId.of(timezone);
-        } catch (Exception e) {
-            log.warn("Invalid timezone '{}', defaulting to UTC", timezone);
-            userZone = ZoneId.of("UTC");
-        }
-
-        ZonedDateTime endOfDay = ZonedDateTime.now(userZone)
-                .toLocalDate()
-                .atTime(LocalTime.of(23, 59, 59))
-                .atZone(userZone);
-
-        return endOfDay.withZoneSameInstant(ZoneId.of("UTC")).toLocalDateTime();
-    }
 }
