@@ -250,7 +250,24 @@ CSRF и session для этого chain выключены: scrape — machine-t
 
 Полный контракт имён и тегов — в `MetricsService` (константы и enum'ы `FailureReason` / `TelegramErrorCode` / `CallbackOutcome`). Whitelist допустимых `action`-тегов для `callbacks.processed` лежит в `MetricsService.KNOWN_CALLBACK_ACTIONS`; при добавлении нового callback-action в хендлерах его надо туда же.
 
-Настройка самого Prometheus-сервера, Grafana-дашбордов и алертов — вне scope этого PR.
+### Grafana dashboard
+
+Преднастроенный дашборд для импорта: [`grafana/plants-care-dashboard.json`](grafana/plants-care-dashboard.json).
+
+**Содержимое:** 16 панелей в 5 секциях (Users, Notifications, Callbacks, Scheduler, опционально JVM/HTTP).
+
+**Импорт:**
+1. В Grafana: **Dashboards → New → Import → Upload JSON file**, выбрать `grafana/plants-care-dashboard.json`.
+2. В выпадающем списке `Prometheus data source` (переменная вверху дашборда) выбрать твой Prometheus.
+3. Save.
+
+**Тонкости:**
+- Дашборд работает с Prometheus-style именами метрик (`notifications_sent_total` и т.п.) — стандартное поведение `micrometer-registry-prometheus`.
+- Процентили `scheduler.tick.duration` (p50/p95/p99) считаются через `histogram_quantile` поверх buckets — публикация histogram включена программно (`Timer.builder(...).publishPercentileHistogram()` в `MetricsService`), доп. конфиг в `application.yml` не нужен.
+- Секция JVM & HTTP свёрнута по умолчанию — это default Micrometer-метрики, всегда доступны.
+- Алерты в дашборде не зашиты. Прометей-side rule'ы (например, на `failure_rate > 5%` или `telegram_api_errors{code="429"} > N`) лучше держать отдельно.
+
+Настройка самого Prometheus-сервера и алертов — вне scope этого PR.
 
 ## Деплой на Railway
 
