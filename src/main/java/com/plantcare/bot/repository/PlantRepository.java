@@ -83,4 +83,26 @@ public interface PlantRepository extends JpaRepository<Plant, Long> {
               AND p.acclimationCheckinNextAt <= :now
             """)
     List<Plant> findPendingAcclimationCheckin(@Param("now") java.time.LocalDateTime now);
+
+    /**
+     * Фото-прогресс (issue #72): растения, которым пора слать prompt «обнови фото».
+     * Условия:
+     *   - не архивные;
+     *   - фото-прогресс включён ({@code photoProgressFrequency <> OFF});
+     *   - {@code next_photo_due_at} ≤ {@code until} (запас вперёд берётся в шедулере);
+     *   - дедуп: {@code last_photo_prompt_sent_at IS NULL} либо старше {@code dedupBefore}.
+     */
+    @Query("""
+            SELECT p FROM Plant p
+            JOIN FETCH p.user u
+            WHERE p.archivedAt IS NULL
+              AND p.photoProgressFrequency <> com.plantcare.bot.domain.enums.PhotoProgressFrequency.OFF
+              AND p.nextPhotoDueAt IS NOT NULL
+              AND p.nextPhotoDueAt <= :until
+              AND (p.lastPhotoPromptSentAt IS NULL OR p.lastPhotoPromptSentAt < :dedupBefore)
+            """)
+    List<Plant> findPhotoProgressDue(
+            @Param("until") java.time.LocalDateTime until,
+            @Param("dedupBefore") java.time.LocalDateTime dedupBefore
+    );
 }

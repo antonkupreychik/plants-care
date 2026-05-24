@@ -1262,6 +1262,16 @@ public class PlantCardService {
                 .build());
         rows.add(eventsRow);
 
+        // 2b') Фото-прогресс (issue #72). Отдельный ряд между Events и Acclimation —
+        // экран фото-прогресса не сохраняет back-контекст «комнаты», его всегда
+        // ведём на PLANT:VIEW.
+        InlineKeyboardRow photoProgressRow = new InlineKeyboardRow();
+        photoProgressRow.add(InlineKeyboardButton.builder()
+                .text("📸 Фото-прогресс")
+                .callbackData("PHOTO_PROGRESS:VIEW:" + plant.getId())
+                .build());
+        rows.add(photoProgressRow);
+
         // 2c) Кнопка выключения акклиматизации (issue #75) — показываем только если режим активен.
         if (plant.isInAcclimation(LocalDateTime.now())) {
             rows.add(new InlineKeyboardRow(List.of(
