@@ -94,6 +94,28 @@ echo 'testcontainers.reuse.enable=true' >> ~/.testcontainers.properties
 
 ### Формат ошибок
 
+### Plants
+
+| Метод | Путь | Описание |
+|---|---|---|
+| `GET` | `/api/v1/plants` | Список растений. Параметры: `locationId` (фильтр), `offset` (по умолч. 0), `limit` (по умолч. 20, макс. 100) |
+| `GET` | `/api/v1/plants/{id}` | Одно растение |
+| `POST` | `/api/v1/plants` | Создать растение (без расписания полива) |
+| `PUT` | `/api/v1/plants/{id}` | Обновить растение. PATCH-семантика: обновляются только переданные поля (`name`, `notes`, `locationId`) |
+| `DELETE` | `/api/v1/plants/{id}` | Soft-delete: выставляет `archivedAt`, из выборок не возвращается |
+
+### Locations
+
+| Метод | Путь | Описание |
+|---|---|---|
+| `GET` | `/api/v1/locations` | Список всех локаций пользователя |
+| `GET` | `/api/v1/locations/{id}` | Одна локация |
+| `POST` | `/api/v1/locations` | Создать локацию |
+| `PUT` | `/api/v1/locations/{id}` | Обновить имя и/или emoji |
+| `DELETE` | `/api/v1/locations/{id}` | Удалить локацию. Если в ней есть растения, обязателен параметр `targetLocationId` — растения переносятся в указанную локацию перед удалением |
+
+### Формат ошибок
+
 Все ошибки `/api/**` возвращаются в едином формате:
 
 ```json
