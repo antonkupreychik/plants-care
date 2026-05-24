@@ -15,6 +15,7 @@ import org.telegram.telegrambots.meta.api.objects.Update;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 import org.telegram.telegrambots.meta.generics.TelegramClient;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.Map;
 
@@ -108,6 +109,7 @@ public class AwaitingPlantRoomStateHandler implements StateHandler {
         String intervalDaysStr = (String) stateData.get("interval_days");
         String plantName = (String) stateData.get("plant_name");
         String nextDueAtStr = (String) stateData.get("next_due_at");
+        String acquiredAtStr = (String) stateData.get("acquired_at");
 
         Long speciesId = null;
         if (speciesIdStr != null && !speciesIdStr.isBlank() && !"null".equals(speciesIdStr)) {
@@ -116,6 +118,23 @@ public class AwaitingPlantRoomStateHandler implements StateHandler {
 
         Integer intervalDays = Integer.parseInt(intervalDaysStr);
         LocalDateTime nextDueAt = LocalDateTime.parse(nextDueAtStr);
+        LocalDate acquiredAt = (acquiredAtStr == null || acquiredAtStr.isBlank())
+                ? null
+                : LocalDate.parse(acquiredAtStr);
+
+        // Если юзер не ввёл/пропустил acquired_at — используем старый
+        // 6-аргументный overload (он не пишет acquiredAt в plant). Это исключает
+        // лишний параметр в самом частом сценарии.
+        if (acquiredAt == null) {
+            return plantService.createPlantWithWateringSchedule(
+                    user,
+                    speciesId,
+                    plantName,
+                    intervalDays,
+                    nextDueAt,
+                    locationId
+            );
+        }
 
         return plantService.createPlantWithWateringSchedule(
                 user,
@@ -123,7 +142,8 @@ public class AwaitingPlantRoomStateHandler implements StateHandler {
                 plantName,
                 intervalDays,
                 nextDueAt,
-                locationId
+                locationId,
+                acquiredAt
         );
     }
 

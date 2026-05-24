@@ -59,40 +59,53 @@ public class AwaitingPlantNameStateHandler implements StateHandler {
         log.info("User {} named plant '{}'", chatId, plantName);
         userService.setStateData(user, "plant_name", plantName);
 
-        // Переходим к вопросу о последнем поливе
-        userService.updateState(user, ConversationState.AWAITING_PLANT_LAST_WATERED);
+        // issue #117: между именем и расписанием — шаг «когда завёл растение?».
+        // Пользователь выбирает один из пресетов кнопкой или вводит дату вручную.
+        userService.updateState(user, ConversationState.AWAITING_PLANT_ACQUIRED_CHOICE);
 
         SendMessage message = SendMessage.builder()
                 .chatId(chatId.toString())
-                .text("💧 Когда ты в последний раз поливал(а) " + plantName + "?")
-                .replyMarkup(buildLastWateredKeyboard())
+                .text("🌱 Когда ты завёл " + plantName + "? Можно пропустить.")
+                .replyMarkup(buildAcquiredChoiceKeyboard())
                 .build();
 
         try {
             client.execute(message);
         } catch (TelegramApiException e) {
-            log.error("Failed to send last watered question", e);
+            log.error("Failed to send acquired-date question", e);
         }
     }
 
-    private InlineKeyboardMarkup buildLastWateredKeyboard() {
+    private InlineKeyboardMarkup buildAcquiredChoiceKeyboard() {
         return InlineKeyboardMarkup.builder()
                 .keyboardRow(new InlineKeyboardRow(List.of(
                         InlineKeyboardButton.builder()
-                                .text("📅 Сегодня")
-                                .callbackData("LAST_WATERED:TODAY")
+                                .text("Сегодня")
+                                .callbackData("ACQUIRED:TODAY")
                                 .build()
                 )))
                 .keyboardRow(new InlineKeyboardRow(List.of(
                         InlineKeyboardButton.builder()
-                                .text("📅 Вчера")
-                                .callbackData("LAST_WATERED:YESTERDAY")
+                                .text("На этой неделе")
+                                .callbackData("ACQUIRED:WEEK")
                                 .build()
                 )))
                 .keyboardRow(new InlineKeyboardRow(List.of(
                         InlineKeyboardButton.builder()
-                                .text("❓ Не помню")
-                                .callbackData("LAST_WATERED:FORGOTTEN")
+                                .text("Месяц назад")
+                                .callbackData("ACQUIRED:MONTH")
+                                .build()
+                )))
+                .keyboardRow(new InlineKeyboardRow(List.of(
+                        InlineKeyboardButton.builder()
+                                .text("Давно (укажу)")
+                                .callbackData("ACQUIRED:MANUAL")
+                                .build()
+                )))
+                .keyboardRow(new InlineKeyboardRow(List.of(
+                        InlineKeyboardButton.builder()
+                                .text("Пропустить")
+                                .callbackData("ACQUIRED:SKIP")
                                 .build()
                 )))
                 .build();

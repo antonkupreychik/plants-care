@@ -22,6 +22,7 @@ import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -219,6 +220,25 @@ public class PlantService {
             LocalDateTime nextDueAt,
             Long locationId
     ) {
+        return createPlantWithWateringSchedule(
+                user, speciesId, name, intervalDays, nextDueAt, locationId, null);
+    }
+
+    /**
+     * Создать новое растение с расписанием полива, конкретной локацией и
+     * датой «когда юзер завёл растение» (issue #117).
+     * {@code acquiredAt} = {@code null} — юзер пропустил шаг или ввёл некорректные данные.
+     */
+    @Transactional
+    public Plant createPlantWithWateringSchedule(
+            User user,
+            Long speciesId,
+            String name,
+            Integer intervalDays,
+            LocalDateTime nextDueAt,
+            Long locationId,
+            LocalDate acquiredAt
+    ) {
         Species species = speciesId != null
                 ? speciesRepository.findById(speciesId).orElse(null)
                 : null;
@@ -227,6 +247,7 @@ public class PlantService {
                 .user(user)
                 .species(species)
                 .name(name)
+                .acquiredAt(acquiredAt)
                 .location(locationId != null
                         ? locationService.getLocation(user.getId(), locationId)
                         : locationService.getOrCreateDefaultLocation(user))

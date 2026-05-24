@@ -77,6 +77,18 @@ public interface CareHistoryRepository extends JpaRepository<CareHistory, Long> 
             Long plantId, TaskType taskType, LocalDateTime after);
 
     /**
+     * Сколько раз растению делали задачу за всё время (issue #117 — статистика
+     * в карточке архива «N поливов за M месяцев», тексте годовщины
+     * «полил её N раз»). Активные (не-cancelled) записи.
+     */
+    @Query("SELECT COUNT(h) FROM CareHistory h " +
+            "WHERE h.plant.id = :plantId AND h.taskType = :taskType " +
+            "AND h.cancelledBy IS NULL")
+    long countActiveByPlantIdAndTaskType(
+            @Param("plantId") Long plantId,
+            @Param("taskType") TaskType taskType);
+
+    /**
      * Поиск по client_id для идемпотентности REST API (issue #86).
      * client_id генерирует мобильный клиент при POST /api/v1/care-events;
      * повторный запрос с тем же client_id вернёт уже существующую запись.

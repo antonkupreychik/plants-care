@@ -171,7 +171,9 @@ class PlantCreationStateHandlerTests {
         handler.handle(testUser, update, telegramClient);
 
         verify(userService).setStateData(testUser, "plant_name", "Монстера в гостиной");
-        verify(userService).updateState(testUser, ConversationState.AWAITING_PLANT_LAST_WATERED);
+        // issue #117: после имени флоу идёт через шаг «когда завёл?», а не сразу
+        // на последний полив.
+        verify(userService).updateState(testUser, ConversationState.AWAITING_PLANT_ACQUIRED_CHOICE);
         verify(telegramClient).execute(any(SendMessage.class));
     }
 
