@@ -8,8 +8,11 @@ import com.plantcare.bot.domain.enums.ConversationState;
 import com.plantcare.bot.service.MenuCallbackService;
 import com.plantcare.bot.service.NotificationCallbackService;
 import com.plantcare.bot.service.NotificationDigestCallbackService;
+import com.plantcare.bot.observability.SentryTags;
+import com.plantcare.bot.observability.SentryTags.Layer;
 import com.plantcare.bot.service.UserService;
 import com.plantcare.bot.state.StateResolver;
+import io.sentry.Sentry;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -76,6 +79,19 @@ public class PlantsCareBot implements LongPollingSingleThreadUpdateConsumer, Tel
             return;
         }
 
+        // Issue #114: обработку ОДНОГО апдейта оборачиваем в изолированный scope.
+        // poll-поток Telegram — shared (один на бота): без withScope теги layer/chat_id
+        // от предыдущего апдейта прилипли бы к событию следующего юзера. withScope
+        // клонирует scope, проставляет теги локально и откатывает после апдейта.
+        // chat_id хешируется в SentryPiiFilter перед отправкой.
+        Sentry.withScope(scope -> {
+            SentryTags.mark(scope, Layer.TELEGRAM, "PlantsCareBot");
+            scope.setTag("chat_id", String.valueOf(chatId));
+            handleUpdate(update, chatId);
+        });
+    }
+
+    private void handleUpdate(Update update, Long chatId) {
         try {
             if (update.hasCallbackQuery()) {
                 String data = update.getCallbackQuery().getData();
@@ -138,6 +154,15 @@ public class PlantsCareBot implements LongPollingSingleThreadUpdateConsumer, Tel
             }
         } catch (Exception e) {
             log.error("Failed to consume update for chatId={}", chatId, e);
+            // Issue #114: ЕДИНСТВЕННАЯ точка capture для poll-потока Telegram.
+            // sentry-spring-boot-starter перехватывает только необработанные
+            // исключения MVC (@RestControllerAdvice / DispatcherServlet) — poll-поток
+            // он НЕ видит. Все исключения обработки апдейта (в т.ч. из
+            // NotificationCallbackService) глотаются здесь, чтобы не уронить поток, —
+            // поэтому репортим явно. НЕ добавлять второй capture выше по стеку: будет
+            // дубль события. captureException вызван внутри withScope из consume() —
+            // теги layer=telegram/chat_id проставлены корректно.
+            Sentry.captureException(e);
         }
     }
 

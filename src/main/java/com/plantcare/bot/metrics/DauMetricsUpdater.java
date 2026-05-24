@@ -1,6 +1,9 @@
 package com.plantcare.bot.metrics;
 
+import com.plantcare.bot.observability.SentryTags;
+import com.plantcare.bot.observability.SentryTags.Layer;
 import com.plantcare.bot.repository.CareHistoryRepository;
+import io.sentry.Sentry;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -51,6 +54,7 @@ public class DauMetricsUpdater {
             // Не валим контекст из-за метрики. Просто оставляем 0,
             // следующий @Scheduled-тик переcчитает.
             log.warn("Initial DAU refresh failed, will retry on schedule: {}", e.getMessage());
+            Sentry.captureException(e);
         }
     }
 
@@ -61,9 +65,13 @@ public class DauMetricsUpdater {
     @Scheduled(cron = "0 0 * * * *", zone = "UTC")
     @Transactional(readOnly = true)
     public void refresh() {
-        LocalDateTime cutoff = LocalDateTime.now(clock).minusHours(WINDOW_HOURS);
-        long dau = careHistoryRepository.countDistinctActiveUsersSince(cutoff);
-        metricsService.updateActiveDau(dau);
-        log.info("DAU updated: {} active users in last {}h (cutoff={})", dau, WINDOW_HOURS, cutoff);
+        // Issue #114: изолированный scope на тик — тег layer не течёт на соседние
+        // задачи shared-потока @Scheduled.
+        SentryTags.runWithLayer(Layer.SCHEDULER, "DauMetricsUpdater", () -> {
+            LocalDateTime cutoff = LocalDateTime.now(clock).minusHours(WINDOW_HOURS);
+            long dau = careHistoryRepository.countDistinctActiveUsersSince(cutoff);
+            metricsService.updateActiveDau(dau);
+            log.info("DAU updated: {} active users in last {}h (cutoff={})", dau, WINDOW_HOURS, cutoff);
+        });
     }
 }

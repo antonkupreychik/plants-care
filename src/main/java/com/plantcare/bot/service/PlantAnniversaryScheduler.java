@@ -1,7 +1,10 @@
 package com.plantcare.bot.service;
 
 import com.plantcare.bot.client.TelegramClientProvider;
+import com.plantcare.bot.observability.SentryTags;
+import com.plantcare.bot.observability.SentryTags.Layer;
 import com.plantcare.bot.repository.UserRepository;
+import io.sentry.Sentry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -57,35 +60,40 @@ public class PlantAnniversaryScheduler {
      */
     @Scheduled(cron = "0 5 * * * *", zone = "UTC")
     public void tick() {
-        Instant now = clock.instant();
-        List<PlantAnniversaryService.Anniversary> due =
-                plantAnniversaryService.findDueAnniversaries(now);
+        // Issue #114: изолированный scope на тик — captureException внутри получит
+        // тег layer=scheduler, и он не утечёт на соседние задачи shared-потока.
+        SentryTags.runWithLayer(Layer.SCHEDULER, "PlantAnniversaryScheduler", () -> {
+            Instant now = clock.instant();
+            List<PlantAnniversaryService.Anniversary> due =
+                    plantAnniversaryService.findDueAnniversaries(now);
 
-        if (due.isEmpty()) {
-            return;
-        }
-        log.info("Anniversary tick: {} candidates found", due.size());
-
-        for (PlantAnniversaryService.Anniversary anniversary : due) {
-            try {
-                if (!isMorningInUserZone(anniversary.userId(), now)) {
-                    continue;
-                }
-                if (sendAnniversary(anniversary)) {
-                    plantAnniversaryService.markSent(
-                            anniversary.plantId(),
-                            anniversary.anniversaryYear(),
-                            now);
-                    log.info("Anniversary sent: plant={} years={} user={}",
-                            anniversary.plantId(),
-                            anniversary.yearsOld(),
-                            anniversary.telegramChatId());
-                }
-            } catch (Exception e) {
-                log.error("Failed to handle anniversary for plant {}: {}",
-                        anniversary.plantId(), e.getMessage(), e);
+            if (due.isEmpty()) {
+                return;
             }
-        }
+            log.info("Anniversary tick: {} candidates found", due.size());
+
+            for (PlantAnniversaryService.Anniversary anniversary : due) {
+                try {
+                    if (!isMorningInUserZone(anniversary.userId(), now)) {
+                        continue;
+                    }
+                    if (sendAnniversary(anniversary)) {
+                        plantAnniversaryService.markSent(
+                                anniversary.plantId(),
+                                anniversary.anniversaryYear(),
+                                now);
+                        log.info("Anniversary sent: plant={} years={} user={}",
+                                anniversary.plantId(),
+                                anniversary.yearsOld(),
+                                anniversary.telegramChatId());
+                    }
+                } catch (Exception e) {
+                    log.error("Failed to handle anniversary for plant {}: {}",
+                            anniversary.plantId(), e.getMessage(), e);
+                    Sentry.captureException(e);
+                }
+            }
+        });
     }
 
     /**

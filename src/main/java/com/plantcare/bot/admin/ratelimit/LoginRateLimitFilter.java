@@ -1,5 +1,7 @@
 package com.plantcare.bot.admin.ratelimit;
 
+import com.plantcare.bot.observability.SentryTags;
+import com.plantcare.bot.observability.SentryTags.Layer;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -33,9 +35,20 @@ public class LoginRateLimitFilter extends OncePerRequestFilter {
                 && "/admin/login".equals(request.getRequestURI());
 
         if (isLoginPost) {
-            String ip = request.getRemoteAddr();
-            if (rateLimiter.isBlocked(ip)) {
-                log.warn("Admin login rate-limit triggered: ip={}", ip);
+            // Issue #114: тег layer=admin на изолированном scope только на время
+            // rate-check. На HTTP-потоке scope push/pop'ает Sentry-ContextWebFilter,
+            // но withScope гарантирует, что admin-тег не утечёт за пределы фильтра
+            // даже если порядок фильтров изменится. Возвращаем флаг «заблокировано»,
+            // чтобы short-circuit 429 действительно прервал цепочку.
+            boolean blocked = SentryTags.callWithLayer(Layer.ADMIN, "LoginRateLimitFilter", () -> {
+                String ip = request.getRemoteAddr();
+                if (rateLimiter.isBlocked(ip)) {
+                    log.warn("Admin login rate-limit triggered: ip={}", ip);
+                    return true;
+                }
+                return false;
+            });
+            if (blocked) {
                 response.setStatus(429);
                 response.setHeader("Retry-After", "60");
                 response.getWriter().write("Too many login attempts. Try again in a minute.");
