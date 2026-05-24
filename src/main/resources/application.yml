@@ -1,6 +1,10 @@
 spring:
   application:
     name: plants-care
+  messages:
+    basename: messages
+    encoding: UTF-8
+    fallback-to-system-locale: false
   datasource:
     # Локально читается DB_URL/DB_USERNAME/DB_PASSWORD.
     # На Railway автоматически проставляются PGHOST/PGPORT/PGDATABASE/PGUSER/PGPASSWORD,

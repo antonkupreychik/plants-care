@@ -4,6 +4,7 @@ import com.plantcare.bot.command.interfaces.BotCommand;
 import com.plantcare.bot.domain.Species;
 import com.plantcare.bot.domain.User;
 import com.plantcare.bot.domain.enums.ConversationState;
+import com.plantcare.bot.service.MessageService;
 import com.plantcare.bot.service.PlantService;
 import com.plantcare.bot.service.UserService;
 import lombok.RequiredArgsConstructor;
@@ -26,6 +27,7 @@ public class AddPlantCommand implements BotCommand {
 
     private final UserService userService;
     private final PlantService plantService;
+    private final MessageService messageService;
 
     @Override
     public String getCommandName() {
@@ -46,9 +48,8 @@ public class AddPlantCommand implements BotCommand {
 
         SendMessage message = SendMessage.builder()
                 .chatId(chatId.toString())
-                .text("🌿 Давай добавим новое растение!\n\n" +
-                        "Что за растение? Вот популярные виды:")
-                .replyMarkup(buildSpeciesKeyboard(popular))
+                .text(messageService.get(chatId, "command.add.prompt"))
+                .replyMarkup(buildSpeciesKeyboard(chatId, popular))
                 .build();
 
         try {
@@ -59,7 +60,7 @@ public class AddPlantCommand implements BotCommand {
         }
     }
 
-    private InlineKeyboardMarkup buildSpeciesKeyboard(List<Species> species) {
+    private InlineKeyboardMarkup buildSpeciesKeyboard(Long chatId, List<Species> species) {
         InlineKeyboardMarkup.InlineKeyboardMarkupBuilder<?, ?> builder = InlineKeyboardMarkup.builder();
 
         // Популярные виды (по 2 в ряду)
@@ -86,21 +87,21 @@ public class AddPlantCommand implements BotCommand {
         // Дополнительные опции
         builder.keyboardRow(new InlineKeyboardRow(List.of(
                 InlineKeyboardButton.builder()
-                        .text("⭐ Из моих шаблонов")
+                        .text(messageService.get(chatId, "command.add.button.my_templates"))
                         .callbackData("SPECIES:MY_TEMPLATES")
                         .build()
         )));
 
         builder.keyboardRow(new InlineKeyboardRow(List.of(
                 InlineKeyboardButton.builder()
-                        .text("🔍 Поиск")
+                        .text(messageService.get(chatId, "command.add.button.search"))
                         .callbackData("SPECIES:SEARCH")
                         .build()
         )));
 
         builder.keyboardRow(new InlineKeyboardRow(List.of(
                 InlineKeyboardButton.builder()
-                        .text("✨ Своё без шаблона")
+                        .text(messageService.get(chatId, "command.add.button.custom"))
                         .callbackData("SPECIES:CUSTOM")
                         .build()
         )));

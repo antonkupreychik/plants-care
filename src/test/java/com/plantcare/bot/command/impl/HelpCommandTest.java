@@ -1,5 +1,6 @@
 package com.plantcare.bot.command.impl;
 
+import com.plantcare.bot.service.MessageService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -18,6 +19,8 @@ import org.telegram.telegrambots.meta.generics.TelegramClient;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -25,9 +28,22 @@ import static org.mockito.Mockito.*;
 @DisplayName("Unit-тесты для HelpCommand (/help)")
 class HelpCommandTest {
 
+    private static final String HELP_TEXT = """
+            🌿 *Plants Care Bot — Помощь*
+
+            Доступные команды:
+            /start — Начать или вернуться в главное меню
+            /menu — Главное меню (растения + задачи на сегодня)
+            /add — Добавить новое растение
+            /calendar — Календарь ухода на неделю вперёд
+            /cancel — Отменить текущее действие
+            /help — Эта справка
+            """;
+
     @Mock private TelegramClient telegramClient;
     @Mock private Update update;
     @Mock private Message message;
+    @Mock private MessageService messageService;
 
     @InjectMocks
     private HelpCommand helpCommand;
@@ -38,6 +54,7 @@ class HelpCommandTest {
     void setUp() {
         when(update.getMessage()).thenReturn(message);
         when(message.getChatId()).thenReturn(chatId);
+        when(messageService.get(anyLong(), eq("command.help.text"))).thenReturn(HELP_TEXT);
     }
 
     @Test

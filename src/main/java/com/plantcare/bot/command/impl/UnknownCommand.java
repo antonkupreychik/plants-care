@@ -1,6 +1,8 @@
 package com.plantcare.bot.command.impl;
 
 import com.plantcare.bot.command.interfaces.BotCommand;
+import com.plantcare.bot.service.MessageService;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
@@ -10,7 +12,10 @@ import org.telegram.telegrambots.meta.generics.TelegramClient;
 
 @Slf4j
 @Component
+@RequiredArgsConstructor
 public class UnknownCommand implements BotCommand {
+
+    private final MessageService messageService;
 
     @Override
     public String getCommandName() {
@@ -23,7 +28,7 @@ public class UnknownCommand implements BotCommand {
 
         SendMessage message = SendMessage.builder()
                 .chatId(chatId.toString())
-                .text("Извини, я не знаю такой команды. Попробуй /help.")
+                .text(messageService.get(chatId, "command.unknown.text"))
                 .build();
 
         try {
