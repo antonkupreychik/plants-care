@@ -47,6 +47,12 @@ public class ApiExceptionHandler {
                 .body(ApiErrorResponse.of("BAD_REQUEST", e.getMessage()));
     }
 
+    @ExceptionHandler(LocationNotEmptyException.class)
+    public ResponseEntity<ApiErrorResponse> handleLocationNotEmpty(LocationNotEmptyException e) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(ApiErrorResponse.of("LOCATION_NOT_EMPTY", e.getMessage()));
+    }
+
     @ExceptionHandler(IllegalStateException.class)
     public ResponseEntity<ApiErrorResponse> handleConflict(IllegalStateException e) {
         return ResponseEntity.status(HttpStatus.CONFLICT)

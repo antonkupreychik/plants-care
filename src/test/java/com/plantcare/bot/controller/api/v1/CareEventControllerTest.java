@@ -3,8 +3,8 @@ package com.plantcare.bot.controller.api.v1;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.plantcare.bot.controller.api.ApiExceptionHandler;
 import com.plantcare.bot.controller.api.UserApiResolver;
-import com.plantcare.bot.controller.api.v1.dto.CareEventType;
-import com.plantcare.bot.controller.api.v1.dto.CreateCareEventRequest;
+import com.plantcare.bot.api.generated.model.CareEventType;
+import com.plantcare.bot.api.generated.model.CreateCareEventRequest;
 import com.plantcare.bot.domain.CareHistory;
 import com.plantcare.bot.domain.Plant;
 import com.plantcare.bot.domain.User;
@@ -22,6 +22,8 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -72,7 +74,7 @@ class CareEventControllerTest {
                 .thenReturn(stubbedHistory);
 
         CreateCareEventRequest request = new CreateCareEventRequest(
-                10L, CareEventType.WATER, Instant.parse("2026-05-22T10:00:00Z"), null, null);
+                10L, CareEventType.WATER, OffsetDateTime.parse("2026-05-22T10:00:00Z"));
 
         // act + assert
         mockMvc.perform(post("/api/v1/care-events")
@@ -91,7 +93,7 @@ class CareEventControllerTest {
     void should_return_400_when_x_chat_id_header_missing() throws Exception {
         // arrange
         CreateCareEventRequest request = new CreateCareEventRequest(
-                10L, CareEventType.WATER, Instant.now(), null, null);
+                10L, CareEventType.WATER, OffsetDateTime.now(ZoneOffset.UTC));
 
         // act + assert — X-Chat-Id header отсутствует
         mockMvc.perform(post("/api/v1/care-events")
@@ -150,7 +152,7 @@ class CareEventControllerTest {
                 .thenThrow(new EntityNotFoundException("Plant not found: id=99 for userId=42"));
 
         CreateCareEventRequest request = new CreateCareEventRequest(
-                99L, CareEventType.WATER, Instant.now(), null, null);
+                99L, CareEventType.WATER, OffsetDateTime.now(ZoneOffset.UTC));
 
         // act + assert
         mockMvc.perform(post("/api/v1/care-events")

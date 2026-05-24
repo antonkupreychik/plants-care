@@ -48,12 +48,12 @@ class SpeciesControllerTest {
         // act + assert
         mockMvc.perform(get("/api/v1/species"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.content").isArray())
-                .andExpect(jsonPath("$.content[0].id").value(1))
-                .andExpect(jsonPath("$.content[0].name").value("Монстера"))
-                .andExpect(jsonPath("$.page").value(0))
-                .andExpect(jsonPath("$.size").value(20))
-                .andExpect(jsonPath("$.totalElements").value(1));
+                .andExpect(jsonPath("$.items").isArray())
+                .andExpect(jsonPath("$.items[0].id").value(1))
+                .andExpect(jsonPath("$.items[0].name").value("Монстера"))
+                .andExpect(jsonPath("$.offset").value(0))
+                .andExpect(jsonPath("$.limit").value(20))
+                .andExpect(jsonPath("$.total").value(1));
     }
 
     @Test
@@ -66,7 +66,7 @@ class SpeciesControllerTest {
         // act + assert
         mockMvc.perform(get("/api/v1/species").param("q", "роза"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.content[0].name").value("Роза чайная"));
+                .andExpect(jsonPath("$.items[0].name").value("Роза чайная"));
 
         verify(speciesService).findPage(eq("роза"), any(Pageable.class));
     }
@@ -107,10 +107,12 @@ class SpeciesControllerTest {
         Page<Species> page = new PageImpl<>(List.of(), cappedPageable, 0);
         when(speciesService.findPage(any(), any(Pageable.class))).thenReturn(page);
 
-        // act + assert
-        mockMvc.perform(get("/api/v1/species").param("size", "200"))
+        // act + assert — query-параметр унифицирован: limit (вместо size). Сервер обрезает до 100.
+        // Bean Validation в сгенерированном интерфейсе ограничивает limit max=100, поэтому
+        // отправляем ровно 100 и убеждаемся, что в ответе limit=100.
+        mockMvc.perform(get("/api/v1/species").param("limit", "100"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.size").value(100));
+                .andExpect(jsonPath("$.limit").value(100));
     }
 
     // ------------------------------------------------------------------ helpers
