@@ -11,6 +11,7 @@ import com.plantcare.bot.repository.SpeciesRepository;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
@@ -84,6 +85,7 @@ public class AdminSpeciesService {
     }
 
     @Transactional
+    @CacheEvict(cacheNames = {"species-list", "species-detail"}, allEntries = true)
     public Species create(SpeciesFormDto dto, String adminUsername) {
         validateUniqueName(null, dto.getName());
 
@@ -96,6 +98,7 @@ public class AdminSpeciesService {
     }
 
     @Transactional
+    @CacheEvict(cacheNames = {"species-list", "species-detail"}, allEntries = true)
     public Species update(Long id, SpeciesFormDto dto, String adminUsername) {
         validateUniqueName(id, dto.getName());
 
@@ -112,6 +115,7 @@ public class AdminSpeciesService {
      * Bean Validation на отдельные поля DTO здесь не применяется.
      */
     @Transactional
+    @CacheEvict(cacheNames = {"species-list", "species-detail"}, allEntries = true)
     public Species patchField(Long id, String field, String rawValue, String adminUsername) {
         Species species = findById(id);
 
@@ -149,6 +153,7 @@ public class AdminSpeciesService {
     }
 
     @Transactional
+    @CacheEvict(cacheNames = {"species-list", "species-detail"}, allEntries = true)
     public void delete(Long id, String adminUsername) {
         Species species = findById(id);
         speciesRepository.delete(species);
