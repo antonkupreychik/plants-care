@@ -83,7 +83,7 @@ public class MenuCallbackService {
         }
 
         if (data.startsWith("MENU:")) {
-            handleMenuCallback(data, callbackId, chatId, client, user);
+            handleMenuCallback(data, callbackId, chatId, messageId, client, user);
             return;
         }
 
@@ -113,7 +113,34 @@ public class MenuCallbackService {
             return;
         }
 
+        if (data.startsWith("WEATHER:")) {
+            handleWeatherCallback(data, callbackId, messageId, client, user);
+            return;
+        }
+
         answerCallback(client, callbackId, "❌ Неизвестная команда");
+    }
+
+    private void handleWeatherCallback(
+            String data,
+            String callbackId,
+            Integer messageId,
+            TelegramClient client,
+            User user
+    ) {
+        String action = data.substring("WEATHER:".length());
+
+        switch (action) {
+            case "TOGGLE" -> {
+                weatherMenuService.toggleEnabled(user, messageId, client);
+                answerCallback(client, callbackId, "");
+            }
+            case "LOCATION" -> {
+                weatherMenuService.promptForLocation(user, client);
+                answerCallback(client, callbackId, "");
+            }
+            default -> answerCallback(client, callbackId, "❌ Неизвестная команда");
+        }
     }
 
     private void handleCalendarWeekCallback(
@@ -140,6 +167,7 @@ public class MenuCallbackService {
             String data,
             String callbackId,
             Long chatId,
+            Integer messageId,
             TelegramClient client,
             User user
     ) {
@@ -170,7 +198,7 @@ public class MenuCallbackService {
                 answerCallback(client, callbackId, "");
             }
             case "WEATHER" -> {
-                weatherMenuService.sendWeatherScreen(user, client);
+                weatherMenuService.sendWeatherScreen(user, messageId, client);
                 answerCallback(client, callbackId, "");
             }
             case "BACK" -> {
