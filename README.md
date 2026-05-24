@@ -70,13 +70,37 @@ echo 'testcontainers.reuse.enable=true' >> ~/.testcontainers.properties
 
 ## REST API
 
-Базовая инфраструктура REST API, доступна без аутентификации.
+Все запросы к `/api/v1/plants` и `/api/v1/locations` требуют заголовка `X-User-Id: {userId}` (временная заглушка до #88).
+
+### Служебные эндпоинты
 
 | Путь | Описание |
 |---|---|
 | `GET /api/v1/health` | Liveness probe — возвращает `{"status":"UP"}` |
 | `/swagger-ui.html` | Swagger UI (OpenAPI 3) |
 | `/v3/api-docs` | OpenAPI JSON |
+
+### Plants
+
+| Метод | Путь | Описание |
+|---|---|---|
+| `GET` | `/api/v1/plants` | Список растений. Параметры: `locationId` (фильтр), `offset` (по умолч. 0), `limit` (по умолч. 20, макс. 100) |
+| `GET` | `/api/v1/plants/{id}` | Одно растение |
+| `POST` | `/api/v1/plants` | Создать растение (без расписания полива) |
+| `PUT` | `/api/v1/plants/{id}` | Обновить растение. PATCH-семантика: обновляются только переданные поля (`name`, `notes`, `locationId`) |
+| `DELETE` | `/api/v1/plants/{id}` | Soft-delete: выставляет `archivedAt`, из выборок не возвращается |
+
+### Locations
+
+| Метод | Путь | Описание |
+|---|---|---|
+| `GET` | `/api/v1/locations` | Список всех локаций пользователя |
+| `GET` | `/api/v1/locations/{id}` | Одна локация |
+| `POST` | `/api/v1/locations` | Создать локацию |
+| `PUT` | `/api/v1/locations/{id}` | Обновить имя и/или emoji |
+| `DELETE` | `/api/v1/locations/{id}` | Удалить локацию. Если в ней есть растения, обязателен параметр `targetLocationId` — растения переносятся в указанную локацию перед удалением |
+
+### Формат ошибок
 
 Все ошибки `/api/**` возвращаются в едином формате:
 
