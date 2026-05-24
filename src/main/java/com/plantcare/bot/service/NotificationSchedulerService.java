@@ -47,6 +47,8 @@ public class NotificationSchedulerService {
     private final UserRepository userRepository;
     private final TelegramClientProvider telegramClientProvider;
     private final SchedulerHealthTracker schedulerHealthTracker;
+    private final com.plantcare.bot.weather.service.WeatherService weatherService;
+    private final com.plantcare.bot.seasonal.service.SeasonalIntervalService seasonalIntervalService;
 
     @Scheduled(fixedRate = 60_000)
     @Transactional
@@ -108,7 +110,10 @@ public class NotificationSchedulerService {
         try {
             sendNotification(user, plant, schedule);
             // Продвигаем next_due_at на следующий тик, как обычный шедулер.
-            schedule.setNextDueAt(LocalDateTime.now().plusDays(schedule.getIntervalDays()));
+            // С сезонной корректировкой (issue #67) — если выключено, вернётся базовый.
+            int effective = seasonalIntervalService.effectiveIntervalDays(
+                    plant, user, schedule.getIntervalDays());
+            schedule.setNextDueAt(LocalDateTime.now().plusDays(effective));
             careScheduleRepository.save(schedule);
             return SendOneResult.sent();
         } catch (Exception e) {
@@ -126,7 +131,14 @@ public class NotificationSchedulerService {
     public boolean skipOneSchedule(Long scheduleId) {
         CareSchedule schedule = careScheduleRepository.findById(scheduleId).orElse(null);
         if (schedule == null) return false;
-        schedule.setNextDueAt(LocalDateTime.now().plusDays(schedule.getIntervalDays()));
+        // Сезонная корректировка (issue #67) — пропуск должен учитывать
+        // фактический интервал текущего сезона, иначе пропуск зимой подвинет
+        // меньше чем должен.
+        Plant plant = schedule.getPlant();
+        User user = plant.getUser();
+        int effective = seasonalIntervalService.effectiveIntervalDays(
+                plant, user, schedule.getIntervalDays());
+        schedule.setNextDueAt(LocalDateTime.now().plusDays(effective));
         careScheduleRepository.save(schedule);
         log.info("Schedule {} skipped from admin, new next_due_at={}",
                 scheduleId, schedule.getNextDueAt());
@@ -294,6 +306,11 @@ public class NotificationSchedulerService {
         InlineKeyboardMarkup keyboard = inAcclimation
                 ? buildAcclimationSoilCheckKeyboard(schedule.getId())
                 : buildKeyboard(schedule.getId(), schedule.getTaskType());
+
+        // Погодная подсказка для полива (issue #69). Добавляется одной
+        // строкой, только если у юзера погода настроена И задача — полив.
+        // Если Open-Meteo молчит или кеш пустой — push уходит без хинта.
+        text = appendWeatherHintIfWatering(text, user, schedule);
 
         SendMessage message = SendMessage.builder()
                 .chatId(user.getTelegramChatId().toString())
@@ -497,5 +514,27 @@ public class NotificationSchedulerService {
             log.error("Failed to send notification to user {}: {}",
                     user.getTelegramChatId(), errorMessage, e);
         }
+    }
+
+    /**
+     * Добавляет к тексту push'а одну строку про текущую влажность — если
+     * у юзера погода настроена и задача — полив. Любой отказ Open-Meteo
+     * или невалидное состояние → текст возвращается как был (issue #69 AC:
+     * «если сервис недоступен — бот продолжает работать без погодной подсказки»).
+     */
+    private String appendWeatherHintIfWatering(
+            String text,
+            com.plantcare.bot.domain.User user,
+            com.plantcare.bot.domain.CareSchedule schedule
+    ) {
+        if (schedule.getTaskType() != com.plantcare.bot.domain.enums.TaskType.WATERING) {
+            return text;
+        }
+        if (!user.isWeatherUsable()) {
+            return text;
+        }
+        return weatherService.getCurrentHumidity(user)
+                .map(info -> text + "\n\n" + info.renderLine())
+                .orElse(text);
     }
 }

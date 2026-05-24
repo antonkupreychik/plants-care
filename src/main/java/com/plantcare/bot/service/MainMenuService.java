@@ -3,8 +3,10 @@ package com.plantcare.bot.service;
 import com.plantcare.bot.domain.CareSchedule;
 import com.plantcare.bot.domain.Location;
 import com.plantcare.bot.domain.User;
+import com.plantcare.bot.domain.featureflag.FeatureFlag;
 import com.plantcare.bot.repository.CareScheduleRepository;
 import com.plantcare.bot.repository.PlantRepository;
+import com.plantcare.bot.weather.service.WeatherService;
 import com.plantcare.bot.util.TimezoneSupport;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -39,6 +41,7 @@ public class MainMenuService {
     private final CareScheduleRepository careScheduleRepository;
     private final LocationService locationService;
     private final CareHistoryService careHistoryService;
+    private final WeatherService weatherService;
 
     public void sendMainMenu(User user, TelegramClient client) {
         long plantCount = plantRepository.countByUserIdAndArchivedAtIsNull(user.getId());
@@ -56,6 +59,17 @@ public class MainMenuService {
         // короткие серии не должны давить на эго в духе "ваш стрик 1 день".
         int userStreak = careHistoryService.computeUserStreak(user.getId(), user.getTimezone());
 
+        String text = buildMenuText(plantCount, todaySchedules, locations, userStreak);
+
+        // Погодная подсказка для блока полива (issue #69). Одна строка на меню,
+        // а не на каждую задачу — иначе текст растёт линейно по количеству
+        // растений. Если погода не настроена или Open-Meteo молчит — ничего
+        // не добавляется, меню рендерится как раньше.
+        String weatherHint = buildWeatherHintForWatering(user, todaySchedules);
+        if (!weatherHint.isEmpty()) {
+            text = text + "\n\n" + weatherHint;
+        }
+
         boolean paused = user.isPaused();
 
         SendMessage message = SendMessage.builder()
@@ -71,6 +85,23 @@ public class MainMenuService {
         } catch (TelegramApiException e) {
             log.error("Failed to send menu to user {}: {}", user.getTelegramChatId(), e.getMessage(), e);
         }
+    }
+
+    /**
+     * Возвращает подсказку про текущую влажность, если:
+     *   1) у юзера погода включена и есть локация,
+     *   2) среди сегодняшних задач есть хотя бы один WATERING,
+     *   3) Open-Meteo (или кеш) вернул значение.
+     * Иначе — пустая строка, caller просто не добавляет ничего к меню.
+     */
+    private String buildWeatherHintForWatering(User user, List<CareSchedule> todaySchedules) {
+        if (!user.isWeatherUsable()) return "";
+        boolean hasWatering = todaySchedules.stream()
+                .anyMatch(s -> s.getTaskType() == com.plantcare.bot.domain.enums.TaskType.WATERING);
+        if (!hasWatering) return "";
+        return weatherService.getCurrentHumidity(user)
+                .map(com.plantcare.bot.weather.dto.HumidityInfo::renderLine)
+                .orElse("");
     }
 
     private String buildMenuText(
@@ -219,7 +250,30 @@ public class MainMenuService {
             )));
         }
 
-        builder
+        // Календарь скрыт за feature flag (issue #78): пока обкатываем
+        // на узком круге, в общем меню кнопки нет. Когда раскатим — уберём
+        // условие или сменим логику на «по умолчанию включён».
+        boolean calendarEnabled = user.hasFeature(FeatureFlag.CALENDAR);
+
+        // Когда календаря нет, нижняя строка содержит только «Настройки» —
+        // оставляем её отдельной кнопкой во всю ширину, а не парой.
+        InlineKeyboardRow bottomRow = calendarEnabled
+                ? new InlineKeyboardRow(List.of(
+                        InlineKeyboardButton.builder()
+                                .text("📅 Календарь")
+                                .callbackData("MENU:CALENDAR")
+                                .build(),
+                        InlineKeyboardButton.builder()
+                                .text("⚙️ Настройки")
+                                .callbackData("MENU:SETTINGS")
+                                .build()))
+                : new InlineKeyboardRow(List.of(
+                        InlineKeyboardButton.builder()
+                                .text("⚙️ Настройки")
+                                .callbackData("MENU:SETTINGS")
+                                .build()));
+
+        return InlineKeyboardMarkup.builder()
                 .keyboardRow(new InlineKeyboardRow(List.of(
                         InlineKeyboardButton.builder()
                                 .text("➕ Добавить растение")
@@ -247,7 +301,9 @@ public class MainMenuService {
                                 .build()
                 )));
 
-        return builder.build();
+        return builder
+                .keyboardRow(bottomRow)
+                .build();
     }
 
     private LocalDateTime getEndOfTodayInUtc(String timezone) {

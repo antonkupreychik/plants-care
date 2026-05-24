@@ -6,6 +6,7 @@ import com.plantcare.bot.domain.User;
 import com.plantcare.bot.domain.enums.TaskType;
 import com.plantcare.bot.repository.CareScheduleRepository;
 import com.plantcare.bot.repository.PlantRepository;
+import com.plantcare.bot.weather.service.WeatherService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -46,6 +47,9 @@ class MainMenuServiceTest {
     @Mock
     private TelegramClient telegramClient;
 
+    @Mock
+    private WeatherService weatherService;
+
     private MainMenuService mainMenuService;
 
     private User testUser;
@@ -56,7 +60,8 @@ class MainMenuServiceTest {
                 plantRepository,
                 careScheduleRepository,
                 locationService,
-                careHistoryService
+                careHistoryService,
+                weatherService
         );
 
         // По умолчанию стрик 0 — не появится в шапке меню.

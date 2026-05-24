@@ -31,9 +31,17 @@ app:
     locations: classpath:db/migration
     baseline-on-migrate: true
 
+weather:
+  cache-minutes: 60          # дефолт 60
+  threshold-defer-ok: 80     # дефолт 80
+  threshold-do-not-defer: 35 # дефолт 35
+  open-meteo:
+    base-url: https://api.open-meteo.com/v1
+    timeout-seconds: 5
+
 admin:
-  username: ${ADMIN_USERNAME:}
-  password-bcrypt-hash: ${ADMIN_PASSWORD_BCRYPT_HASH:}
+  username: ${ADMIN_USERNAME:admin}
+  password-bcrypt-hash: ${ADMIN_PASSWORD_BCRYPT_HASH:$2y$12$ftNTb9hxqgSpjjvgs8Jhc.7UYwngNcXhL51fwqtdPtlQL8DVsvrCW}
   session-timeout-hours: 8
   rate-limit:
     max-attempts: 5
@@ -77,9 +85,9 @@ plants:
 # Telegram (placeholder, используется со следующей задачи)
 telegram:
   bot:
-    token: ${TELEGRAM_BOT_TOKEN:}
-    username: ${TELEGRAM_BOT_USERNAME:}
-    enabled: ${TELEGRAM_BOT_ENABLED:false}
+    token: ${TELEGRAM_BOT_TOKEN:8576298042:AAGelJx5JDc06qk2o6XSGcOawRAyW-XvQlw}
+    username: ${TELEGRAM_BOT_USERNAME:PlnatsCareLocalDevelopBot}
+    enabled: ${TELEGRAM_BOT_ENABLED:true}
 
 logging:
   level:

@@ -7,6 +7,7 @@ import com.plantcare.bot.domain.User;
 import com.plantcare.bot.domain.enums.TaskType;
 import com.plantcare.bot.repository.CareHistoryRepository;
 import com.plantcare.bot.repository.CareScheduleRepository;
+import com.plantcare.bot.seasonal.service.SeasonalIntervalService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -36,36 +37,44 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-/**
- * Тесты для расширенного «Полил»-flow (issue #71):
- * двухшаговая цепочка callback'ов с обильностью и сухостью грунта.
- *
- *   v1:done:<id>             → step 1 (для WATERING): спрашиваем «Обильно?»
- *   v1:wabund:<id>:<a>       → step 2: спрашиваем «Сухая?»
- *   v1:wsoil:<id>:<a>:<s>    → step 3: пишем историю, сдвигаем schedule
- *
- * Состояние между шагами stateless — abundance зашит в callback_data,
- * scheduleId передаётся в каждом шаге.
- */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
 @DisplayName("NotificationCallbackService: двухшаговый полив (issue #71)")
 class NotificationCallbackServiceWateringDetailsTest {
 
-    @Mock private CareScheduleRepository careScheduleRepository;
-    @Mock private CareHistoryRepository careHistoryRepository;
-    @Mock private PlantService plantService;
-    @Mock private UserService userService;
-    @Mock private PlantCardService plantCardService;
-    @Mock private TelegramClient telegramClient;
-    @Mock private CallbackQuery callbackQuery;
-    @Mock private Message message;
+    @Mock
+    private CareScheduleRepository careScheduleRepository;
+
+    @Mock
+    private CareHistoryRepository careHistoryRepository;
+
+    @Mock
+    private PlantService plantService;
+
+    @Mock
+    private UserService userService;
+
+    @Mock
+    private PlantCardService plantCardService;
+
+    @Mock
+    private SeasonalIntervalService seasonalIntervalService;
+
+    @Mock
+    private TelegramClient telegramClient;
+
+    @Mock
+    private CallbackQuery callbackQuery;
+
+    @Mock
+    private Message message;
 
     @InjectMocks
     private NotificationCallbackService service;
@@ -76,8 +85,15 @@ class NotificationCallbackServiceWateringDetailsTest {
 
     @BeforeEach
     void setUp() {
-        User user = User.builder().telegramChatId(100L).timezone("UTC").build();
-        plant = Plant.builder().user(user).name("Монстера").build();
+        User user = User.builder()
+                .telegramChatId(100L)
+                .timezone("UTC")
+                .build();
+
+        plant = Plant.builder()
+                .user(user)
+                .name("Монстера")
+                .build();
 
         wateringSchedule = CareSchedule.builder()
                 .plant(plant)
@@ -86,6 +102,7 @@ class NotificationCallbackServiceWateringDetailsTest {
                 .nextDueAt(LocalDateTime.now().minusHours(1))
                 .active(true)
                 .build();
+
         ReflectionTestUtils.setField(wateringSchedule, "id", 42L);
 
         mistingSchedule = CareSchedule.builder()
@@ -95,20 +112,23 @@ class NotificationCallbackServiceWateringDetailsTest {
                 .nextDueAt(LocalDateTime.now().minusHours(1))
                 .active(true)
                 .build();
+
         ReflectionTestUtils.setField(mistingSchedule, "id", 43L);
 
         when(callbackQuery.getId()).thenReturn("cb-w");
         when(callbackQuery.getMessage()).thenReturn(message);
         when(message.getChatId()).thenReturn(100L);
         when(message.getMessageId()).thenReturn(77);
+
+        when(seasonalIntervalService.effectiveIntervalDays(
+                any(Plant.class),
+                any(User.class),
+                anyInt()
+        )).thenAnswer(invocation -> invocation.getArgument(2));
     }
 
-    // ===================================================================
-    // Step 1: «Полил» для WATERING → вопрос об обильности (НЕ пишем history)
-    // ===================================================================
-
     @Nested
-    @DisplayName("Step 1: v1:done:<id> для WATERING")
+    @DisplayName("Step 1: v1:done: для WATERING")
     class StepOne {
 
         @Test
@@ -119,21 +139,21 @@ class NotificationCallbackServiceWateringDetailsTest {
 
             service.handleCallback(callbackQuery, telegramClient);
 
-            // История НЕ пишется на этом шаге
             verify(careHistoryRepository, never()).save(any());
             verify(careScheduleRepository, never()).save(any());
 
-            // Edit с двумя кнопками HEAVY / NORMAL
-            ArgumentCaptor<EditMessageText> ecap = ArgumentCaptor.forClass(EditMessageText.class);
-            verify(telegramClient).execute(ecap.capture());
-            EditMessageText edit = ecap.getValue();
+            ArgumentCaptor<EditMessageText> editCaptor = ArgumentCaptor.forClass(EditMessageText.class);
+            verify(telegramClient).execute(editCaptor.capture());
+
+            EditMessageText edit = editCaptor.getValue();
             assertThat(edit.getText()).contains("Монстера").contains("как полил");
 
-            InlineKeyboardMarkup kb = (InlineKeyboardMarkup) edit.getReplyMarkup();
-            List<String> callbacks = kb.getKeyboard().stream()
+            InlineKeyboardMarkup keyboard = (InlineKeyboardMarkup) edit.getReplyMarkup();
+            List<String> callbacks = keyboard.getKeyboard().stream()
                     .flatMap(Collection::stream)
                     .map(InlineKeyboardButton::getCallbackData)
                     .toList();
+
             assertThat(callbacks).contains("v1:wabund:42:HEAVY");
             assertThat(callbacks).contains("v1:wabund:42:NORMAL");
         }
@@ -148,23 +168,17 @@ class NotificationCallbackServiceWateringDetailsTest {
 
             service.handleCallback(callbackQuery, telegramClient);
 
-            // Для MISTING пишем сразу
             verify(careHistoryRepository).save(any(CareHistory.class));
             verify(careScheduleRepository).save(any(CareSchedule.class));
         }
     }
 
-    // ===================================================================
-    // Step 2: ответ на «Обильно?» → вопрос про сухость грунта
-    // ===================================================================
-
     @Nested
-    @DisplayName("Step 2: v1:wabund:<id>:<a>")
+    @DisplayName("Step 2: v1:wabund::<abundance>")
     class StepTwo {
 
         @Test
-        @DisplayName("HEAVY → editит сообщение в «Земля сухая?» с тремя soil-кнопками, "
-                   + "сохраняет abundance=HEAVY в callback_data")
+        @DisplayName("HEAVY → editит сообщение в «Земля сухая?» с тремя soil-кнопками, сохраняет abundance=HEAVY в callback_data")
         void shouldAskSoilDryAndPropagateAbundance() throws TelegramApiException {
             when(callbackQuery.getData()).thenReturn("v1:wabund:42:HEAVY");
             when(careScheduleRepository.findById(42L)).thenReturn(Optional.of(wateringSchedule));
@@ -174,16 +188,18 @@ class NotificationCallbackServiceWateringDetailsTest {
             verify(careHistoryRepository, never()).save(any());
             verify(careScheduleRepository, never()).save(any());
 
-            ArgumentCaptor<EditMessageText> ecap = ArgumentCaptor.forClass(EditMessageText.class);
-            verify(telegramClient).execute(ecap.capture());
-            EditMessageText edit = ecap.getValue();
+            ArgumentCaptor<EditMessageText> editCaptor = ArgumentCaptor.forClass(EditMessageText.class);
+            verify(telegramClient).execute(editCaptor.capture());
+
+            EditMessageText edit = editCaptor.getValue();
             assertThat(edit.getText()).contains("сухая");
 
-            InlineKeyboardMarkup kb = (InlineKeyboardMarkup) edit.getReplyMarkup();
-            List<String> callbacks = kb.getKeyboard().stream()
+            InlineKeyboardMarkup keyboard = (InlineKeyboardMarkup) edit.getReplyMarkup();
+            List<String> callbacks = keyboard.getKeyboard().stream()
                     .flatMap(Collection::stream)
                     .map(InlineKeyboardButton::getCallbackData)
                     .toList();
+
             assertThat(callbacks).contains("v1:wsoil:42:HEAVY:DRY");
             assertThat(callbacks).contains("v1:wsoil:42:HEAVY:WET");
             assertThat(callbacks).contains("v1:wsoil:42:HEAVY:UNKNOWN");
@@ -198,9 +214,11 @@ class NotificationCallbackServiceWateringDetailsTest {
             service.handleCallback(callbackQuery, telegramClient);
 
             verify(careHistoryRepository, never()).save(any());
-            ArgumentCaptor<AnswerCallbackQuery> acap = ArgumentCaptor.forClass(AnswerCallbackQuery.class);
-            verify(telegramClient).execute(acap.capture());
-            assertThat(acap.getValue().getText()).contains("❌");
+
+            ArgumentCaptor<AnswerCallbackQuery> answerCaptor = ArgumentCaptor.forClass(AnswerCallbackQuery.class);
+            verify(telegramClient).execute(answerCaptor.capture());
+
+            assertThat(answerCaptor.getValue().getText()).contains("❌");
         }
 
         @Test
@@ -215,12 +233,8 @@ class NotificationCallbackServiceWateringDetailsTest {
         }
     }
 
-    // ===================================================================
-    // Step 3: финальный ответ — запись CareHistory с abundance+soil_dry
-    // ===================================================================
-
     @Nested
-    @DisplayName("Step 3: v1:wsoil:<id>:<a>:<s>")
+    @DisplayName("Step 3: v1:wsoil::<abundance>:<soil>")
     class StepThree {
 
         @Test
@@ -232,23 +246,24 @@ class NotificationCallbackServiceWateringDetailsTest {
                     .thenReturn(Optional.empty());
 
             LocalDateTime before = LocalDateTime.now();
+
             service.handleCallback(callbackQuery, telegramClient);
 
-            ArgumentCaptor<CareHistory> hcap = ArgumentCaptor.forClass(CareHistory.class);
-            verify(careHistoryRepository).save(hcap.capture());
-            CareHistory h = hcap.getValue();
-            assertThat(h.getTaskType()).isEqualTo(TaskType.WATERING);
-            assertThat(h.getWasAbundant()).isTrue();
-            assertThat(h.getSoilWasDry()).isTrue();
+            ArgumentCaptor<CareHistory> historyCaptor = ArgumentCaptor.forClass(CareHistory.class);
+            verify(careHistoryRepository).save(historyCaptor.capture());
 
-            // Schedule сдвинут на now + 7 дней
+            CareHistory history = historyCaptor.getValue();
+            assertThat(history.getTaskType()).isEqualTo(TaskType.WATERING);
+            assertThat(history.getWasAbundant()).isTrue();
+            assertThat(history.getSoilWasDry()).isTrue();
+
             assertThat(wateringSchedule.getNextDueAt()).isAfter(before.plusDays(6).plusHours(23));
             verify(careScheduleRepository).save(wateringSchedule);
 
-            // Финальный edit — резюме без кнопок
-            ArgumentCaptor<EditMessageText> ecap = ArgumentCaptor.forClass(EditMessageText.class);
-            verify(telegramClient).execute(ecap.capture());
-            EditMessageText edit = ecap.getValue();
+            ArgumentCaptor<EditMessageText> editCaptor = ArgumentCaptor.forClass(EditMessageText.class);
+            verify(telegramClient).execute(editCaptor.capture());
+
+            EditMessageText edit = editCaptor.getValue();
             assertThat(edit.getText())
                     .contains("Полил")
                     .contains("обильно")
@@ -256,10 +271,12 @@ class NotificationCallbackServiceWateringDetailsTest {
                     .contains("Следующий полив");
             assertThat(edit.getReplyMarkup()).isNull();
 
-            // После отметки шлём карточку растения новым сообщением (messageId=null)
             verify(plantCardService).showPlantCard(
-                    eq(plant.getUser()), eq(plant.getId()),
-                    isNull(), eq(PlantCardService.BACK_TO_LIST), eq(telegramClient)
+                    eq(plant.getUser()),
+                    eq(plant.getId()),
+                    isNull(),
+                    eq(PlantCardService.BACK_TO_LIST),
+                    eq(telegramClient)
             );
         }
 
@@ -273,14 +290,19 @@ class NotificationCallbackServiceWateringDetailsTest {
 
             service.handleCallback(callbackQuery, telegramClient);
 
-            ArgumentCaptor<CareHistory> hcap = ArgumentCaptor.forClass(CareHistory.class);
-            verify(careHistoryRepository).save(hcap.capture());
-            CareHistory h = hcap.getValue();
-            assertThat(h.getWasAbundant()).isFalse();
-            assertThat(h.getSoilWasDry()).isFalse();
+            ArgumentCaptor<CareHistory> historyCaptor = ArgumentCaptor.forClass(CareHistory.class);
+            verify(careHistoryRepository).save(historyCaptor.capture());
+
+            CareHistory history = historyCaptor.getValue();
+            assertThat(history.getWasAbundant()).isFalse();
+            assertThat(history.getSoilWasDry()).isFalse();
 
             verify(plantCardService).showPlantCard(
-                    any(), any(), isNull(), eq(PlantCardService.BACK_TO_LIST), any()
+                    any(),
+                    any(),
+                    isNull(),
+                    eq(PlantCardService.BACK_TO_LIST),
+                    any()
             );
         }
 
@@ -294,14 +316,19 @@ class NotificationCallbackServiceWateringDetailsTest {
 
             service.handleCallback(callbackQuery, telegramClient);
 
-            ArgumentCaptor<CareHistory> hcap = ArgumentCaptor.forClass(CareHistory.class);
-            verify(careHistoryRepository).save(hcap.capture());
-            CareHistory h = hcap.getValue();
-            assertThat(h.getWasAbundant()).isFalse();
-            assertThat(h.getSoilWasDry()).isNull();
+            ArgumentCaptor<CareHistory> historyCaptor = ArgumentCaptor.forClass(CareHistory.class);
+            verify(careHistoryRepository).save(historyCaptor.capture());
+
+            CareHistory history = historyCaptor.getValue();
+            assertThat(history.getWasAbundant()).isFalse();
+            assertThat(history.getSoilWasDry()).isNull();
 
             verify(plantCardService).showPlantCard(
-                    any(), any(), isNull(), eq(PlantCardService.BACK_TO_LIST), any()
+                    any(),
+                    any(),
+                    isNull(),
+                    eq(PlantCardService.BACK_TO_LIST),
+                    any()
             );
         }
 
@@ -314,6 +341,7 @@ class NotificationCallbackServiceWateringDetailsTest {
                     .doneAt(LocalDateTime.now().minusSeconds(10))
                     .onTime(true)
                     .build();
+
             when(callbackQuery.getData()).thenReturn("v1:wsoil:42:HEAVY:DRY");
             when(careScheduleRepository.findById(42L)).thenReturn(Optional.of(wateringSchedule));
             when(careHistoryRepository.findFirstByPlantIdAndTaskTypeOrderByDoneAtDesc(any(), any()))
@@ -324,15 +352,18 @@ class NotificationCallbackServiceWateringDetailsTest {
             verify(careHistoryRepository, never()).save(any());
             verify(careScheduleRepository, never()).save(any());
             verify(plantCardService, never()).showPlantCard(any(), any(), any(), any(), any());
-            ArgumentCaptor<AnswerCallbackQuery> acap = ArgumentCaptor.forClass(AnswerCallbackQuery.class);
-            verify(telegramClient).execute(acap.capture());
-            assertThat(acap.getValue().getText()).contains("Уже отмечено");
+
+            ArgumentCaptor<AnswerCallbackQuery> answerCaptor = ArgumentCaptor.forClass(AnswerCallbackQuery.class);
+            verify(telegramClient).execute(answerCaptor.capture());
+
+            assertThat(answerCaptor.getValue().getText()).contains("Уже отмечено");
         }
 
         @Test
         @DisplayName("Архивированное растение — graceful: без записи, без сдвига schedule")
         void shouldHandleArchivedPlant() throws TelegramApiException {
             plant.archive();
+
             when(callbackQuery.getData()).thenReturn("v1:wsoil:42:HEAVY:DRY");
             when(careScheduleRepository.findById(42L)).thenReturn(Optional.of(wateringSchedule));
 
@@ -351,32 +382,31 @@ class NotificationCallbackServiceWateringDetailsTest {
             service.handleCallback(callbackQuery, telegramClient);
 
             verify(careHistoryRepository, never()).save(any());
-            ArgumentCaptor<AnswerCallbackQuery> acap = ArgumentCaptor.forClass(AnswerCallbackQuery.class);
-            verify(telegramClient).execute(acap.capture());
-            assertThat(acap.getValue().getText()).contains("❌");
+
+            ArgumentCaptor<AnswerCallbackQuery> answerCaptor = ArgumentCaptor.forClass(AnswerCallbackQuery.class);
+            verify(telegramClient).execute(answerCaptor.capture());
+
+            assertThat(answerCaptor.getValue().getText()).contains("❌");
         }
     }
-
-    // ===================================================================
-    // Bulk-полив остаётся быстрым — без вопросов (issue #19 + #71 решение)
-    // ===================================================================
 
     @Test
     @DisplayName("startWateringDetailsFlow шлёт sendMessage с двумя abundance-кнопками")
     void shouldSendAbundanceQuestionForCardEntry() throws TelegramApiException {
         service.startWateringDetailsFlow(42L, "Монстера", 100L, telegramClient);
 
-        ArgumentCaptor<SendMessage> scap = ArgumentCaptor.forClass(SendMessage.class);
-        verify(telegramClient).execute(scap.capture());
+        ArgumentCaptor<SendMessage> sendCaptor = ArgumentCaptor.forClass(SendMessage.class);
+        verify(telegramClient).execute(sendCaptor.capture());
 
-        SendMessage sent = scap.getValue();
+        SendMessage sent = sendCaptor.getValue();
         assertThat(sent.getText()).contains("Монстера").contains("как полил");
 
-        InlineKeyboardMarkup kb = (InlineKeyboardMarkup) sent.getReplyMarkup();
-        List<String> callbacks = kb.getKeyboard().stream()
+        InlineKeyboardMarkup keyboard = (InlineKeyboardMarkup) sent.getReplyMarkup();
+        List<String> callbacks = keyboard.getKeyboard().stream()
                 .flatMap(Collection::stream)
                 .map(InlineKeyboardButton::getCallbackData)
                 .toList();
+
         assertThat(callbacks).contains("v1:wabund:42:HEAVY");
         assertThat(callbacks).contains("v1:wabund:42:NORMAL");
     }

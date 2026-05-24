@@ -1,6 +1,7 @@
 package com.plantcare.bot.admin.users.controller;
 
 import com.plantcare.bot.admin.config.AdminSecurityConfig;
+import com.plantcare.bot.admin.featureflag.service.FeatureFlagService;
 import com.plantcare.bot.admin.users.service.AdminUserActionService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
@@ -25,6 +26,7 @@ import java.time.ZoneOffset;
 public class AdminUserActionsController {
 
     private final AdminUserActionService service;
+    private final FeatureFlagService flagService;
 
     @PostMapping("/reset-state")
     public String resetState(@PathVariable long id, Authentication auth, RedirectAttributes ra) {
@@ -79,6 +81,46 @@ public class AdminUserActionsController {
             ra.addFlashAttribute("flash", "Сообщение отправлено");
         } else {
             ra.addFlashAttribute("flashError", "Не отправлено: " + result.error());
+        }
+        return "redirect:/admin/users/" + id;
+    }
+
+    // ===== Feature flags (issue #78) =====
+
+    @PostMapping("/flags/set")
+    public String setFlag(
+            @PathVariable long id,
+            @RequestParam String code,
+            @RequestParam(defaultValue = "true") boolean enabled,
+            Authentication auth, RedirectAttributes ra
+    ) {
+        try {
+            boolean changed = flagService.setFlag(id, code, enabled, auth.getName());
+            if (changed) {
+                ra.addFlashAttribute("flash",
+                        (enabled ? "🚩 Флаг включён: " : "🏳️ Флаг снят: ") + code);
+            } else {
+                ra.addFlashAttribute("flash",
+                        "Состояние флага не изменилось: " + code);
+            }
+        } catch (IllegalArgumentException e) {
+            ra.addFlashAttribute("flashError", "❌ " + e.getMessage());
+        }
+        return "redirect:/admin/users/" + id;
+    }
+
+    @PostMapping("/flags/clear")
+    public String clearFlag(
+            @PathVariable long id,
+            @RequestParam String code,
+            Authentication auth, RedirectAttributes ra
+    ) {
+        try {
+            boolean changed = flagService.clearFlag(id, code, auth.getName());
+            ra.addFlashAttribute("flash",
+                    changed ? "🏳️ Флаг снят: " + code : "Флаг и так не был установлен: " + code);
+        } catch (IllegalArgumentException e) {
+            ra.addFlashAttribute("flashError", "❌ " + e.getMessage());
         }
         return "redirect:/admin/users/" + id;
     }

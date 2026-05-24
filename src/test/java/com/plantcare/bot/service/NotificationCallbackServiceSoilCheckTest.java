@@ -7,6 +7,7 @@ import com.plantcare.bot.domain.User;
 import com.plantcare.bot.domain.enums.TaskType;
 import com.plantcare.bot.repository.CareHistoryRepository;
 import com.plantcare.bot.repository.CareScheduleRepository;
+import com.plantcare.bot.seasonal.service.SeasonalIntervalService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -36,28 +37,39 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-/**
- * Тесты для SOIL_CHECK actions в NotificationCallbackService (issue #74).
- *
- * Проверяем формат callback v1:soil_dry/wet/unk/water и связанные побочные эффекты:
- * запись истории, сдвиг schedule, edit оригинального сообщения, отдельный CTA на DRY.
- */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
 @DisplayName("NotificationCallbackService: SOIL_CHECK (issue #74)")
 class NotificationCallbackServiceSoilCheckTest {
 
-    @Mock private CareScheduleRepository careScheduleRepository;
-    @Mock private CareHistoryRepository careHistoryRepository;
-    @Mock private PlantService plantService;
-    @Mock private UserService userService;
-    @Mock private TelegramClient telegramClient;
-    @Mock private CallbackQuery callbackQuery;
-    @Mock private Message message;
+    @Mock
+    private CareScheduleRepository careScheduleRepository;
+
+    @Mock
+    private CareHistoryRepository careHistoryRepository;
+
+    @Mock
+    private PlantService plantService;
+
+    @Mock
+    private UserService userService;
+
+    @Mock
+    private SeasonalIntervalService seasonalIntervalService;
+
+    @Mock
+    private TelegramClient telegramClient;
+
+    @Mock
+    private CallbackQuery callbackQuery;
+
+    @Mock
+    private Message message;
 
     @InjectMocks
     private NotificationCallbackService service;
@@ -68,8 +80,15 @@ class NotificationCallbackServiceSoilCheckTest {
 
     @BeforeEach
     void setUp() {
-        User user = User.builder().telegramChatId(100L).timezone("UTC").build();
-        plant = Plant.builder().user(user).name("Монстера").build();
+        User user = User.builder()
+                .telegramChatId(100L)
+                .timezone("UTC")
+                .build();
+
+        plant = Plant.builder()
+                .user(user)
+                .name("Монстера")
+                .build();
 
         soilSchedule = CareSchedule.builder()
                 .plant(plant)
@@ -91,6 +110,12 @@ class NotificationCallbackServiceSoilCheckTest {
         when(callbackQuery.getMessage()).thenReturn(message);
         when(message.getChatId()).thenReturn(100L);
         when(message.getMessageId()).thenReturn(77);
+
+        when(seasonalIntervalService.effectiveIntervalDays(
+                any(Plant.class),
+                any(User.class),
+                anyInt()
+        )).thenAnswer(invocation -> invocation.getArgument(2));
     }
 
     @Nested
@@ -108,14 +133,16 @@ class NotificationCallbackServiceSoilCheckTest {
                     .thenReturn(Optional.of(wateringSchedule));
 
             LocalDateTime before = LocalDateTime.now();
+
             service.handleCallback(callbackQuery, telegramClient);
 
-            ArgumentCaptor<CareHistory> hcap = ArgumentCaptor.forClass(CareHistory.class);
-            verify(careHistoryRepository).save(hcap.capture());
-            CareHistory h = hcap.getValue();
-            assertThat(h.getTaskType()).isEqualTo(TaskType.SOIL_CHECK);
-            assertThat(h.getNote()).isEqualTo("soil:DRY");
-            assertThat(h.getPlant()).isEqualTo(plant);
+            ArgumentCaptor<CareHistory> historyCaptor = ArgumentCaptor.forClass(CareHistory.class);
+            verify(careHistoryRepository).save(historyCaptor.capture());
+
+            CareHistory history = historyCaptor.getValue();
+            assertThat(history.getTaskType()).isEqualTo(TaskType.SOIL_CHECK);
+            assertThat(history.getNote()).isEqualTo("soil:DRY");
+            assertThat(history.getPlant()).isEqualTo(plant);
 
             assertThat(soilSchedule.getNextDueAt()).isAfter(before.plusDays(2).plusHours(23));
             verify(careScheduleRepository).save(soilSchedule);
@@ -133,12 +160,13 @@ class NotificationCallbackServiceSoilCheckTest {
 
             service.handleCallback(callbackQuery, telegramClient);
 
-            ArgumentCaptor<EditMessageText> ecap = ArgumentCaptor.forClass(EditMessageText.class);
-            verify(telegramClient).execute(ecap.capture());
-            assertThat(ecap.getValue().getText())
+            ArgumentCaptor<EditMessageText> editCaptor = ArgumentCaptor.forClass(EditMessageText.class);
+            verify(telegramClient).execute(editCaptor.capture());
+
+            assertThat(editCaptor.getValue().getText())
                     .contains("Грунт сухой")
                     .contains("Следующая проверка");
-            assertThat(ecap.getValue().getReplyMarkup()).isNull();
+            assertThat(editCaptor.getValue().getReplyMarkup()).isNull();
         }
 
         @Test
@@ -148,20 +176,22 @@ class NotificationCallbackServiceSoilCheckTest {
             when(careScheduleRepository.findById(1L)).thenReturn(Optional.of(soilSchedule));
             when(careHistoryRepository.findFirstByPlantIdAndTaskTypeOrderByDoneAtDesc(any(), any()))
                     .thenReturn(Optional.empty());
+
             ReflectionTestUtils.setField(wateringSchedule, "id", 42L);
+
             when(careScheduleRepository.findByPlantIdAndTaskType(plant.getId(), TaskType.WATERING))
                     .thenReturn(Optional.of(wateringSchedule));
 
             service.handleCallback(callbackQuery, telegramClient);
 
-            ArgumentCaptor<SendMessage> scap = ArgumentCaptor.forClass(SendMessage.class);
-            verify(telegramClient).execute(scap.capture());
+            ArgumentCaptor<SendMessage> sendCaptor = ArgumentCaptor.forClass(SendMessage.class);
+            verify(telegramClient).execute(sendCaptor.capture());
 
-            SendMessage sent = scap.getValue();
+            SendMessage sent = sendCaptor.getValue();
             assertThat(sent.getText()).contains("пора полить");
 
-            InlineKeyboardMarkup kb = (InlineKeyboardMarkup) sent.getReplyMarkup();
-            List<String> callbacks = kb.getKeyboard().stream()
+            InlineKeyboardMarkup keyboard = (InlineKeyboardMarkup) sent.getReplyMarkup();
+            List<String> callbacks = keyboard.getKeyboard().stream()
                     .flatMap(Collection::stream)
                     .map(InlineKeyboardButton::getCallbackData)
                     .toList();
@@ -200,13 +230,15 @@ class NotificationCallbackServiceSoilCheckTest {
 
             service.handleCallback(callbackQuery, telegramClient);
 
-            ArgumentCaptor<CareHistory> hcap = ArgumentCaptor.forClass(CareHistory.class);
-            verify(careHistoryRepository).save(hcap.capture());
-            assertThat(hcap.getValue().getNote()).isEqualTo("soil:WET");
+            ArgumentCaptor<CareHistory> historyCaptor = ArgumentCaptor.forClass(CareHistory.class);
+            verify(careHistoryRepository).save(historyCaptor.capture());
 
-            ArgumentCaptor<EditMessageText> ecap = ArgumentCaptor.forClass(EditMessageText.class);
-            verify(telegramClient).execute(ecap.capture());
-            assertThat(ecap.getValue().getText())
+            assertThat(historyCaptor.getValue().getNote()).isEqualTo("soil:WET");
+
+            ArgumentCaptor<EditMessageText> editCaptor = ArgumentCaptor.forClass(EditMessageText.class);
+            verify(telegramClient).execute(editCaptor.capture());
+
+            assertThat(editCaptor.getValue().getText())
                     .contains("влажный")
                     .contains("Полив пока не нужен");
 
@@ -228,13 +260,15 @@ class NotificationCallbackServiceSoilCheckTest {
 
             service.handleCallback(callbackQuery, telegramClient);
 
-            ArgumentCaptor<CareHistory> hcap = ArgumentCaptor.forClass(CareHistory.class);
-            verify(careHistoryRepository).save(hcap.capture());
-            assertThat(hcap.getValue().getNote()).isEqualTo("soil:UNKNOWN");
+            ArgumentCaptor<CareHistory> historyCaptor = ArgumentCaptor.forClass(CareHistory.class);
+            verify(careHistoryRepository).save(historyCaptor.capture());
 
-            ArgumentCaptor<EditMessageText> ecap = ArgumentCaptor.forClass(EditMessageText.class);
-            verify(telegramClient).execute(ecap.capture());
-            assertThat(ecap.getValue().getText()).contains("пальцем/палочкой");
+            assertThat(historyCaptor.getValue().getNote()).isEqualTo("soil:UNKNOWN");
+
+            ArgumentCaptor<EditMessageText> editCaptor = ArgumentCaptor.forClass(EditMessageText.class);
+            verify(telegramClient).execute(editCaptor.capture());
+
+            assertThat(editCaptor.getValue().getText()).contains("пальцем/палочкой");
         }
     }
 
@@ -246,6 +280,7 @@ class NotificationCallbackServiceSoilCheckTest {
         @DisplayName("Переиспользует markScheduleDone для WATERING — записывает CareHistory(WATERING)")
         void shouldMarkWateringDone() throws TelegramApiException {
             ReflectionTestUtils.setField(wateringSchedule, "id", 42L);
+
             when(callbackQuery.getData()).thenReturn("v1:soil_water:42");
             when(careScheduleRepository.findById(42L)).thenReturn(Optional.of(wateringSchedule));
             when(careHistoryRepository.findFirstByPlantIdAndTaskTypeOrderByDoneAtDesc(any(), any()))
@@ -253,13 +288,15 @@ class NotificationCallbackServiceSoilCheckTest {
 
             service.handleCallback(callbackQuery, telegramClient);
 
-            ArgumentCaptor<CareHistory> hcap = ArgumentCaptor.forClass(CareHistory.class);
-            verify(careHistoryRepository).save(hcap.capture());
-            assertThat(hcap.getValue().getTaskType()).isEqualTo(TaskType.WATERING);
+            ArgumentCaptor<CareHistory> historyCaptor = ArgumentCaptor.forClass(CareHistory.class);
+            verify(careHistoryRepository).save(historyCaptor.capture());
 
-            ArgumentCaptor<EditMessageText> ecap = ArgumentCaptor.forClass(EditMessageText.class);
-            verify(telegramClient).execute(ecap.capture());
-            assertThat(ecap.getValue().getText())
+            assertThat(historyCaptor.getValue().getTaskType()).isEqualTo(TaskType.WATERING);
+
+            ArgumentCaptor<EditMessageText> editCaptor = ArgumentCaptor.forClass(EditMessageText.class);
+            verify(telegramClient).execute(editCaptor.capture());
+
+            assertThat(editCaptor.getValue().getText())
                     .contains("Полил")
                     .contains("Следующий полив");
         }
@@ -268,15 +305,18 @@ class NotificationCallbackServiceSoilCheckTest {
         @DisplayName("Если передан id не-WATERING расписания — отказ, ничего не пишем")
         void shouldRejectWrongTypeSchedule() throws TelegramApiException {
             ReflectionTestUtils.setField(soilSchedule, "id", 1L);
+
             when(callbackQuery.getData()).thenReturn("v1:soil_water:1");
             when(careScheduleRepository.findById(1L)).thenReturn(Optional.of(soilSchedule));
 
             service.handleCallback(callbackQuery, telegramClient);
 
             verify(careHistoryRepository, never()).save(any());
-            ArgumentCaptor<AnswerCallbackQuery> acap = ArgumentCaptor.forClass(AnswerCallbackQuery.class);
-            verify(telegramClient).execute(acap.capture());
-            assertThat(acap.getValue().getText()).contains("❌");
+
+            ArgumentCaptor<AnswerCallbackQuery> answerCaptor = ArgumentCaptor.forClass(AnswerCallbackQuery.class);
+            verify(telegramClient).execute(answerCaptor.capture());
+
+            assertThat(answerCaptor.getValue().getText()).contains("❌");
         }
     }
 
@@ -294,6 +334,7 @@ class NotificationCallbackServiceSoilCheckTest {
                     .onTime(true)
                     .note("soil:DRY")
                     .build();
+
             when(callbackQuery.getData()).thenReturn("v1:soil_dry:1");
             when(careScheduleRepository.findById(1L)).thenReturn(Optional.of(soilSchedule));
             when(careHistoryRepository.findFirstByPlantIdAndTaskTypeOrderByDoneAtDesc(any(), any()))
@@ -304,15 +345,17 @@ class NotificationCallbackServiceSoilCheckTest {
             verify(careHistoryRepository, never()).save(any());
             verify(careScheduleRepository, never()).save(any());
 
-            ArgumentCaptor<AnswerCallbackQuery> acap = ArgumentCaptor.forClass(AnswerCallbackQuery.class);
-            verify(telegramClient).execute(acap.capture());
-            assertThat(acap.getValue().getText()).contains("Уже отмечено");
+            ArgumentCaptor<AnswerCallbackQuery> answerCaptor = ArgumentCaptor.forClass(AnswerCallbackQuery.class);
+            verify(telegramClient).execute(answerCaptor.capture());
+
+            assertThat(answerCaptor.getValue().getText()).contains("Уже отмечено");
         }
 
         @Test
         @DisplayName("Архивированное растение — graceful, без записи")
         void shouldHandleArchivedPlant() throws TelegramApiException {
             plant.archive();
+
             when(callbackQuery.getData()).thenReturn("v1:soil_wet:1");
             when(careScheduleRepository.findById(1L)).thenReturn(Optional.of(soilSchedule));
 
@@ -321,9 +364,10 @@ class NotificationCallbackServiceSoilCheckTest {
             verify(careHistoryRepository, never()).save(any());
             verify(careScheduleRepository, never()).save(any());
 
-            ArgumentCaptor<EditMessageText> ecap = ArgumentCaptor.forClass(EditMessageText.class);
-            verify(telegramClient).execute(ecap.capture());
-            assertThat(ecap.getValue().getText()).contains("удалено");
+            ArgumentCaptor<EditMessageText> editCaptor = ArgumentCaptor.forClass(EditMessageText.class);
+            verify(telegramClient).execute(editCaptor.capture());
+
+            assertThat(editCaptor.getValue().getText()).contains("удалено");
         }
 
         @Test
@@ -335,9 +379,11 @@ class NotificationCallbackServiceSoilCheckTest {
             service.handleCallback(callbackQuery, telegramClient);
 
             verify(careHistoryRepository, never()).save(any());
-            ArgumentCaptor<AnswerCallbackQuery> acap = ArgumentCaptor.forClass(AnswerCallbackQuery.class);
-            verify(telegramClient).execute(acap.capture());
-            assertThat(acap.getValue().getText()).contains("не найдено");
+
+            ArgumentCaptor<AnswerCallbackQuery> answerCaptor = ArgumentCaptor.forClass(AnswerCallbackQuery.class);
+            verify(telegramClient).execute(answerCaptor.capture());
+
+            assertThat(answerCaptor.getValue().getText()).contains("не найдено");
         }
 
         @Test
