@@ -84,6 +84,18 @@ public interface CareHistoryRepository extends JpaRepository<CareHistory, Long> 
     Optional<CareHistory> findByClientId(String clientId);
 
     /**
+     * Уникальные пользователи, у которых был хотя бы один активный {@code care_event}
+     * за окно {@code (after; now]}. Используется метрикой DAU (issue #115).
+     *
+     * <p>Запрос идёт по индексу {@code care_history(done_at)} — окно 24h
+     * с типичной нагрузкой укладывается в десятки мс. Зовётся раз в час
+     * из {@code DauMetricsUpdater}, поэтому даже на больших данных не hot path.
+     */
+    @Query("SELECT COUNT(DISTINCT h.plant.user.id) FROM CareHistory h " +
+            "WHERE h.cancelledBy IS NULL AND h.doneAt > :after")
+    long countDistinctActiveUsersSince(@Param("after") LocalDateTime after);
+
+    /**
      * Постраничный листинг истории с реальным offset (не page-based).
      *
      * <p>Используется REST API GET /api/v1/plants/{id}/history?limit=N&offset=M.
