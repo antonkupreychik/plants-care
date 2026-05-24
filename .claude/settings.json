@@ -40,7 +40,14 @@
       "Bash(gh pr review --request-changes:*)",
       "Bash(docker compose ps)",
       "Bash(docker compose logs:*)",
-      "Bash(docker ps)"
+      "Bash(docker ps)",
+      "mcp__notion__notion-fetch",
+      "mcp__notion__notion-search",
+      "mcp__github__list_issues",
+      "mcp__github__get_issue",
+      "mcp__github__search_issues",
+      "mcp__github__list_pull_requests",
+      "mcp__github__get_pull_request"
     ],
     "deny": [
       "Bash(git push origin main)",
@@ -70,8 +77,12 @@
     "ask": [
       "Bash(git push:*)",
       "Bash(gh pr review:*)",
+      "Bash(gh issue create:*)",
+      "Bash(gh issue edit:*)",
       "Edit(pom.xml)",
-      "Write(src/main/resources/db/migration/*)"
+      "Write(src/main/resources/db/migration/*)",
+      "mcp__notion__notion-create-pages",
+      "mcp__notion__notion-update-page"
     ]
   }
 }
