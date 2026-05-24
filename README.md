@@ -43,7 +43,8 @@ docker compose --profile full down
 
 После запуска любым способом:
 - Healthcheck: http://localhost:8080/actuator/health
-- Метрики: http://localhost:8080/actuator/metrics
+- Метрики (JSON): http://localhost:8080/actuator/metrics
+- Метрики (Prometheus scrape): http://localhost:8080/actuator/prometheus (см. секцию Observability)
 
 ### Тесты
 
@@ -68,6 +69,8 @@ echo 'testcontainers.reuse.enable=true' >> ~/.testcontainers.properties
 - **V1** — основная схема (7 таблиц, индексы, триггеры)
 - **V2** — сидинг 30 популярных видов растений в `species`
 - **V15** — добавляет `client_id VARCHAR(64) NULL` в `care_history` с partial unique index `WHERE client_id IS NOT NULL`. Колонка nullable — записи из Telegram-бота остаются с NULL без конфликтов
+- **V20** — добавляет `plants.acquired_at DATE NULL` — дата, когда юзер завёл растение. Используется шедулером годовщин и строкой «С тобой с …» в карточке. NULL = в годовщинах не участвует
+- **V21** — таблица `plant_anniversaries_sent` (PK `(plant_id, anniversary_year)`) для идемпотентности годовщин: один пуш на растение в год. FK `ON DELETE CASCADE`. Здесь же — частичный индекс `idx_plants_acquired_active` на `plants(acquired_at) WHERE acquired_at IS NOT NULL AND archived_at IS NULL` под запрос шедулера
 
 ## REST API
 
@@ -215,6 +218,92 @@ Rate limit: 5 неудачных попыток в минуту с IP → 429 н
 Откат миграций — пересоздание БД (`docker compose down -v && docker compose up -d`).
 Для пет-проекта это нормально, для прода понадобятся undo-миграции.
 
+## Observability
+
+### Prometheus scrape endpoint (issue #115)
+
+`GET /actuator/prometheus` — экспорт бизнес- и инфраструктурных метрик в формате Prometheus. Включён всегда (см. `management.endpoints.web.exposure.include` в `application.yml`).
+
+Доступ:
+
+- **Prod** (заданы `ADMIN_USERNAME` и `ADMIN_PASSWORD_BCRYPT_HASH`) — HTTP Basic с теми же credentials, что и админ-панель, роль `ADMIN`. Prometheus / Grafana Cloud конфигурируется с этими же значениями.
+- **Dev** (admin-credentials не заданы) — без аутентификации, через default security chain. Достаточно `curl http://localhost:8080/actuator/prometheus`.
+
+CSRF и session для этого chain выключены: scrape — machine-to-machine GET, STATELESS.
+
+### Экспортируемые бизнес-метрики
+
+Имена записаны в точечной нотации Micrometer. Prometheus-registry автоматически конвертирует `.` в `_` и добавляет суффикс `_total` для счётчиков.
+
+| Метрика | Тип | Теги | Описание |
+|---|---|---|---|
+| `notifications.sent` | Counter | `channel`, `task_type` | Успешно отправленные одиночные уведомления |
+| `notifications.failed` | Counter | `channel`, `reason` (`rate_limit` / `api_error` / `blocked` / `other`) | Неудачные отправки |
+| `notifications.digest.sent` | Counter | — | Отправленные дайджесты (issue #50, сгруппированные пуши) |
+| `telegram.api.errors` | Counter | `code` (`429` / `400` / `403` / `other`) | Ошибки Telegram Bot API |
+| `callbacks.processed` | Counter | `action`, `outcome` (`ok` / `error` / `idempotent`) | Обработанные callback-кнопки. Неизвестные `action` подменяются на `unknown` (защита от cardinality explosion) |
+| `users.registered.total` | Counter | — | Реальные новые регистрации (не каждый `/start`) |
+| `users.active.dau` | Gauge | — | Уникальные пользователи с care-event за последние 24h. Обновляется раз в час (`DauMetricsUpdater`) |
+| `scheduler.tick.duration` | Timer | — | Длительность тика шедулера уведомлений; публикует процентильную гистограмму |
+
+Дополнительно Micrometer публикует стандартные JVM-метрики (память, GC, потоки) и HTTP-latency по REST-эндпоинтам — без отдельной конфигурации.
+
+Полный контракт имён и тегов — в `MetricsService` (константы и enum'ы `FailureReason` / `TelegramErrorCode` / `CallbackOutcome`). Whitelist допустимых `action`-тегов для `callbacks.processed` лежит в `MetricsService.KNOWN_CALLBACK_ACTIONS`; при добавлении нового callback-action в хендлерах его надо туда же.
+
+### Grafana dashboard
+
+Преднастроенный дашборд для импорта: [`grafana/plants-care-dashboard.json`](grafana/plants-care-dashboard.json).
+
+**Содержимое:** 16 панелей в 5 секциях (Users, Notifications, Callbacks, Scheduler, опционально JVM/HTTP).
+
+**Локальный стек одной командой (рекомендуется для разработки):**
+```bash
+docker compose --profile monitoring up -d
+# затем (если app не в Docker, а через mvn spring-boot:run):
+mvn spring-boot:run -Dspring-boot.run.profiles=dev
+```
+Откроет:
+- Prometheus — http://localhost:9090 (таргеты: Status → Targets)
+- Grafana — http://localhost:3000 (без логина, дашборд сразу в «Plants Care → Plants Care Bot — Business Metrics»)
+
+Если app тоже хочется в Docker — добавь профиль `full`:
+```bash
+docker compose --profile full --profile monitoring up -d
+```
+
+**Ручной импорт (если Grafana уже где-то развёрнута):**
+1. В Grafana: **Dashboards → New → Import → Upload JSON file**, выбрать `grafana/plants-care-dashboard.json`.
+2. В выпадающем списке `Prometheus data source` (переменная вверху дашборда) выбрать твой Prometheus.
+3. Save.
+
+**Тонкости:**
+- Дашборд работает с Prometheus-style именами метрик (`notifications_sent_total` и т.п.) — стандартное поведение `micrometer-registry-prometheus`.
+- Процентили `scheduler.tick.duration` (p50/p95/p99) считаются через `histogram_quantile` поверх buckets — публикация histogram включена программно (`Timer.builder(...).publishPercentileHistogram()` в `MetricsService`), доп. конфиг в `application.yml` не нужен.
+- Секция JVM & HTTP свёрнута по умолчанию — это default Micrometer-метрики, всегда доступны.
+- Алерты в дашборде не зашиты. Прометей-side rule'ы (например, на `failure_rate > 5%` или `telegram_api_errors{code="429"} > N`) лучше держать отдельно.
+
+Настройка самого Prometheus-сервера и алертов — вне scope этого PR.
+
+### Sentry — агрегация ошибок (issue #114)
+
+Необработанные исключения и проглоченные `catch` в шедулерах и Telegram-диспетчере
+отправляются в Sentry через `sentry-spring-boot-starter-jakarta`.
+
+Включён **только на prod** (`application-prod.yml`); на dev/test выключен (no-op), чтобы
+не тратить квоту и не слать события из тестов. Даже на prod, если `SENTRY_DSN` не задан,
+стартер инициализируется в no-op и ничего не отправляет.
+
+PII не уходит в Sentry: `SentryPiiFilter` (`BeforeSendCallback`) хеширует `chat_id` и
+`telegram_user_id`, маскирует имена растений, заметки и параметры/breadcrumbs, чистит
+данные пользователя. `send-default-pii: false` на всех профилях.
+
+События размечаются тегами `layer` (`telegram` / `scheduler` / `admin` / `weather`) и
+`feature` (имя класса) для фильтрации в Sentry UI.
+
+| Переменная | Дефолт | Где | Обязательная |
+|---|---|---|---|
+| `SENTRY_DSN` | пусто | prod | нет — пустой DSN = Sentry no-op |
+
 ## Деплой на Railway
 
 ### Первичная настройка
@@ -226,6 +315,7 @@ Rate limit: 5 неудачных попыток в минуту с IP → 429 н
    - Скопировать `Reference` для `${{Postgres.PGHOST}}`, `${{Postgres.PGPORT}}`, `${{Postgres.PGDATABASE}}`, `${{Postgres.PGUSER}}`, `${{Postgres.PGPASSWORD}}` — Railway сам подставит реальные значения
    - Добавить `TELEGRAM_BOT_TOKEN`, `TELEGRAM_BOT_USERNAME`, `TELEGRAM_BOT_ENABLED=true` — когда дойдём до интеграции с ботом
    - Добавить `CALENDAR_BASE_URL` — внешний https-URL приложения (например, `https://plants-care-production.up.railway.app`). Используется для построения ссылок `/calendar/{token}.ics`. Дефолт `https://example.com` для прода не годится.
+   - (опционально) Добавить `SENTRY_DSN` — DSN проекта Sentry для агрегации ошибок (см. секцию Observability). Если не задан, Sentry на prod работает в no-op.
 5. Включить **Public Networking** в Settings → получишь URL вида `plants-care-production.up.railway.app`
 6. Дождаться завершения первой сборки
 

@@ -35,6 +35,24 @@ public interface PlantRepository extends JpaRepository<Plant, Long> {
 
     long countByUserIdAndLocationIdAndArchivedAtIsNull(Long userId, Long locationId);
 
+    // ===== Архив (issue #117) =====
+
+    /** Количество архивированных растений юзера — счётчик у кнопки «📦 Архив (N)». */
+    long countByUserIdAndArchivedAtIsNotNull(Long userId);
+
+    /**
+     * Список архивных растений юзера для экрана «📦 Архив».
+     * Сортировка по дате архивации: свежие сверху, чтобы первой шла та,
+     * которую только что отправили в архив.
+     */
+    List<Plant> findAllByUserIdAndArchivedAtIsNotNullOrderByArchivedAtDesc(Long userId);
+
+    /**
+     * Архивное растение конкретного юзера по id.
+     * Используется в карточке архива и в действиях «восстановить / удалить навсегда».
+     */
+    Optional<Plant> findByUserIdAndIdAndArchivedAtIsNotNull(Long userId, Long plantId);
+
     /**
      * Сколько растений ссылаются на данный вид.
      * Если в Plant поле называется иначе (например species — @ManyToOne),
@@ -83,6 +101,26 @@ public interface PlantRepository extends JpaRepository<Plant, Long> {
               AND p.acclimationCheckinNextAt <= :now
             """)
     List<Plant> findPendingAcclimationCheckin(@Param("now") java.time.LocalDateTime now);
+
+    // ===== Годовщины (issue #117) =====
+
+    /**
+     * Все активные растения (не архивные) с заполненной {@code acquiredAt}.
+     * Используется шедулером годовщин для ежедневного обхода: цикл по этому
+     * списку дёшев (см. частичный индекс {@code idx_plants_acquired_active}
+     * в миграции V21).
+     *
+     * <p>{@code plant.user} подтягивается через {@code JOIN FETCH}, потому что
+     * шедулер обращается к timezone юзера для каждого растения — без fetch будет
+     * N+1 загрузок users.
+     */
+    @Query("""
+            SELECT p FROM Plant p
+            JOIN FETCH p.user
+            WHERE p.acquiredAt IS NOT NULL
+              AND p.archivedAt IS NULL
+            """)
+    List<Plant> findActiveWithAcquiredDate();
 
     /**
      * Фото-прогресс (issue #72): растения, которым пора слать prompt «обнови фото».

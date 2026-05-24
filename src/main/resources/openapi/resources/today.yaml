@@ -1,0 +1,38 @@
+# Задачи ухода на сегодня в TZ пользователя. Использует TaskDto из calendar.yaml.
+
+paths:
+  Collection:
+    get:
+      tags: [Today]
+      operationId: getToday
+      summary: Задачи на сегодня
+      description: |
+        Возвращает задачи ухода, дедлайн которых наступает до конца
+        сегодняшнего дня в **таймзоне пользователя** (`users.timezone`).
+
+        Учитываются только активные расписания; завершённые или приостановленные
+        не попадают в выдачу.
+      parameters:
+        - $ref: '../_common/parameters.yaml#/XChatId'
+      responses:
+        '200':
+          description: Список задач на сегодня.
+          content:
+            application/json:
+              schema:
+                $ref: '#/schemas/TodayResponse'
+
+schemas:
+  TodayResponse:
+    type: object
+    description: Ответ `GET /api/v1/today`.
+    required: [tasks, count]
+    properties:
+      tasks:
+        type: array
+        items:
+          $ref: './calendar.yaml#/schemas/TaskDto'
+      count:
+        type: integer
+        format: int32
+        description: Длина `tasks` (дублируется для удобства клиента).

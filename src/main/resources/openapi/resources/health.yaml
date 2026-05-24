@@ -1,0 +1,33 @@
+# Liveness probe — простой пинг для оркестратора.
+
+paths:
+  Health:
+    get:
+      tags: [Health]
+      operationId: getHealth
+      summary: Liveness probe
+      description: |
+        Возвращает фиксированный `{"status":"UP"}` без обращения к БД или
+        внешним сервисам. Подходит как `livenessProbe` в Kubernetes/Railway.
+
+        Не требует никаких заголовков и аутентификации.
+      responses:
+        '200':
+          description: Сервис жив.
+          content:
+            application/json:
+              schema:
+                $ref: '#/schemas/HealthResponse'
+              example:
+                status: UP
+
+schemas:
+  HealthResponse:
+    type: object
+    description: Ответ liveness-эндпоинта.
+    required: [status]
+    properties:
+      status:
+        type: string
+        description: Фиксированное значение `UP`, когда приложение принимает HTTP-запросы.
+        example: UP

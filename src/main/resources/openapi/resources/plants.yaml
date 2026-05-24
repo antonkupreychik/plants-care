@@ -1,0 +1,291 @@
+# CRUD растений. Soft-delete через archivedAt.
+
+paths:
+  Collection:
+    get:
+      tags: [Plants]
+      operationId: listPlants
+      summary: Список растений пользователя
+      description: |
+        Возвращает страницу растений, принадлежащих пользователю из заголовка
+        `X-User-Id`. Архивированные (soft-deleted) растения в выдачу не
+        попадают.
+
+        Можно фильтровать по локации параметром `locationId`. Пагинация —
+        классическая `offset/limit`.
+
+        Параметры приводятся к безопасным границам:
+        * `limit` обрезается до диапазона **[1, 100]** (всё, что больше 100,
+          становится 100; всё, что меньше 1 — становится 1);
+        * `offset` ниже нуля становится 0.
+      parameters:
+        - $ref: '../_common/parameters.yaml#/XUserId'
+        - name: locationId
+          in: query
+          required: false
+          description: Идентификатор локации. Если задан, возвращаются только растения из неё.
+          schema:
+            type: integer
+            format: int64
+            example: 2
+        - name: offset
+          in: query
+          required: false
+          description: Сдвиг от начала выборки. Значения < 0 трактуются как 0.
+          schema:
+            type: integer
+            format: int32
+            default: 0
+            minimum: 0
+            example: 0
+        - name: limit
+          in: query
+          required: false
+          description: Размер страницы. Обрезается до [1, 100] на сервере.
+          schema:
+            type: integer
+            format: int32
+            default: 20
+            minimum: 1
+            maximum: 100
+            example: 20
+      responses:
+        '200':
+          description: Страница растений.
+          content:
+            application/json:
+              schema:
+                $ref: '#/schemas/PageResponsePlantDto'
+        '400':
+          $ref: '../_common/responses.yaml#/BadRequest'
+    post:
+      tags: [Plants]
+      operationId: createPlant
+      summary: Создать растение
+      description: |
+        Создаёт растение от имени пользователя из `X-User-Id`. Если
+        `locationId` не указан, растение попадает в дефолтную локацию
+        пользователя.
+      parameters:
+        - $ref: '../_common/parameters.yaml#/XUserId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/schemas/PlantCreateRequest'
+            example:
+              name: Monstera
+              notes: Стоит у окна, любит свет
+              locationId: 2
+      responses:
+        '201':
+          description: Растение создано.
+          content:
+            application/json:
+              schema:
+                $ref: '#/schemas/PlantDto'
+        '400':
+          $ref: '../_common/responses.yaml#/BadRequest'
+
+  Item:
+    get:
+      tags: [Plants]
+      operationId: getPlant
+      summary: Получить растение по ID
+      description: |
+        Возвращает растение, если оно принадлежит пользователю из `X-User-Id`
+        и не архивировано. Чужие или несуществующие растения отдаются как 404,
+        чужие активные — как 403 (когда сервис уже знает, что запись есть, но
+        принадлежит другому пользователю).
+      parameters:
+        - $ref: '../_common/parameters.yaml#/XUserId'
+        - $ref: '../_common/parameters.yaml#/PlantIdPath'
+      responses:
+        '200':
+          description: Растение найдено.
+          content:
+            application/json:
+              schema:
+                $ref: '#/schemas/PlantDto'
+        '403':
+          $ref: '../_common/responses.yaml#/Forbidden'
+        '404':
+          $ref: '../_common/responses.yaml#/NotFound'
+    put:
+      tags: [Plants]
+      operationId: updatePlant
+      summary: Обновить растение (PATCH-семантика)
+      description: |
+        Несмотря на HTTP-метод `PUT`, апдейт реализован по принципу PATCH:
+        обновляются **только присутствующие в теле** поля. Передача `null`
+        в поле трактуется как «не менять».
+
+        Пример: чтобы переместить растение в другую локацию, достаточно
+        отправить `{ "locationId": 5 }`.
+      parameters:
+        - $ref: '../_common/parameters.yaml#/XUserId'
+        - $ref: '../_common/parameters.yaml#/PlantIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/schemas/PlantUpdateRequest'
+            example:
+              name: Monstera deliciosa
+              notes: Поливать раз в неделю
+      responses:
+        '200':
+          description: Растение обновлено.
+          content:
+            application/json:
+              schema:
+                $ref: '#/schemas/PlantDto'
+        '400':
+          $ref: '../_common/responses.yaml#/BadRequest'
+        '403':
+          $ref: '../_common/responses.yaml#/Forbidden'
+        '404':
+          $ref: '../_common/responses.yaml#/NotFound'
+    delete:
+      tags: [Plants]
+      operationId: deletePlant
+      summary: Архивировать растение (soft-delete)
+      description: |
+        Помечает растение как удалённое (`archived_at = now()` в UTC). Запись
+        в БД остаётся, но перестаёт появляться во всех `/api/v1/plants/*`
+        выборках. Восстановления через API в этой версии нет.
+      parameters:
+        - $ref: '../_common/parameters.yaml#/XUserId'
+        - $ref: '../_common/parameters.yaml#/PlantIdPath'
+      responses:
+        '204':
+          description: Растение архивировано. Тело ответа отсутствует.
+        '403':
+          $ref: '../_common/responses.yaml#/Forbidden'
+        '404':
+          $ref: '../_common/responses.yaml#/NotFound'
+
+schemas:
+  PlantDto:
+    type: object
+    description: |
+      Растение в формате REST API. Поля `locationName` / `speciesName`
+      денормализованы из связанных сущностей для удобства фронта.
+    required: [id, name, archived]
+    properties:
+      id:
+        type: integer
+        format: int64
+        description: Уникальный идентификатор растения.
+        example: 1
+      name:
+        type: string
+        description: Имя растения, заданное пользователем.
+        example: Monstera
+      notes:
+        type: string
+        nullable: true
+        description: Произвольные заметки пользователя.
+        example: Стоит у окна, любит свет
+      photoFileId:
+        type: string
+        nullable: true
+        description: Telegram `file_id` загруженной фотографии. Используется ботом для повторной отправки без скачивания.
+      locationId:
+        type: integer
+        format: int64
+        nullable: true
+        description: Идентификатор локации, в которой стоит растение.
+        example: 2
+      locationName:
+        type: string
+        nullable: true
+        description: Денормализованное имя локации на момент запроса.
+        example: Подоконник
+      speciesId:
+        type: integer
+        format: int64
+        nullable: true
+        description: Идентификатор вида из справочника.
+        example: 5
+      speciesName:
+        type: string
+        nullable: true
+        description: Денормализованное название вида.
+        example: Monstera deliciosa
+      archived:
+        type: boolean
+        description: Признак того, что растение архивировано (soft-deleted). В выдаче списков всегда `false`.
+        example: false
+      createdAt:
+        type: string
+        format: date-time
+        nullable: true
+        description: Момент создания записи в БД (UTC).
+        example: 2026-05-24T10:15:30Z
+
+  PlantCreateRequest:
+    type: object
+    description: Тело POST /api/v1/plants.
+    required: [name]
+    properties:
+      name:
+        type: string
+        minLength: 1
+        maxLength: 100
+        description: Имя нового растения. Обязательно, не пустое.
+        example: Monstera
+      notes:
+        type: string
+        maxLength: 2000
+        nullable: true
+        description: Опциональные заметки пользователя.
+      locationId:
+        type: integer
+        format: int64
+        nullable: true
+        description: Идентификатор локации. Если не задан, используется дефолтная локация пользователя.
+
+  PlantUpdateRequest:
+    type: object
+    description: Тело PUT /api/v1/plants/{id}. Все поля опциональны.
+    properties:
+      name:
+        type: string
+        minLength: 1
+        maxLength: 100
+        nullable: true
+      notes:
+        type: string
+        maxLength: 2000
+        nullable: true
+      locationId:
+        type: integer
+        format: int64
+        nullable: true
+
+  PageResponsePlantDto:
+    type: object
+    description: Постраничный ответ со списком растений.
+    required: [items, total, offset, limit]
+    properties:
+      items:
+        type: array
+        description: Растения на текущей странице.
+        items:
+          $ref: '#/schemas/PlantDto'
+      total:
+        type: integer
+        format: int32
+        description: Общее количество растений, удовлетворяющих фильтру.
+        example: 42
+      offset:
+        type: integer
+        format: int32
+        example: 0
+      limit:
+        type: integer
+        format: int32
+        example: 20

@@ -11,6 +11,8 @@ public enum ConversationState {
     AWAITING_PLANT_SPECIES_CHOICE,
     AWAITING_PLANT_SPECIES_SEARCH,
     AWAITING_PLANT_NAME,
+    AWAITING_PLANT_ACQUIRED_CHOICE,    // issue #117: выбор «когда завёл растение?»
+    AWAITING_PLANT_ACQUIRED_DATE,      // issue #117: ввод даты «давно (укажу)»
     AWAITING_PLANT_ROOM,
     AWAITING_PLANT_WATERING_INTERVAL,
     AWAITING_PLANT_LAST_WATERED,
@@ -50,5 +52,8 @@ public enum ConversationState {
     AWAITING_VACATION_DAYS,          // ввод числа дней отпуска при выборе «Другое»
 
     // Фото-прогресс (issue #72)
-    AWAITING_PROGRESS_PHOTO            // ждём фото для таймлайна (план «📸 Фото-прогресс»)
+    AWAITING_PROGRESS_PHOTO,           // ждём фото для таймлайна (план «📸 Фото-прогресс»)
+
+    // Ретро-отметка ухода (issue #118): юзер ввёл "Выбрать дату" → ждём DD.MM[.YYYY].
+    AWAITING_CARE_DATE
 }

@@ -118,6 +118,60 @@ class PlantMenuServiceTest {
         assertThat(edit.getChatId()).isEqualTo("100");
     }
 
+    @Test
+    @DisplayName("issue #117: кнопка «📦 Архив (N)» появляется только при N > 0 и содержит счётчик")
+    void should_render_archive_button_with_counter_when_archived_count_positive()
+            throws TelegramApiException {
+        // arrange: одно активное растение + 3 архивных
+        Plant active = plant(1L, "Алоэ", location(10L, "Кухня", "🍳"));
+        when(plantRepository.findAllByUserIdAndArchivedAtIsNullOrderByNameAsc(7L))
+                .thenReturn(List.of(active));
+        when(plantRepository.countByUserIdAndArchivedAtIsNotNull(7L)).thenReturn(3L);
+
+        // act
+        service.sendMyPlantsList(user, null, client);
+
+        // assert
+        ArgumentCaptor<SendMessage> captor = ArgumentCaptor.forClass(SendMessage.class);
+        verify(client).execute(captor.capture());
+
+        InlineKeyboardMarkup keyboard = (InlineKeyboardMarkup) captor.getValue().getReplyMarkup();
+        // 1 растение + кнопка архива + back
+        assertThat(keyboard.getKeyboard()).hasSize(3);
+
+        InlineKeyboardButton archiveBtn = keyboard.getKeyboard().get(1).get(0);
+        assertThat(archiveBtn.getText())
+                .contains("Архив")
+                .contains("3");
+        assertThat(archiveBtn.getCallbackData()).isEqualTo("ARCHIVE:LIST");
+    }
+
+    @Test
+    @DisplayName("issue #117: при 0 архивных кнопка «📦 Архив» НЕ отрисовывается")
+    void should_not_render_archive_button_when_archived_count_zero()
+            throws TelegramApiException {
+        // arrange
+        Plant active = plant(1L, "Алоэ", location(10L, "Кухня", "🍳"));
+        when(plantRepository.findAllByUserIdAndArchivedAtIsNullOrderByNameAsc(7L))
+                .thenReturn(List.of(active));
+        when(plantRepository.countByUserIdAndArchivedAtIsNotNull(7L)).thenReturn(0L);
+
+        // act
+        service.sendMyPlantsList(user, null, client);
+
+        // assert
+        ArgumentCaptor<SendMessage> captor = ArgumentCaptor.forClass(SendMessage.class);
+        verify(client).execute(captor.capture());
+
+        InlineKeyboardMarkup keyboard = (InlineKeyboardMarkup) captor.getValue().getReplyMarkup();
+        // только 1 растение + back, никакой архив-кнопки
+        assertThat(keyboard.getKeyboard()).hasSize(2);
+        assertThat(keyboard.getKeyboard())
+                .flatExtracting(row -> row)
+                .extracting(InlineKeyboardButton::getCallbackData)
+                .doesNotContain("ARCHIVE:LIST");
+    }
+
     // ---- helpers ----
 
     private Plant plant(Long id, String name, Location loc) {

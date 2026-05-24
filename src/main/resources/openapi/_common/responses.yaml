@@ -1,0 +1,60 @@
+# Общие 4xx ответы REST API. Все ссылаются на ApiErrorResponse в errors.yaml.
+
+BadRequest:
+  description: |
+    Невалидный запрос. Возвращается при провале Bean Validation
+    (`VALIDATION_ERROR` + `details` по полям) или при неприемлемых
+    параметрах (`BAD_REQUEST`).
+  content:
+    application/json:
+      schema:
+        $ref: './errors.yaml#/schemas/ApiErrorResponse'
+      examples:
+        validation:
+          summary: Ошибка валидации поля
+          value:
+            error:
+              code: VALIDATION_ERROR
+              message: Validation failed
+              details:
+                - field: name
+                  message: must not be blank
+        badRequest:
+          summary: Невалидный аргумент
+          value:
+            error:
+              code: BAD_REQUEST
+              message: limit must be between 1 and 100
+
+Forbidden:
+  description: Ресурс существует, но принадлежит другому пользователю.
+  content:
+    application/json:
+      schema:
+        $ref: './errors.yaml#/schemas/ApiErrorResponse'
+      example:
+        error:
+          code: ACCESS_DENIED
+          message: Access denied
+
+NotFound:
+  description: Ресурс не найден или архивирован.
+  content:
+    application/json:
+      schema:
+        $ref: './errors.yaml#/schemas/ApiErrorResponse'
+      example:
+        error:
+          code: NOT_FOUND
+          message: Resource not found
+
+Conflict:
+  description: Конфликт состояния — например, попытка нарушить инвариант домена.
+  content:
+    application/json:
+      schema:
+        $ref: './errors.yaml#/schemas/ApiErrorResponse'
+      example:
+        error:
+          code: CONFLICT
+          message: Operation not allowed in the current state

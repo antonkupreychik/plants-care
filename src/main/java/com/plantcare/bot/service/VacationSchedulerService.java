@@ -4,8 +4,11 @@ import com.plantcare.bot.client.TelegramClientProvider;
 import com.plantcare.bot.domain.CareSchedule;
 import com.plantcare.bot.domain.User;
 import com.plantcare.bot.domain.enums.TaskType;
+import com.plantcare.bot.observability.SentryTags;
+import com.plantcare.bot.observability.SentryTags.Layer;
 import com.plantcare.bot.repository.CareScheduleRepository;
 import com.plantcare.bot.repository.UserRepository;
+import io.sentry.Sentry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationContext;
@@ -62,26 +65,32 @@ public class VacationSchedulerService {
 
     @Scheduled(cron = "0 0 * * * *", zone = "UTC")
     public void tick() {
-        LocalDateTime now = LocalDateTime.now(clock);
-        VacationSchedulerService self = self();
+        // Issue #114: изолированный scope на тик — captureException внутри получит
+        // тег layer=scheduler, и он не утечёт на соседние задачи shared-потока.
+        SentryTags.runWithLayer(Layer.SCHEDULER, "VacationSchedulerService", () -> {
+            LocalDateTime now = LocalDateTime.now(clock);
+            VacationSchedulerService self = self();
 
-        try {
-            List<Long> chatIds = self.collectChatIdsForTomorrowReminder(now);
-            for (Long chatId : chatIds) {
-                sendTomorrowBackMessage(chatId);
+            try {
+                List<Long> chatIds = self.collectChatIdsForTomorrowReminder(now);
+                for (Long chatId : chatIds) {
+                    sendTomorrowBackMessage(chatId);
+                }
+            } catch (Exception e) {
+                log.error("Failed to send tomorrow-back reminders: {}", e.getMessage(), e);
+                Sentry.captureException(e);
             }
-        } catch (Exception e) {
-            log.error("Failed to send tomorrow-back reminders: {}", e.getMessage(), e);
-        }
 
-        try {
-            List<WelcomeBackPayload> payloads = self.collectAndCloseVacations(now);
-            for (WelcomeBackPayload payload : payloads) {
-                sendWelcomeBackMessage(payload);
+            try {
+                List<WelcomeBackPayload> payloads = self.collectAndCloseVacations(now);
+                for (WelcomeBackPayload payload : payloads) {
+                    sendWelcomeBackMessage(payload);
+                }
+            } catch (Exception e) {
+                log.error("Failed to process vacation ends: {}", e.getMessage(), e);
+                Sentry.captureException(e);
             }
-        } catch (Exception e) {
-            log.error("Failed to process vacation ends: {}", e.getMessage(), e);
-        }
+        });
     }
 
     @Transactional(readOnly = true)
@@ -131,6 +140,7 @@ public class VacationSchedulerService {
                         "Failed to close vacation for user {}: {}",
                         user.getTelegramChatId(), e.getMessage(), e
                 );
+                Sentry.captureException(e);
             }
         }
         return result;

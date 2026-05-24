@@ -1,0 +1,140 @@
+# Регистрация и отмена событий ухода. Также экспортирует CareEventResponse,
+# который переиспользует plant-history.yaml.
+
+paths:
+  Collection:
+    post:
+      tags: [Care Events]
+      operationId: createCareEvent
+      summary: Зарегистрировать событие ухода
+      description: |
+        Записывает выполнение ухода (полив/опрыскивание/удобрение) для растения
+        пользователя. После записи пересчитывается ближайший дедлайн в
+        связанном расписании.
+
+        ## Идемпотентность
+
+        Если в теле передан `clientId`, и ранее уже была зарегистрирована
+        запись с таким `clientId` от того же пользователя/растения, возвращается
+        существующая запись без повторной вставки. Это позволяет мобильным
+        клиентам безопасно ретраить запрос при потере соединения.
+      parameters:
+        - $ref: '../_common/parameters.yaml#/XChatId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/schemas/CreateCareEventRequest'
+            example:
+              plantId: 10
+              type: WATER
+              performedAt: 2026-05-22T10:00:00Z
+              note: Полил из лейки, грунт был сухой
+              clientId: 9b1c4a36-3f6f-4a92-8b69-fb1d2cb1d2a1
+      responses:
+        '201':
+          description: Событие зарегистрировано (или возвращена существующая запись с тем же `clientId`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/schemas/CareEventResponse'
+        '400':
+          $ref: '../_common/responses.yaml#/BadRequest'
+        '404':
+          $ref: '../_common/responses.yaml#/NotFound'
+
+  Item:
+    delete:
+      tags: [Care Events]
+      operationId: cancelCareEvent
+      summary: Отменить событие ухода (компенсация)
+      description: |
+        Запись физически не удаляется — создаётся компенсирующая запись и в
+        исходной проставляется FK `cancelled_by`. Это сохраняет полную историю
+        и позволяет восстанавливать состояние.
+
+        Повторная отмена уже отменённой записи возвращает 409.
+      parameters:
+        - $ref: '../_common/parameters.yaml#/XChatId'
+        - name: id
+          in: path
+          required: true
+          description: Идентификатор записи `care_history`.
+          schema:
+            type: integer
+            format: int64
+            example: 5
+      responses:
+        '204':
+          description: Событие отменено.
+        '404':
+          $ref: '../_common/responses.yaml#/NotFound'
+        '409':
+          $ref: '../_common/responses.yaml#/Conflict'
+
+schemas:
+  CareEventType:
+    type: string
+    description: |
+      Публичный тип ухода. **Намеренно не совпадает** один-к-одному с
+      внутренним `TaskType`: API-контракт стабилен и не зависит от
+      эволюции доменной модели. Тип `SOIL_CHECK` через REST не доступен.
+    enum: [WATER, SPRAY, FERTILIZE]
+    example: WATER
+
+  CreateCareEventRequest:
+    type: object
+    description: Тело POST /api/v1/care-events.
+    required: [plantId, type, performedAt]
+    properties:
+      plantId:
+        type: integer
+        format: int64
+        example: 10
+      type:
+        $ref: '#/schemas/CareEventType'
+      performedAt:
+        type: string
+        format: date-time
+        description: Момент выполнения ухода (UTC).
+        example: 2026-05-22T10:00:00Z
+      note:
+        type: string
+        nullable: true
+        description: Необязательная заметка (например, «добавил удобрение X»).
+      clientId:
+        type: string
+        nullable: true
+        description: UUID от клиента для идемпотентности при retry. Если null — идемпотентность отключена.
+
+  CareEventResponse:
+    type: object
+    description: Запись события ухода после регистрации или из истории.
+    required: [id, plantId, plantName, type, performedAt, onTime]
+    properties:
+      id:
+        type: integer
+        format: int64
+      plantId:
+        type: integer
+        format: int64
+      plantName:
+        type: string
+      type:
+        $ref: '#/schemas/CareEventType'
+      performedAt:
+        type: string
+        format: date-time
+        description: Момент выполнения в UTC.
+      note:
+        type: string
+        nullable: true
+      clientId:
+        type: string
+        nullable: true
+      onTime:
+        type: boolean
+        description: |
+          Признак выполнения «в срок» — выполнено до дедлайна расписания.
+          Используется для расчёта стрика.

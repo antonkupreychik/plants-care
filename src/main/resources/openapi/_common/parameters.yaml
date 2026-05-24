@@ -1,0 +1,45 @@
+# Общие параметры (headers и path-id), переиспользуемые между ресурсами.
+
+XUserId:
+  name: X-User-Id
+  in: header
+  required: true
+  description: |
+    Внутренний идентификатор пользователя (поле `users.id` в БД). Временный
+    способ идентификации до появления настоящей авторизации.
+  schema:
+    type: integer
+    format: int64
+    example: 1
+
+XChatId:
+  name: X-Chat-Id
+  in: header
+  required: true
+  description: |
+    Telegram `chat_id` авторизованного пользователя. Резолвится в `users.id`
+    на стороне сервера через `UserApiResolver`.
+  schema:
+    type: integer
+    format: int64
+    example: 9000001
+
+PlantIdPath:
+  name: id
+  in: path
+  required: true
+  description: Идентификатор растения.
+  schema:
+    type: integer
+    format: int64
+    example: 1
+
+LocationIdPath:
+  name: id
+  in: path
+  required: true
+  description: Идентификатор локации.
+  schema:
+    type: integer
+    format: int64
+    example: 1

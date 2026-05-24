@@ -15,16 +15,15 @@ spring:
     hikari:
       maximum-pool-size: 10
       minimum-idle: 2
-
-app:
-  species:
-    search-limit: 5
-
-  # Issue #79: публичная подписка на .ics календарь.
-  calendar:
-    base-url: ${CALENDAR_BASE_URL:https://example.com}
-    event-window-days: 90
-
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+    # out-of-order=true: фича-ветки мерджатся в разном порядке, миграция
+    # с меньшим номером (V15) может прийти после уже применённой большей (V16).
+    # Без этого флага прод-Flyway откажется применять V15. Контент миграций
+    # независим друг от друга — порядок применения внутри одного релиза не критичен.
+    out-of-order: true
   jpa:
     open-in-view: false
     hibernate:
@@ -35,10 +34,14 @@ app:
           time_zone: UTC
         format_sql: false
 
-  flyway:
-    enabled: true
-    locations: classpath:db/migration
-    baseline-on-migrate: true
+app:
+  species:
+    search-limit: 5
+
+  # Issue #79: публичная подписка на .ics календарь.
+  calendar:
+    base-url: ${CALENDAR_BASE_URL:https://example.com}
+    event-window-days: 90
 
 weather:
   cache-minutes: 60          # дефолт 60
@@ -49,8 +52,8 @@ weather:
     timeout-seconds: 5
 
 admin:
-  username: ${ADMIN_USERNAME:admin}
-  password-bcrypt-hash: ${ADMIN_PASSWORD_BCRYPT_HASH:$2y$12$ftNTb9hxqgSpjjvgs8Jhc.7UYwngNcXhL51fwqtdPtlQL8DVsvrCW}
+  username: ${ADMIN_USERNAME:}
+  password-bcrypt-hash: ${ADMIN_PASSWORD_BCRYPT_HASH:}
   session-timeout-hours: 8
   rate-limit:
     max-attempts: 5
@@ -76,10 +79,17 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,metrics
+        # Issue #115: prometheus добавлен для Prometheus scrape.
+        # На prod /actuator/prometheus требует роли ADMIN (см. AdminSecurityConfig),
+        # health/info остаются публичными (UptimeRobot и т.п.).
+        include: health,info,metrics,prometheus
   endpoint:
     health:
       show-details: when-authorized
+  prometheus:
+    metrics:
+      export:
+        enabled: true
 
 # Параметры приложения (issue #28: healthcheck шедулера)
 plants:
@@ -94,11 +104,21 @@ plants:
 # Telegram (placeholder, используется со следующей задачи)
 telegram:
   bot:
-    token: ${TELEGRAM_BOT_TOKEN:8576298042:AAGelJx5JDc06qk2o6XSGcOawRAyW-XvQlw}
-    username: ${TELEGRAM_BOT_USERNAME:PlnatsCareLocalDevelopBot}
+    token: ${TELEGRAM_BOT_TOKEN:}
+    username: ${TELEGRAM_BOT_USERNAME:}
     enabled: ${TELEGRAM_BOT_ENABLED:true}
 
 logging:
   level:
     root: INFO
     com.plantcare.bot: DEBUG
+
+# Issue #114: Sentry. По умолчанию выключен (no-op) — включается только на prod-профиле.
+# На dev/test остаётся false, поэтому реальные отправки в Sentry из тестов невозможны.
+sentry:
+  enabled: false
+  # Никогда не отправляем PII по умолчанию: chat_id/telegram_user_id хешируются
+  # в SentryPiiFilter, тексты заметок/имена растений вырезаются.
+  send-default-pii: false
+
+kind: Application

@@ -59,8 +59,11 @@ public class PlantMenuService {
             }
         });
 
+        // issue #117: счётчик архива для кнопки «📦 Архив (N)».
+        long archivedCount = plantRepository.countByUserIdAndArchivedAtIsNotNull(user.getId());
+
         String text = buildListText(plants);
-        InlineKeyboardMarkup keyboard = buildListKeyboard(plants);
+        InlineKeyboardMarkup keyboard = buildListKeyboard(plants, archivedCount);
 
         sendOrEdit(user.getTelegramChatId(), messageId, text, keyboard, client);
     }
@@ -79,7 +82,7 @@ public class PlantMenuService {
         return sb.toString();
     }
 
-    private InlineKeyboardMarkup buildListKeyboard(List<Plant> plants) {
+    private InlineKeyboardMarkup buildListKeyboard(List<Plant> plants, long archivedCount) {
         List<InlineKeyboardRow> rows = new ArrayList<>();
 
         for (Plant plant : plants) {
@@ -96,6 +99,16 @@ public class PlantMenuService {
                     InlineKeyboardButton.builder()
                             .text(label)
                             .callbackData("PLANT:VIEW:" + plant.getId())
+                            .build()
+            )));
+        }
+
+        // issue #117: кнопка «📦 Архив (N)» — только если есть архивные растения.
+        if (archivedCount > 0) {
+            rows.add(new InlineKeyboardRow(List.of(
+                    InlineKeyboardButton.builder()
+                            .text("📦 Архив (" + archivedCount + ")")
+                            .callbackData("ARCHIVE:LIST")
                             .build()
             )));
         }

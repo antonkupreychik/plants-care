@@ -23,6 +23,10 @@ public class OpenMeteoClient {
     private final RestClient openMeteoRestClient;
 
     public Optional<OpenMeteoResponse> fetchHourlyHumidity(double lat, double lon) {
+        // Issue #114: НЕ ставим тег layer=weather на общий scope. Клиент вызывается
+        // из shared-потока @Scheduled (через WeatherService) и сам Sentry никогда не
+        // зовёт (любой сбой → WARN + Optional.empty()). Глобальный setTag здесь
+        // загрязнял бы scope тика шедулера тегом weather (см. issue #114, blocking).
         try {
             OpenMeteoResponse response = openMeteoRestClient.get()
                     .uri(uriBuilder -> uriBuilder

@@ -4,6 +4,8 @@ import com.plantcare.bot.domain.CareSchedule;
 import com.plantcare.bot.domain.DigestTaskItem;
 import com.plantcare.bot.domain.NotificationDigest;
 import com.plantcare.bot.domain.enums.TaskType;
+import com.plantcare.bot.metrics.MetricsService;
+import com.plantcare.bot.metrics.MetricsService.CallbackOutcome;
 import com.plantcare.bot.repository.CareScheduleRepository;
 import com.plantcare.bot.repository.NotificationDigestRepository;
 import lombok.RequiredArgsConstructor;
@@ -32,6 +34,7 @@ public class NotificationDigestCallbackService {
     private final NotificationDigestRepository notificationDigestRepository;
     private final CareScheduleRepository careScheduleRepository;
     private final NotificationCallbackService notificationCallbackService;
+    private final MetricsService metricsService;
 
     @Transactional
     public void handleCallback(CallbackQuery callbackQuery, TelegramClient client) {
@@ -44,16 +47,19 @@ public class NotificationDigestCallbackService {
 
         if (parts.length != 3) {
             answerCallback(client, callbackId, "❌ Неизвестная команда");
+            metricsService.recordCallback("digest_unknown", CallbackOutcome.ERROR);
             return;
         }
 
         String action = parts[1];
+        String metricAction = "digest_" + action;
 
         Long digestId;
         try {
             digestId = Long.parseLong(parts[2]);
         } catch (NumberFormatException e) {
             answerCallback(client, callbackId, "❌ Неверный ID");
+            metricsService.recordCallback(metricAction, CallbackOutcome.ERROR);
             return;
         }
 
@@ -61,6 +67,7 @@ public class NotificationDigestCallbackService {
 
         if (optionalDigest.isEmpty()) {
             answerCallback(client, callbackId, "❌ Дайджест не найден");
+            metricsService.recordCallback(metricAction, CallbackOutcome.ERROR);
             return;
         }
 
@@ -69,7 +76,10 @@ public class NotificationDigestCallbackService {
         switch (action) {
             case "done_all" -> handleDoneAll(digest, client, callbackId, chatId, messageId);
             case "expand" -> handleExpand(digest, client, callbackId, chatId, messageId);
-            default -> answerCallback(client, callbackId, "❌ Неизвестное действие");
+            default -> {
+                answerCallback(client, callbackId, "❌ Неизвестное действие");
+                metricsService.recordCallback(metricAction, CallbackOutcome.ERROR);
+            }
         }
     }
 
@@ -105,11 +115,13 @@ public class NotificationDigestCallbackService {
 
         if (markedCount == 0) {
             answerCallback(client, callbackId, "Уже отмечено");
+            metricsService.recordCallback("digest_done_all", CallbackOutcome.IDEMPOTENT);
             return;
         }
 
         editMessage(client, chatId, messageId, "✅ Все задачи из дайджеста отмечены как выполненные");
         answerCallback(client, callbackId, "Готово!");
+        metricsService.recordCallback("digest_done_all", CallbackOutcome.OK);
     }
 
     private void handleExpand(
@@ -124,6 +136,7 @@ public class NotificationDigestCallbackService {
         if (remainingTasks.isEmpty()) {
             editMessage(client, chatId, messageId, "✅ Все задачи уже выполнены");
             answerCallback(client, callbackId, "Все задачи выполнены");
+            metricsService.recordCallback("digest_expand", CallbackOutcome.IDEMPOTENT);
             return;
         }
 
@@ -140,9 +153,11 @@ public class NotificationDigestCallbackService {
         try {
             client.execute(edit);
             answerCallback(client, callbackId, "Открыто по одному");
+            metricsService.recordCallback("digest_expand", CallbackOutcome.OK);
         } catch (TelegramApiException e) {
             log.error("Failed to expand digest: {}", e.getMessage(), e);
             answerCallback(client, callbackId, "❌ Не удалось открыть список");
+            metricsService.recordCallback("digest_expand", CallbackOutcome.ERROR);
         }
     }
 

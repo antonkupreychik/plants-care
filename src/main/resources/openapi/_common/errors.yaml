@@ -1,0 +1,44 @@
+# Общие схемы ошибок REST API. На них ссылается _common/responses.yaml и любые
+# другие ресурсы, у которых описан 4xx/5xx ответ через $ref на ApiErrorResponse.
+
+schemas:
+  ApiErrorResponse:
+    type: object
+    description: Стандартная обёртка над ошибкой REST API.
+    required: [error]
+    properties:
+      error:
+        $ref: '#/schemas/ApiError'
+
+  ApiError:
+    type: object
+    description: Тело ошибки.
+    required: [code, message]
+    properties:
+      code:
+        type: string
+        description: |
+          Стабильный машиночитаемый код. Значения:
+          `VALIDATION_ERROR`, `BAD_REQUEST`, `NOT_FOUND`, `ACCESS_DENIED`,
+          `CONFLICT`, `INTERNAL_ERROR`, `LOCATION_NOT_EMPTY`.
+        example: VALIDATION_ERROR
+      message:
+        type: string
+        example: Validation failed
+      details:
+        type: array
+        nullable: true
+        description: Список ошибок по полям. Заполняется только для `VALIDATION_ERROR`.
+        items:
+          $ref: '#/schemas/FieldError'
+
+  FieldError:
+    type: object
+    required: [field, message]
+    properties:
+      field:
+        type: string
+        example: name
+      message:
+        type: string
+        example: must not be blank

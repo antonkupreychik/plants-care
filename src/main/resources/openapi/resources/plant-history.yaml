@@ -1,0 +1,76 @@
+# История ухода за растением. Использует CareEventResponse из care-events.yaml.
+
+paths:
+  ItemHistory:
+    get:
+      tags: [Plant History]
+      operationId: getPlantHistory
+      summary: История событий ухода за растением
+      description: |
+        Возвращает страницу истории ухода за растением, принадлежащим
+        пользователю из заголовка `X-Chat-Id` (Telegram chat_id).
+
+        В выдачу попадают только активные (не отменённые) записи всех типов
+        ухода **кроме `SOIL_CHECK`** — это служебный тип, который наружу не
+        выставляется.
+
+        Пагинация — `limit/offset`. `limit` строго в диапазоне [1, 100]
+        (значения вне диапазона отдаются как 400). `offset` < 0 нормализуется
+        в 0.
+      parameters:
+        - $ref: '../_common/parameters.yaml#/XChatId'
+        - $ref: '../_common/parameters.yaml#/PlantIdPath'
+        - name: limit
+          in: query
+          required: false
+          description: Размер страницы. Допустимые значения — [1, 100].
+          schema:
+            type: integer
+            format: int32
+            default: 20
+            minimum: 1
+            maximum: 100
+        - name: offset
+          in: query
+          required: false
+          description: Сдвиг от начала истории. Значения < 0 нормализуются в 0.
+          schema:
+            type: integer
+            format: int32
+            default: 0
+            minimum: 0
+      responses:
+        '200':
+          description: Страница истории.
+          content:
+            application/json:
+              schema:
+                $ref: '#/schemas/PlantHistoryResponse'
+        '400':
+          $ref: '../_common/responses.yaml#/BadRequest'
+        '404':
+          $ref: '../_common/responses.yaml#/NotFound'
+
+schemas:
+  PlantHistoryResponse:
+    type: object
+    description: Страница истории ухода за растением с метаданными пагинации.
+    required: [items, total, limit, offset]
+    properties:
+      items:
+        type: array
+        items:
+          $ref: './care-events.yaml#/schemas/CareEventResponse'
+      total:
+        type: integer
+        format: int64
+        description: Общее количество активных записей.
+        example: 17
+      limit:
+        type: integer
+        format: int32
+        example: 20
+      offset:
+        type: integer
+        format: int32
+        example: 0

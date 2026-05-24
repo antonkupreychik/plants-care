@@ -6,10 +6,6 @@ builder = "DOCKERFILE"
 dockerfilePath = "Dockerfile"
 
 [deploy]
-# Healthcheck — Railway не перекатит на новую версию, пока эндпоинт не вернёт 200
-healthcheckPath = "/actuator/health"
-healthcheckTimeout = 100
-
 # При падении — рестарт. Максимум 10 попыток подряд, потом деплой считается failed.
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 10

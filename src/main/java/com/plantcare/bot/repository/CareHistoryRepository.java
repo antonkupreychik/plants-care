@@ -77,11 +77,54 @@ public interface CareHistoryRepository extends JpaRepository<CareHistory, Long> 
             Long plantId, TaskType taskType, LocalDateTime after);
 
     /**
+     * Сколько раз растению делали задачу за всё время (issue #117 — статистика
+     * в карточке архива «N поливов за M месяцев», тексте годовщины
+     * «полил её N раз»). Активные (не-cancelled) записи.
+     */
+    @Query("SELECT COUNT(h) FROM CareHistory h " +
+            "WHERE h.plant.id = :plantId AND h.taskType = :taskType " +
+            "AND h.cancelledBy IS NULL")
+    long countActiveByPlantIdAndTaskType(
+            @Param("plantId") Long plantId,
+            @Param("taskType") TaskType taskType);
+
+    /**
      * Поиск по client_id для идемпотентности REST API (issue #86).
      * client_id генерирует мобильный клиент при POST /api/v1/care-events;
      * повторный запрос с тем же client_id вернёт уже существующую запись.
      */
     Optional<CareHistory> findByClientId(String clientId);
+
+    /**
+     * Существует ли активная (не-cancelled) запись ухода данного типа за период.
+     * Используется для идемпотентности ретро-отметки (issue #118): юзер второй раз
+     * жмёт «отметить вчера» — не плодим дубликат, говорим «уже отмечено».
+     *
+     * <p>Окно вызывающий передаёт как «начало/конец локального дня в TZ юзера,
+     * сконвертированные в UTC».
+     */
+    @Query("SELECT COUNT(h) > 0 FROM CareHistory h " +
+            "WHERE h.plant.id = :plantId AND h.taskType = :taskType " +
+            "AND h.cancelledBy IS NULL " +
+            "AND h.doneAt >= :from AND h.doneAt < :toExclusive")
+    boolean existsActiveByPlantIdAndTaskTypeInRange(
+            @Param("plantId") Long plantId,
+            @Param("taskType") TaskType taskType,
+            @Param("from") LocalDateTime from,
+            @Param("toExclusive") LocalDateTime toExclusive
+    );
+
+    /**
+     * Уникальные пользователи, у которых был хотя бы один активный {@code care_event}
+     * за окно {@code (after; now]}. Используется метрикой DAU (issue #115).
+     *
+     * <p>Запрос идёт по индексу {@code care_history(done_at)} — окно 24h
+     * с типичной нагрузкой укладывается в десятки мс. Зовётся раз в час
+     * из {@code DauMetricsUpdater}, поэтому даже на больших данных не hot path.
+     */
+    @Query("SELECT COUNT(DISTINCT h.plant.user.id) FROM CareHistory h " +
+            "WHERE h.cancelledBy IS NULL AND h.doneAt > :after")
+    long countDistinctActiveUsersSince(@Param("after") LocalDateTime after);
 
     /**
      * Постраничный листинг истории с реальным offset (не page-based).

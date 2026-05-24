@@ -8,6 +8,13 @@ spring:
     enabled: true
     validate-on-migrate: false
 
+# В тестах не регистрируем бота в Telegram API — токена нет, и registerBot
+# уронит контекст. TelegramBotConfig.@ConditionalOnProperty(havingValue=true)
+# отключит фабричный @Bean при enabled=false.
+telegram:
+  bot:
+    enabled: false
+
 logging:
   level:
     org.hibernate.SQL: WARN

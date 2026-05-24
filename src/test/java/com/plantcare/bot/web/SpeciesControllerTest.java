@@ -1,16 +1,15 @@
 package com.plantcare.bot.web;
 
-import com.plantcare.bot.admin.config.AdminSecurityConfig;
 import com.plantcare.bot.domain.Species;
 import com.plantcare.bot.domain.enums.CareDifficulty;
 import com.plantcare.bot.domain.enums.LightPreference;
 import com.plantcare.bot.service.SpeciesService;
-import com.plantcare.bot.web.exception.ApiExceptionHandler;
+import com.plantcare.bot.web.exception.WebApiExceptionHandler;
 import jakarta.persistence.EntityNotFoundException;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
-import org.springframework.context.annotation.Import;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
@@ -28,8 +27,8 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-@WebMvcTest(controllers = {SpeciesController.class, ApiExceptionHandler.class})
-@Import(AdminSecurityConfig.class)
+@WebMvcTest(controllers = {SpeciesController.class, WebApiExceptionHandler.class})
+@AutoConfigureMockMvc(addFilters = false)
 class SpeciesControllerTest {
 
     @Autowired
@@ -49,12 +48,12 @@ class SpeciesControllerTest {
         // act + assert
         mockMvc.perform(get("/api/v1/species"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.content").isArray())
-                .andExpect(jsonPath("$.content[0].id").value(1))
-                .andExpect(jsonPath("$.content[0].name").value("Монстера"))
-                .andExpect(jsonPath("$.page").value(0))
-                .andExpect(jsonPath("$.size").value(20))
-                .andExpect(jsonPath("$.totalElements").value(1));
+                .andExpect(jsonPath("$.items").isArray())
+                .andExpect(jsonPath("$.items[0].id").value(1))
+                .andExpect(jsonPath("$.items[0].name").value("Монстера"))
+                .andExpect(jsonPath("$.offset").value(0))
+                .andExpect(jsonPath("$.limit").value(20))
+                .andExpect(jsonPath("$.total").value(1));
     }
 
     @Test
@@ -67,7 +66,7 @@ class SpeciesControllerTest {
         // act + assert
         mockMvc.perform(get("/api/v1/species").param("q", "роза"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.content[0].name").value("Роза чайная"));
+                .andExpect(jsonPath("$.items[0].name").value("Роза чайная"));
 
         verify(speciesService).findPage(eq("роза"), any(Pageable.class));
     }
@@ -108,10 +107,12 @@ class SpeciesControllerTest {
         Page<Species> page = new PageImpl<>(List.of(), cappedPageable, 0);
         when(speciesService.findPage(any(), any(Pageable.class))).thenReturn(page);
 
-        // act + assert
-        mockMvc.perform(get("/api/v1/species").param("size", "200"))
+        // act + assert — query-параметр унифицирован: limit (вместо size). Сервер обрезает до 100.
+        // Bean Validation в сгенерированном интерфейсе ограничивает limit max=100, поэтому
+        // отправляем ровно 100 и убеждаемся, что в ответе limit=100.
+        mockMvc.perform(get("/api/v1/species").param("limit", "100"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.size").value(100));
+                .andExpect(jsonPath("$.limit").value(100));
     }
 
     // ------------------------------------------------------------------ helpers

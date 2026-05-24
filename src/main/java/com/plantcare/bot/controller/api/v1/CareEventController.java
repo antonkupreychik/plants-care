@@ -1,86 +1,86 @@
 package com.plantcare.bot.controller.api.v1;
 
+import com.plantcare.bot.api.generated.CareEventsApi;
+import com.plantcare.bot.api.generated.model.CareEventResponse;
+import com.plantcare.bot.api.generated.model.CareEventType;
+import com.plantcare.bot.api.generated.model.CreateCareEventRequest;
 import com.plantcare.bot.controller.api.UserApiResolver;
-import com.plantcare.bot.controller.api.v1.dto.CareEventResponse;
-import com.plantcare.bot.controller.api.v1.dto.CreateCareEventRequest;
 import com.plantcare.bot.domain.CareHistory;
 import com.plantcare.bot.domain.User;
-import com.plantcare.bot.service.CareEventApiService;
-import jakarta.validation.Valid;
+import com.plantcare.bot.domain.enums.TaskType;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.http.HttpStatus;
-import org.springframework.web.bind.annotation.DeleteMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestHeader;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.time.ZoneOffset;
 
 /**
  * REST API для регистрации и отмены событий ухода за растениями (issue #86).
  *
- * <p>Идентификация пользователя — через заголовок {@code X-Chat-Id}
- * (Telegram chat id). Авторизация по токену придёт позже.
+ * <p>Документация и mapping живут в сгенерированном {@link CareEventsApi} (см. openapi.yaml).
  */
 @Slf4j
 @RestController
-@RequestMapping("/api/v1/care-events")
 @RequiredArgsConstructor
-public class CareEventController {
+public class CareEventController implements CareEventsApi {
 
-    private final CareEventApiService careEventApiService;
+    private final com.plantcare.bot.service.CareEventApiService careEventApiService;
     private final UserApiResolver userApiResolver;
 
-    /**
-     * POST /api/v1/care-events — регистрация события ухода.
-     *
-     * <p>Если запрос содержит {@code clientId}, который уже встречался ранее,
-     * возвращает существующую запись без повторной записи в БД (идемпотентность).
-     *
-     * @return 201 Created с телом {@link CareEventResponse}
-     */
-    @PostMapping
-    @ResponseStatus(HttpStatus.CREATED)
-    public CareEventResponse create(
-            @RequestBody @Valid CreateCareEventRequest req,
-            @RequestHeader("X-Chat-Id") Long chatId
-    ) {
+    @Override
+    public CareEventResponse createCareEvent(Long chatId, CreateCareEventRequest req) {
         User user = userApiResolver.resolve(chatId);
         log.info("POST /api/v1/care-events: userId={}, plantId={}, type={}, clientId={}",
-                user.getId(), req.plantId(), req.type(), req.clientId());
+                user.getId(), req.getPlantId(), req.getType(), req.getClientId());
 
         CareHistory history = careEventApiService.registerEvent(
                 user.getId(),
-                req.plantId(),
-                req.type().toTaskType(),
-                req.performedAt(),
-                req.note(),
-                req.clientId()
+                req.getPlantId(),
+                toTaskType(req.getType()),
+                req.getPerformedAt().toInstant(),
+                req.getNote(),
+                req.getClientId()
         );
 
-        return CareEventResponse.from(history);
+        return toResponse(history);
     }
 
-    /**
-     * DELETE /api/v1/care-events/{id} — отмена события ухода (compensation).
-     *
-     * <p>Запись не удаляется физически — создаётся компенсирующая запись
-     * и проставляется FK {@code cancelled_by}.
-     *
-     * @return 204 No Content
-     */
-    @DeleteMapping("/{id}")
-    @ResponseStatus(HttpStatus.NO_CONTENT)
-    public void cancel(
-            @PathVariable Long id,
-            @RequestHeader("X-Chat-Id") Long chatId
-    ) {
+    @Override
+    public void cancelCareEvent(Long chatId, Long id) {
         User user = userApiResolver.resolve(chatId);
         log.info("DELETE /api/v1/care-events/{}: userId={}", id, user.getId());
 
         careEventApiService.cancelEvent(user.getId(), id);
+    }
+
+    static CareEventResponse toResponse(CareHistory history) {
+        return new CareEventResponse(
+                history.getId(),
+                history.getPlant().getId(),
+                history.getPlant().getName(),
+                fromTaskType(history.getTaskType()),
+                history.getDoneAt().atOffset(ZoneOffset.UTC),
+                history.isOnTime()
+        )
+                .note(history.getNote())
+                .clientId(history.getClientId());
+    }
+
+    private static TaskType toTaskType(CareEventType apiType) {
+        return switch (apiType) {
+            case WATER -> TaskType.WATERING;
+            case SPRAY -> TaskType.MISTING;
+            case FERTILIZE -> TaskType.FERTILIZING;
+        };
+    }
+
+    private static CareEventType fromTaskType(TaskType taskType) {
+        return switch (taskType) {
+            case WATERING -> CareEventType.WATER;
+            case MISTING -> CareEventType.SPRAY;
+            case FERTILIZING -> CareEventType.FERTILIZE;
+            case SOIL_CHECK -> throw new IllegalStateException(
+                    "SOIL_CHECK cannot be represented as CareEventType, filter before mapping");
+        };
     }
 }

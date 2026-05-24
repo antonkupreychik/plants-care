@@ -9,10 +9,15 @@ import com.plantcare.bot.domain.Plant;
 import com.plantcare.bot.domain.User;
 import com.plantcare.bot.domain.enums.NotificationType;
 import com.plantcare.bot.domain.enums.TaskType;
+import com.plantcare.bot.metrics.MetricsService;
+import com.plantcare.bot.observability.SentryTags;
+import com.plantcare.bot.observability.SentryTags.Layer;
 import com.plantcare.bot.repository.CareScheduleRepository;
 import com.plantcare.bot.repository.NotificationDigestRepository;
 import com.plantcare.bot.repository.NotificationLogRepository;
 import com.plantcare.bot.repository.UserRepository;
+import io.micrometer.core.instrument.Timer;
+import io.sentry.Sentry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -24,11 +29,9 @@ import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKe
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardRow;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 
+import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDateTime;
-import java.time.LocalTime;
-import java.time.ZoneId;
-import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -49,11 +52,30 @@ public class NotificationSchedulerService {
     private final SchedulerHealthTracker schedulerHealthTracker;
     private final com.plantcare.bot.weather.service.WeatherService weatherService;
     private final com.plantcare.bot.seasonal.service.SeasonalIntervalService seasonalIntervalService;
+    private final QuietHoursPolicy quietHoursPolicy;
+    private final ReminderKeyboardFactory reminderKeyboardFactory;
+    private final Clock clock;
+    private final MetricsService metricsService;
 
     @Scheduled(fixedRate = 60_000)
     @Transactional
     public void checkAndSendNotifications() {
-        executeTick();
+        // Issue #114: весь тик выполняется в изолированном scope с тегом
+        // layer=scheduler/feature — captureException внутри получит верные теги,
+        // а вызовы weather внутри тика не загрязнят scope соседних задач
+        // shared-потока @Scheduled.
+        SentryTags.runWithLayer(Layer.SCHEDULER, "NotificationSchedulerService", () -> {
+            // Issue #115: оборачиваем тик в Timer, чтобы в Prometheus была видна
+            // длительность обработки (p50/p95/p99). Сам executeTick остаётся
+            // без изменений — Timer.Sample.stop() запишет latency в hot path
+            // только один раз за тик.
+            Timer.Sample sample = metricsService.startSchedulerTickTimer();
+            try {
+                executeTick();
+            } finally {
+                metricsService.stopSchedulerTickTimer(sample);
+            }
+        });
     }
 
     /**
@@ -118,6 +140,7 @@ public class NotificationSchedulerService {
             return SendOneResult.sent();
         } catch (Exception e) {
             log.error("sendOneSchedule failed for schedule={}: {}", scheduleId, e.getMessage(), e);
+            Sentry.captureException(e);
             return SendOneResult.failed(e.getMessage());
         }
     }
@@ -201,6 +224,7 @@ public class NotificationSchedulerService {
                         .add(schedule);
             } catch (Exception e) {
                 log.error("Error checking schedule id={}: {}", schedule.getId(), e.getMessage(), e);
+                Sentry.captureException(e);
             }
         }
 
@@ -209,6 +233,7 @@ public class NotificationSchedulerService {
                 sendNotification(soilCheck.getPlant().getUser(), soilCheck.getPlant(), soilCheck);
             } catch (Exception e) {
                 log.error("Error sending soil-check notification: {}", e.getMessage(), e);
+                Sentry.captureException(e);
             }
         }
 
@@ -217,6 +242,7 @@ public class NotificationSchedulerService {
                 sendNotification(acclim.getPlant().getUser(), acclim.getPlant(), acclim);
             } catch (Exception e) {
                 log.error("Error sending acclimation watering notification: {}", e.getMessage(), e);
+                Sentry.captureException(e);
             }
         }
 
@@ -230,6 +256,7 @@ public class NotificationSchedulerService {
                 }
             } catch (Exception e) {
                 log.error("Error sending notifications group: {}", e.getMessage(), e);
+                Sentry.captureException(e);
             }
         }
 
@@ -251,7 +278,11 @@ public class NotificationSchedulerService {
             return false;
         }
 
-        if (isQuietHours(user, now)) {
+        // Quiet-hours считаем по абсолютному Instant из clock'а, а не из
+        // LocalDateTime-параметра `now` — иначе при не-UTC JVM TZ wall-clock
+        // в `now` интерпретировался бы как UTC и quiet-hours съезжали бы на
+        // offset (см. issue #118, регрессия после удаления приватного isQuietHours).
+        if (quietHoursPolicy.isQuiet(user, clock.instant())) {
             return false;
         }
 
@@ -262,38 +293,6 @@ public class NotificationSchedulerService {
                 schedule.getTaskType(),
                 deduplicationCutoff
         );
-    }
-
-    private boolean isQuietHours(User user, LocalDateTime now) {
-        ZoneId userZone;
-
-        try {
-            userZone = ZoneId.of(user.getTimezone());
-        } catch (Exception e) {
-            log.warn("Invalid timezone '{}' for user {}, defaulting to UTC",
-                    user.getTimezone(), user.getTelegramChatId());
-            userZone = ZoneId.of("UTC");
-        }
-
-        // Берём абсолютный момент через Instant.now() — независимо от JVM-зоны.
-        // Раньше брали now.atZone(systemDefault()), что предполагало JVM=UTC. При
-        // случайной переустановке TZ контейнера (TZ=Europe/Moscow на docker run)
-        // quiet-hours смещались бы на величину этой зоны. Instant.now() это исключает.
-        ZonedDateTime userNow = Instant.now().atZone(userZone);
-        LocalTime userTime = userNow.toLocalTime();
-
-        LocalTime start = user.getQuietHoursStart();
-        LocalTime end = user.getQuietHoursEnd();
-
-        if (start.equals(end)) {
-            return false;
-        }
-
-        if (start.isBefore(end)) {
-            return !userTime.isBefore(start) && userTime.isBefore(end);
-        }
-
-        return !userTime.isBefore(start) || userTime.isBefore(end);
     }
 
     private void sendNotification(User user, Plant plant, CareSchedule schedule) {
@@ -321,6 +320,7 @@ public class NotificationSchedulerService {
         try {
             telegramClientProvider.getTelegramClient().execute(message);
             saveNotificationLog(plant, schedule.getTaskType());
+            metricsService.recordNotificationSent(MetricsService.CHANNEL_TELEGRAM, schedule.getTaskType());
 
             log.info("Sent notification for plant '{}' id={} to user {} (acclimation={})",
                     plant.getName(), plant.getId(), user.getTelegramChatId(), inAcclimation);
@@ -381,7 +381,15 @@ public class NotificationSchedulerService {
 
             for (CareSchedule schedule : schedules) {
                 saveNotificationLog(schedule.getPlant(), schedule.getTaskType());
+                // Каждый сгруппированный пуш считаем за отправленное уведомление —
+                // юзер получил один message, но он покрывает N задач, и срезы по
+                // task_type нужны для аналитики «сколько поливных пушей в день».
+                metricsService.recordNotificationSent(
+                        MetricsService.CHANNEL_TELEGRAM, schedule.getTaskType());
             }
+            // Плюс отдельный счётчик именно для дайджестов — чтобы видеть, какая
+            // доля уведомлений уходит группой, а какая поштучно.
+            metricsService.recordDigestSent();
 
             log.info("Sent digest id={} with {} tasks to user {}",
                     savedDigest.getId(), schedules.size(), user.getTelegramChatId());
@@ -441,57 +449,7 @@ public class NotificationSchedulerService {
     }
 
     private InlineKeyboardMarkup buildKeyboard(Long scheduleId, TaskType taskType) {
-        // SOIL_CHECK не имеет "Сделал/Отложить/Пропустить" — у него три варианта результата.
-        if (taskType == TaskType.SOIL_CHECK) {
-            return buildSoilCheckKeyboard(scheduleId);
-        }
-
-        String doneBtnLabel = switch (taskType) {
-            case WATERING -> "✅ Полил";
-            case MISTING -> "✅ Опрыскал";
-            case FERTILIZING -> "✅ Удобрил";
-            case SOIL_CHECK -> "✅ Проверил"; // unreachable, exhaustive switch
-        };
-
-        InlineKeyboardButton doneBtn = InlineKeyboardButton.builder()
-                .text(doneBtnLabel)
-                .callbackData("v1:done:" + scheduleId)
-                .build();
-
-        InlineKeyboardButton snoozeBtn = InlineKeyboardButton.builder()
-                .text("⏰ Через 2 часа")
-                .callbackData("v1:snooze:" + scheduleId)
-                .build();
-
-        InlineKeyboardButton skipBtn = InlineKeyboardButton.builder()
-                .text("❌ Пропустить")
-                .callbackData("v1:skip:" + scheduleId)
-                .build();
-
-        return InlineKeyboardMarkup.builder()
-                .keyboardRow(new InlineKeyboardRow(doneBtn, snoozeBtn, skipBtn))
-                .build();
-    }
-
-    private InlineKeyboardMarkup buildSoilCheckKeyboard(Long scheduleId) {
-        InlineKeyboardButton dryBtn = InlineKeyboardButton.builder()
-                .text("✅ Сухая")
-                .callbackData("v1:soil_dry:" + scheduleId)
-                .build();
-
-        InlineKeyboardButton wetBtn = InlineKeyboardButton.builder()
-                .text("❌ Влажная")
-                .callbackData("v1:soil_wet:" + scheduleId)
-                .build();
-
-        InlineKeyboardButton unkBtn = InlineKeyboardButton.builder()
-                .text("🤷 Не знаю")
-                .callbackData("v1:soil_unk:" + scheduleId)
-                .build();
-
-        return InlineKeyboardMarkup.builder()
-                .keyboardRow(new InlineKeyboardRow(dryBtn, wetBtn, unkBtn))
-                .build();
+        return reminderKeyboardFactory.buildReminderKeyboard(scheduleId, taskType);
     }
 
     private String taskLabel(TaskType taskType) {
@@ -505,14 +463,24 @@ public class NotificationSchedulerService {
 
     private void handleTelegramError(User user, TelegramApiException e) {
         String errorMessage = e.getMessage();
+        MetricsService.TelegramErrorCode code = MetricsService.TelegramErrorCode.fromMessage(errorMessage);
+        metricsService.recordTelegramApiError(code);
 
         if (errorMessage != null && errorMessage.contains("403")) {
             log.warn("Bot blocked by user {}, marking as blocked", user.getTelegramChatId());
             user.setBlocked(true);
             userRepository.save(user);
+            metricsService.recordNotificationFailed(
+                    MetricsService.CHANNEL_TELEGRAM, MetricsService.FailureReason.BLOCKED);
         } else {
             log.error("Failed to send notification to user {}: {}",
                     user.getTelegramChatId(), errorMessage, e);
+            MetricsService.FailureReason reason = switch (code) {
+                case RATE_LIMITED -> MetricsService.FailureReason.RATE_LIMIT;
+                case BAD_REQUEST, FORBIDDEN -> MetricsService.FailureReason.API_ERROR;
+                case OTHER -> MetricsService.FailureReason.OTHER;
+            };
+            metricsService.recordNotificationFailed(MetricsService.CHANNEL_TELEGRAM, reason);
         }
     }
 

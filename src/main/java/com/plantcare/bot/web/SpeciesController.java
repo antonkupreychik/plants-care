@@ -1,75 +1,79 @@
 package com.plantcare.bot.web;
 
+import com.plantcare.bot.api.generated.SpeciesApi;
+import com.plantcare.bot.api.generated.model.PageResponseSpeciesSummaryDto;
+import com.plantcare.bot.api.generated.model.SpeciesDetailDto;
+import com.plantcare.bot.api.generated.model.SpeciesSummaryDto;
+import com.plantcare.bot.domain.Species;
 import com.plantcare.bot.service.SpeciesService;
-import com.plantcare.bot.web.dto.PageResponse;
-import com.plantcare.bot.web.dto.SpeciesDetailDto;
-import com.plantcare.bot.web.dto.SpeciesSummaryDto;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
 
 /**
  * Публичный REST API справочника видов растений.
  *
- * Аутентификация не требуется. Ответы кешируются в {@code species-list} / {@code species-detail}
- * (TTL 1 час); кеш сбрасывается при любом изменении через AdminSpeciesService.
+ * <p>Документация и mapping живут в сгенерированном {@link SpeciesApi}.
+ * Аутентификация не требуется. Ответы кешируются в {@code species-list} /
+ * {@code species-detail} (TTL 1 час); кеш сбрасывается при любом изменении
+ * через {@code AdminSpeciesService}.
  */
 @Slf4j
 @RestController
-@RequestMapping("/api/v1/species")
 @RequiredArgsConstructor
-public class SpeciesController {
+public class SpeciesController implements SpeciesApi {
+
+    private static final int MAX_LIMIT = 100;
 
     private final SpeciesService speciesService;
 
-    /**
-     * Возвращает страницу видов с опциональной фильтрацией по подстроке.
-     *
-     * Параметр {@code size} ограничен значением 100 независимо от переданного значения.
-     * Если {@code q} пустой или отсутствует, возвращаются все виды.
-     *
-     * @param q    подстрока для поиска по названию; пустая строка — без фильтра
-     * @param page номер страницы (0-based)
-     * @param size размер страницы; применяется {@code min(size, 100)}
-     * @return страница с результатами и метаданными пагинации
-     */
-    @GetMapping
-    public PageResponse<SpeciesSummaryDto> list(
-            @RequestParam(defaultValue = "") String q,
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size
-    ) {
-        int effectiveSize = Math.min(size, 100);
-        log.debug("Species list request. q='{}', page={}, size={}", q, page, effectiveSize);
+    @Override
+    public PageResponseSpeciesSummaryDto listSpecies(String q, Integer offset, Integer limit) {
+        int safeLimit = Math.min(Math.max(limit, 1), MAX_LIMIT);
+        int safeOffset = Math.max(0, offset);
+        int page = safeOffset / safeLimit;
 
-        Page<SpeciesSummaryDto> speciesPage = speciesService.findPage(q, PageRequest.of(page, effectiveSize))
-                .map(SpeciesSummaryDto::from);
+        log.debug("Species list request. q='{}', offset={}, limit={}", q, safeOffset, safeLimit);
 
-        return new PageResponse<>(
-                speciesPage.getContent(),
-                speciesPage.getNumber(),
-                speciesPage.getSize(),
-                speciesPage.getTotalElements(),
-                speciesPage.getTotalPages()
-        );
+        Page<Species> speciesPage = speciesService.findPage(q, PageRequest.of(page, safeLimit));
+
+        List<SpeciesSummaryDto> items = speciesPage.getContent().stream()
+                .map(SpeciesController::toSummary)
+                .toList();
+
+        return new PageResponseSpeciesSummaryDto(items, speciesPage.getTotalElements(), safeOffset, safeLimit);
     }
 
-    /**
-     * Возвращает детальную информацию о виде, включая поле {@code description}.
-     *
-     * @param id идентификатор вида
-     * @return DTO с полными данными вида
-     * @throws jakarta.persistence.EntityNotFoundException если вид не найден (→ 404)
-     */
-    @GetMapping("/{id}")
-    public SpeciesDetailDto getById(@PathVariable Long id) {
+    @Override
+    public SpeciesDetailDto getSpecies(Long id) {
         log.debug("Species detail request. id={}", id);
-        return SpeciesDetailDto.from(speciesService.getById(id));
+        return toDetail(speciesService.getById(id));
+    }
+
+    private static SpeciesSummaryDto toSummary(Species s) {
+        return new SpeciesSummaryDto(s.getId(), s.getName())
+                .latinName(s.getLatinName())
+                .wateringDays(s.getWateringDays())
+                .mistingDays(s.getMistingDays())
+                .fertilizingDays(s.getFertilizingDays())
+                .soilCheckDays(s.getSoilCheckDays())
+                .careDifficulty(s.getCareDifficulty() != null ? s.getCareDifficulty().name() : null)
+                .lightPreference(s.getLightPreference() != null ? s.getLightPreference().name() : null);
+    }
+
+    private static SpeciesDetailDto toDetail(Species s) {
+        return new SpeciesDetailDto(s.getId(), s.getName())
+                .latinName(s.getLatinName())
+                .wateringDays(s.getWateringDays())
+                .mistingDays(s.getMistingDays())
+                .fertilizingDays(s.getFertilizingDays())
+                .soilCheckDays(s.getSoilCheckDays())
+                .careDifficulty(s.getCareDifficulty() != null ? s.getCareDifficulty().name() : null)
+                .lightPreference(s.getLightPreference() != null ? s.getLightPreference().name() : null)
+                .description(s.getDescription());
     }
 }

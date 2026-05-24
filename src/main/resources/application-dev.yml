@@ -9,3 +9,8 @@ logging:
   level:
     org.hibernate.SQL: DEBUG
     org.hibernate.orm.jdbc.bind: TRACE
+
+# Issue #114: на dev Sentry отключён — локально ошибки смотрим в логах,
+# квоту free-tier не тратим.
+sentry:
+  enabled: false

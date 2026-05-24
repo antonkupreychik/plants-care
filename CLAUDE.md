@@ -1,7 +1,7 @@
 # Plants Care Bot
 
 Telegram-бот для напоминаний об уходе за домашними растениями.
-**Java 21 + Spring Boot 3.3 + PostgreSQL 16 + Flyway + Testcontainers.**
+**Java 21 + Spring Boot 3.5 + PostgreSQL 16 + Flyway + Testcontainers.**
 
 Это pet-проект, но боевой — деплоится на Railway, ходит в реальный Telegram API.
 Любая ошибка в шедулере/таймзонах приведёт к промахам напоминаний у живых пользователей.
@@ -11,7 +11,7 @@ Telegram-бот для напоминаний об уходе за домашн�
 ## Стек и его границы (строго)
 
 - **Java 21**. Используй язык по версии: `record`, sealed-классы, pattern matching, `var` в локальных, текстовые блоки. Виртуальные потоки — только осознанно, не на каждый сервис.
-- **Spring Boot 3.3.x**. Namespace — `jakarta.*`, не `javax.*`. Не апать минор/мажор без отдельной задачи.
+- **Spring Boot 3.5.x** (актуальная версия в `pom.xml` — 3.5.14). Namespace — `jakarta.*`, не `javax.*`. Не апать минор/мажор без отдельной задачи.
 - **PostgreSQL 16**. Используются JSONB и `tsvector` (full-text). Не ломай это упрощением до `text`.
 - **Flyway** — единственный способ менять схему. Никаких `ddl-auto: update`.
 - **Hibernate / Spring Data JPA**. Entity — class, DTO — record.

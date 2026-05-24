@@ -29,12 +29,14 @@ import org.telegram.telegrambots.meta.generics.TelegramClient;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.Period;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * Единое место рендера карточки растения.
@@ -68,6 +70,13 @@ public class PlantCardService {
 
     private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("dd.MM");
     private static final DateTimeFormatter HISTORY_DATE_FMT = DateTimeFormatter.ofPattern("dd.MM");
+
+    /**
+     * Полный формат даты «15 марта 2024» — для строки «С тобой с…» в карточке
+     * (issue #117). Locale = ru, чтобы месяц был на русском в любом окружении JVM.
+     */
+    private static final DateTimeFormatter ACQUIRED_DATE_FMT =
+            DateTimeFormatter.ofPattern("dd MMMM yyyy", Locale.forLanguageTag("ru"));
 
     private final PlantService plantService;
     private final PlantRepository plantRepository;
@@ -195,6 +204,9 @@ public class PlantCardService {
                     .append(escapeMd(plant.getLocation().getDisplayName()))
                     .append("\n");
         }
+
+        // issue #117: «С тобой с …» — только если юзер указал дату.
+        appendAcquiredAtLine(text, plant);
 
         if (plant.getPhotoFileId() == null || plant.getPhotoFileId().isBlank()) {
             text.append("📷 Фото: не загружено\n");
@@ -1175,6 +1187,9 @@ public class PlantCardService {
             sb.append("📍 ").append(escapeMd(plant.getLocation().getDisplayName())).append("\n");
         }
 
+        // issue #117: «С тобой с …» — после имени/локации, до фото/баннеров.
+        appendAcquiredAtLine(sb, plant);
+
         if (plant.getPhotoFileId() != null && !plant.getPhotoFileId().isBlank()) {
             sb.append("📷 Фото загружено\n");
         }
@@ -1252,6 +1267,17 @@ public class PlantCardService {
             }
 
             rows.add(careRow);
+
+            // 1a) Ретро-отметка (issue #118): «Я уже ухаживал». Показываем только
+            // когда активные расписания есть — иначе ретро отмечать просто нечего.
+            // Формулировку выбираем компактно по числу активных типов: для одного
+            // — точное слово ("полил/опрыскал/удобрил"), для нескольких — обобщённо.
+            InlineKeyboardRow retroRow = new InlineKeyboardRow();
+            retroRow.add(InlineKeyboardButton.builder()
+                    .text(retroCareLabel(sorted))
+                    .callbackData("v1:back_care:" + plant.getId())
+                    .build());
+            rows.add(retroRow);
         }
 
         // 2) Вспомогательные действия: Фото (если есть), История, Настройки.
@@ -1488,6 +1514,106 @@ public class PlantCardService {
             case FERTILIZING -> "Удобрил";
             case SOIL_CHECK -> "Проверил";
         };
+    }
+
+    /**
+     * Текст кнопки ретро-отметки ухода в карточке (issue #118).
+     * Если активный тип один — берём его глагол: «Я уже полил», «Я уже опрыскал»,
+     * «Я уже удобрил». Если их несколько — общее «Я уже ухаживал», чтобы кнопка
+     * не вырастала в полстроки. SOIL_CHECK как таковой ретро-отметкой не считаем
+     * (это not-care, а check), его сюда не пускаем.
+     */
+    private String retroCareLabel(List<CareSchedule> activeSchedules) {
+        long careTypes = activeSchedules.stream()
+                .map(CareSchedule::getTaskType)
+                .filter(t -> t != TaskType.SOIL_CHECK)
+                .distinct()
+                .count();
+        if (careTypes == 1) {
+            TaskType only = activeSchedules.stream()
+                    .map(CareSchedule::getTaskType)
+                    .filter(t -> t != TaskType.SOIL_CHECK)
+                    .findFirst()
+                    .orElse(TaskType.WATERING);
+            return "✅ Я уже " + doneVerb(only).toLowerCase();
+        }
+        return "✅ Я уже ухаживал";
+    }
+
+    /**
+     * Добавляет в текст карточки строку «🌱 С тобой с DD MMMM YYYY (возраст)»,
+     * если у растения проставлен {@code acquiredAt} (issue #117).
+     * Возраст печатается до архивации — для активного растения «сегодня»,
+     * для архивного передавай {@code referenceDay = archivedAt.toLocalDate()}.
+     */
+    private void appendAcquiredAtLine(StringBuilder sb, Plant plant) {
+        LocalDate acquiredAt = plant.getAcquiredAt();
+        if (acquiredAt == null) {
+            return;
+        }
+        LocalDate reference = todayInUserZone(plant.getUser());
+        appendAcquiredAtLine(sb, acquiredAt, reference);
+    }
+
+    /**
+     * Вариант с явной reference-датой — для архивных карточек, где возраст
+     * считается до даты архивации, а не до сегодня.
+     */
+    void appendAcquiredAtLine(StringBuilder sb, LocalDate acquiredAt, LocalDate reference) {
+        if (acquiredAt == null) {
+            return;
+        }
+        sb.append("🌱 С тобой с ")
+                .append(acquiredAt.format(ACQUIRED_DATE_FMT))
+                .append(" (")
+                .append(formatPlantAge(acquiredAt, reference))
+                .append(")\n");
+    }
+
+    /**
+     * Возраст растения «N лет M месяцев» с правильным русским склонением
+     * (issue #117). Если ≤ acquiredAt + 1 месяц — «меньше месяца».
+     * Если месяцы = 0 — печатаем только годы; если годы = 0 — только месяцы.
+     */
+    static String formatPlantAge(LocalDate acquiredAt, LocalDate reference) {
+        if (acquiredAt == null || reference == null || !reference.isAfter(acquiredAt)) {
+            return "меньше месяца";
+        }
+        Period p = Period.between(acquiredAt, reference);
+        int years = p.getYears();
+        int months = p.getMonths();
+
+        if (years == 0 && months == 0) {
+            return "меньше месяца";
+        }
+
+        StringBuilder out = new StringBuilder();
+        if (years > 0) {
+            out.append(years).append(' ').append(pluralizeYears(years));
+        }
+        if (months > 0) {
+            if (!out.isEmpty()) {
+                out.append(' ');
+            }
+            out.append(months).append(' ').append(pluralizeMonths(months));
+        }
+        return out.toString();
+    }
+
+    private static String pluralizeYears(int n) {
+        int mod10 = Math.abs(n) % 10;
+        int mod100 = Math.abs(n) % 100;
+        if (mod10 == 1 && mod100 != 11) return "год";
+        if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return "года";
+        return "лет";
+    }
+
+    private static String pluralizeMonths(int n) {
+        int mod10 = Math.abs(n) % 10;
+        int mod100 = Math.abs(n) % 100;
+        if (mod10 == 1 && mod100 != 11) return "месяц";
+        if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return "месяца";
+        return "месяцев";
     }
 
     /**

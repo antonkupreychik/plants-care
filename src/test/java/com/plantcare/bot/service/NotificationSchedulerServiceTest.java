@@ -8,6 +8,7 @@ import com.plantcare.bot.domain.Plant;
 import com.plantcare.bot.domain.User;
 import com.plantcare.bot.domain.enums.NotificationType;
 import com.plantcare.bot.domain.enums.TaskType;
+import com.plantcare.bot.metrics.MetricsService;
 import com.plantcare.bot.repository.CareScheduleRepository;
 import com.plantcare.bot.repository.NotificationDigestRepository;
 import com.plantcare.bot.repository.NotificationLogRepository;
@@ -30,8 +31,11 @@ import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKe
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 import org.telegram.telegrambots.meta.generics.TelegramClient;
 
+import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.time.ZoneOffset;
 import java.util.Collection;
 import java.util.List;
 
@@ -64,6 +68,38 @@ class NotificationSchedulerServiceTest {
 
     @Mock
     private SchedulerHealthTracker schedulerHealthTracker;
+
+    // Зависимости, добавленные после рефакторинга (issue #69 weather, #67 seasonal,
+    // #118 quiet-hours/keyboard вынесены в отдельные компоненты). Моки нужны
+    // потому что без них @InjectMocks вернёт null и тик упадёт в NPE на первом
+    // же вызове isWeatherUsable/isQuiet/buildReminderKeyboard.
+    @Mock
+    private com.plantcare.bot.weather.service.WeatherService weatherService;
+
+    @Mock
+    private com.plantcare.bot.seasonal.service.SeasonalIntervalService seasonalIntervalService;
+
+    @Mock
+    private QuietHoursPolicy quietHoursPolicy;
+
+    @Mock
+    private MetricsService metricsService;
+
+    /**
+     * Реальный экземпляр, не мок: проверки в тестах смотрят на содержимое
+     * клавиатуры (число кнопок, callback_data). Фабрика — pure-функция без
+     * зависимостей, мокать смысла нет.
+     */
+    @org.mockito.Spy
+    private ReminderKeyboardFactory reminderKeyboardFactory = new ReminderKeyboardFactory();
+
+    /**
+     * Реальный Clock с фиксированным моментом — quiet-hours проверка теперь
+     * читает {@code clock.instant()} вместо передаваемого LocalDateTime
+     * (фикс регрессии после #118, см. NotificationSchedulerService.shouldSend).
+     */
+    @org.mockito.Spy
+    private Clock clock = Clock.fixed(Instant.parse("2026-05-24T12:00:00Z"), ZoneOffset.UTC);
 
     @InjectMocks
     private NotificationSchedulerService service;
@@ -98,6 +134,16 @@ class NotificationSchedulerServiceTest {
         ReflectionTestUtils.setField(user, "id", 1L);
         ReflectionTestUtils.setField(plant, "id", 10L);
         ReflectionTestUtils.setField(schedule, "id", 100L);
+
+        // По умолчанию quiet-hours не активны (любой момент проходит фильтр).
+        // Конкретные тесты QuietHours переопределяют через свой when(...).
+        // Шедулер с #118-фикса вызывает Instant-перегрузку (см. shouldSend).
+        when(quietHoursPolicy.isQuiet(any(User.class), any(Instant.class)))
+                .thenReturn(false);
+        // По умолчанию сезонная корректировка возвращает базовый интервал —
+        // тесты, проверяющие сезонную логику, есть отдельно от этого набора.
+        when(seasonalIntervalService.effectiveIntervalDays(any(), any(), any(Integer.class)))
+                .thenAnswer(inv -> inv.getArgument(2, Integer.class));
     }
 
     @Nested
@@ -565,6 +611,9 @@ class NotificationSchedulerServiceTest {
             user.setQuietHoursEnd(LocalTime.of(23, 59));
 
             when(careScheduleRepository.findDueSchedules(any())).thenReturn(List.of(schedule));
+            // С #118-фикса quiet-проверка идёт через Instant-перегрузку.
+            when(quietHoursPolicy.isQuiet(any(User.class), any(Instant.class)))
+                    .thenReturn(true);
 
             service.checkAndSendNotifications();
 
@@ -706,6 +755,143 @@ class NotificationSchedulerServiceTest {
             verify(telegramClient, never()).execute(any(SendMessage.class));
             verify(notificationDigestRepository, never()).save(any());
             verify(notificationLogRepository, never()).save(any());
+        }
+    }
+
+    @Nested
+    @DisplayName("Метрики (#115)")
+    class Metrics {
+
+        @Test
+        @DisplayName("Каждый тик оборачивается в Timer.Sample (start + stop) даже без расписаний")
+        void should_wrap_each_tick_in_timer_sample_when_called() {
+            when(careScheduleRepository.findDueSchedules(any())).thenReturn(List.of());
+            io.micrometer.core.instrument.Timer.Sample sample =
+                    mock(io.micrometer.core.instrument.Timer.Sample.class);
+            when(metricsService.startSchedulerTickTimer()).thenReturn(sample);
+
+            service.checkAndSendNotifications();
+
+            verify(metricsService).startSchedulerTickTimer();
+            verify(metricsService).stopSchedulerTickTimer(sample);
+        }
+
+        @Test
+        @DisplayName("Timer.stop вызывается даже если tick упал с исключением (finally)")
+        void should_stop_timer_when_tick_fails_with_exception() {
+            io.micrometer.core.instrument.Timer.Sample sample =
+                    mock(io.micrometer.core.instrument.Timer.Sample.class);
+            when(metricsService.startSchedulerTickTimer()).thenReturn(sample);
+            when(careScheduleRepository.findDueSchedules(any()))
+                    .thenThrow(new RuntimeException("DB down"));
+
+            try {
+                service.checkAndSendNotifications();
+            } catch (RuntimeException expected) {
+                // ожидаемо
+            }
+
+            verify(metricsService).startSchedulerTickTimer();
+            verify(metricsService).stopSchedulerTickTimer(sample);
+        }
+
+        @Test
+        @DisplayName("После успешной отправки одиночного уведомления увеличивается notifications.sent")
+        void should_record_notification_sent_when_single_push_succeeds() throws TelegramApiException {
+            when(careScheduleRepository.findDueSchedules(any())).thenReturn(List.of(schedule));
+            when(notificationLogRepository.existsByPlantIdAndTaskTypeAndSentAtAfter(any(), any(), any()))
+                    .thenReturn(false);
+            when(telegramClientProvider.getTelegramClient()).thenReturn(telegramClient);
+
+            service.checkAndSendNotifications();
+
+            verify(metricsService).recordNotificationSent(MetricsService.CHANNEL_TELEGRAM, TaskType.WATERING);
+            verify(metricsService, never()).recordNotificationFailed(any(), any());
+        }
+
+        @Test
+        @DisplayName("При 429 от Telegram пишутся telegram.api.errors[429] и notifications.failed[rate_limit]")
+        void should_record_rate_limit_failure_when_telegram_returns_429() throws TelegramApiException {
+            when(careScheduleRepository.findDueSchedules(any())).thenReturn(List.of(schedule));
+            when(notificationLogRepository.existsByPlantIdAndTaskTypeAndSentAtAfter(any(), any(), any()))
+                    .thenReturn(false);
+            when(telegramClientProvider.getTelegramClient()).thenReturn(telegramClient);
+            when(telegramClient.execute(any(SendMessage.class)))
+                    .thenThrow(new TelegramApiException("[429] Too Many Requests: retry after 30"));
+
+            service.checkAndSendNotifications();
+
+            verify(metricsService).recordTelegramApiError(MetricsService.TelegramErrorCode.RATE_LIMITED);
+            verify(metricsService).recordNotificationFailed(
+                    MetricsService.CHANNEL_TELEGRAM, MetricsService.FailureReason.RATE_LIMIT);
+            verify(metricsService, never()).recordNotificationSent(any(), any());
+        }
+
+        @Test
+        @DisplayName("При 403 от Telegram пишутся telegram.api.errors[403] и notifications.failed[blocked]")
+        void should_record_blocked_failure_when_telegram_returns_403() throws TelegramApiException {
+            when(careScheduleRepository.findDueSchedules(any())).thenReturn(List.of(schedule));
+            when(notificationLogRepository.existsByPlantIdAndTaskTypeAndSentAtAfter(any(), any(), any()))
+                    .thenReturn(false);
+            when(telegramClientProvider.getTelegramClient()).thenReturn(telegramClient);
+            when(telegramClient.execute(any(SendMessage.class)))
+                    .thenThrow(new TelegramApiException("Forbidden: bot was blocked by the user [403]"));
+
+            service.checkAndSendNotifications();
+
+            verify(metricsService).recordTelegramApiError(MetricsService.TelegramErrorCode.FORBIDDEN);
+            verify(metricsService).recordNotificationFailed(
+                    MetricsService.CHANNEL_TELEGRAM, MetricsService.FailureReason.BLOCKED);
+        }
+
+        @Test
+        @DisplayName("При прочей ошибке Telegram пишется failed[other]")
+        void should_record_other_failure_when_telegram_throws_unknown_error() throws TelegramApiException {
+            when(careScheduleRepository.findDueSchedules(any())).thenReturn(List.of(schedule));
+            when(notificationLogRepository.existsByPlantIdAndTaskTypeAndSentAtAfter(any(), any(), any()))
+                    .thenReturn(false);
+            when(telegramClientProvider.getTelegramClient()).thenReturn(telegramClient);
+            when(telegramClient.execute(any(SendMessage.class)))
+                    .thenThrow(new TelegramApiException("Network timeout"));
+
+            service.checkAndSendNotifications();
+
+            verify(metricsService).recordTelegramApiError(MetricsService.TelegramErrorCode.OTHER);
+            verify(metricsService).recordNotificationFailed(
+                    MetricsService.CHANNEL_TELEGRAM, MetricsService.FailureReason.OTHER);
+        }
+
+        @Test
+        @DisplayName("Дайджест из 2 задач: 2x recordNotificationSent + 1x recordDigestSent")
+        void should_record_digest_sent_and_per_task_sent_when_digest_pushed() throws TelegramApiException {
+            CareSchedule schedule2 = CareSchedule.builder()
+                    .plant(plant)
+                    .taskType(TaskType.MISTING)
+                    .intervalDays(3)
+                    .nextDueAt(LocalDateTime.now().minusHours(1))
+                    .active(true)
+                    .build();
+            ReflectionTestUtils.setField(schedule2, "id", 101L);
+
+            NotificationDigest savedDigest = NotificationDigest.builder()
+                    .userId(user.getId())
+                    .plantTaskIds(List.of())
+                    .build();
+            ReflectionTestUtils.setField(savedDigest, "id", 500L);
+
+            when(careScheduleRepository.findDueSchedules(any()))
+                    .thenReturn(List.of(schedule, schedule2));
+            when(notificationLogRepository.existsByPlantIdAndTaskTypeAndSentAtAfter(any(), any(), any()))
+                    .thenReturn(false);
+            when(notificationDigestRepository.save(any(NotificationDigest.class)))
+                    .thenReturn(savedDigest);
+            when(telegramClientProvider.getTelegramClient()).thenReturn(telegramClient);
+
+            service.checkAndSendNotifications();
+
+            verify(metricsService).recordNotificationSent(MetricsService.CHANNEL_TELEGRAM, TaskType.WATERING);
+            verify(metricsService).recordNotificationSent(MetricsService.CHANNEL_TELEGRAM, TaskType.MISTING);
+            verify(metricsService).recordDigestSent();
         }
     }
 }
