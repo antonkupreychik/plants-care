@@ -5,6 +5,7 @@ import com.plantcare.bot.domain.Location;
 import com.plantcare.bot.domain.User;
 import com.plantcare.bot.repository.CareScheduleRepository;
 import com.plantcare.bot.repository.PlantRepository;
+import com.plantcare.bot.util.TimeUtils;
 import com.plantcare.bot.weather.service.WeatherService;
 import com.plantcare.bot.util.TimezoneSupport;
 import lombok.RequiredArgsConstructor;
@@ -17,6 +18,7 @@ import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKe
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 import org.telegram.telegrambots.meta.generics.TelegramClient;
 
+import java.time.Clock;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.ZoneId;
@@ -40,12 +42,13 @@ public class MainMenuService {
     private final CareScheduleRepository careScheduleRepository;
     private final LocationService locationService;
     private final CareHistoryService careHistoryService;
+    private final Clock clock;
     private final WeatherService weatherService;
 
     public void sendMainMenu(User user, TelegramClient client) {
         long plantCount = plantRepository.countByUserIdAndArchivedAtIsNull(user.getId());
 
-        LocalDateTime endOfTodayUtc = getEndOfTodayInUtc(user.getTimezone());
+        LocalDateTime endOfTodayUtc = TimeUtils.endOfTodayInUtc(user.getTimezone(), clock);
 
         List<CareSchedule> todaySchedules = careScheduleRepository.findUserSchedulesDueBefore(
                 user.getId(),

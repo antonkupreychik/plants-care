@@ -67,6 +67,127 @@ echo 'testcontainers.reuse.enable=true' >> ~/.testcontainers.properties
 
 - **V1** — основная схема (7 таблиц, индексы, триггеры)
 - **V2** — сидинг 30 популярных видов растений в `species`
+- **V15** — добавляет `client_id VARCHAR(64) NULL` в `care_history` с partial unique index `WHERE client_id IS NOT NULL`. Колонка nullable — записи из Telegram-бота остаются с NULL без конфликтов
+
+## REST API
+
+Идентификация пользователя во всех `/api/v1/**` эндпоинтах (кроме `/health`) — заголовок `X-Chat-Id: <telegramChatId>`.
+
+### Инфраструктура
+
+| Путь | Метод | Описание |
+|---|---|---|
+| `/api/v1/health` | `GET` | Liveness probe — возвращает `{"status":"UP"}` |
+| `/swagger-ui.html` | — | Swagger UI (OpenAPI 3) |
+| `/v3/api-docs` | — | OpenAPI JSON |
+
+### События ухода (issue #86)
+
+| Путь | Метод | Статус ответа | Описание |
+|---|---|---|---|
+| `/api/v1/care-events` | `POST` | 201 | Регистрация ухода (WATER/SPRAY/FERTILIZE). Поле `clientId` обеспечивает идемпотентность: повторный запрос с тем же `clientId` возвращает существующую запись без дублирования |
+| `/api/v1/care-events/{id}` | `DELETE` | 204 | Отмена события через compensation pattern: запись не удаляется физически, создаётся компенсирующая запись |
+| `/api/v1/plants/{id}/history` | `GET` | 200 | История ухода за растением с offset-пагинацией. Query params: `limit` [1–100], default 20; `offset`, default 0. Проверяет ownership растения |
+| `/api/v1/today` | `GET` | 200 | Задачи ухода на сегодня в таймзоне пользователя |
+| `/api/v1/calendar` | `GET` | 200 | Расписание за произвольный период. Query params: `from`, `to` (ISO date). Диапазон не более 60 дней. Дни без задач в ответ не включаются |
+| `/api/v1/stats/streak` | `GET` | 200 | Текущий стрик растения (последовательные выполнения без пропусков). Query param: `plantId` |
+
+### Формат ошибок
+
+### Plants
+
+| Метод | Путь | Описание |
+|---|---|---|
+| `GET` | `/api/v1/plants` | Список растений. Параметры: `locationId` (фильтр), `offset` (по умолч. 0), `limit` (по умолч. 20, макс. 100) |
+| `GET` | `/api/v1/plants/{id}` | Одно растение |
+| `POST` | `/api/v1/plants` | Создать растение (без расписания полива) |
+| `PUT` | `/api/v1/plants/{id}` | Обновить растение. PATCH-семантика: обновляются только переданные поля (`name`, `notes`, `locationId`) |
+| `DELETE` | `/api/v1/plants/{id}` | Soft-delete: выставляет `archivedAt`, из выборок не возвращается |
+
+### Locations
+
+| Метод | Путь | Описание |
+|---|---|---|
+| `GET` | `/api/v1/locations` | Список всех локаций пользователя |
+| `GET` | `/api/v1/locations/{id}` | Одна локация |
+| `POST` | `/api/v1/locations` | Создать локацию |
+| `PUT` | `/api/v1/locations/{id}` | Обновить имя и/или emoji |
+| `DELETE` | `/api/v1/locations/{id}` | Удалить локацию. Если в ней есть растения, обязателен параметр `targetLocationId` — растения переносятся в указанную локацию перед удалением |
+
+### Формат ошибок
+
+Все ошибки `/api/**` возвращаются в едином формате:
+
+```json
+{
+  "error": {
+    "code": "NOT_FOUND",
+    "message": "Resource not found",
+    "details": null
+  }
+}
+```
+
+Поле `details` заполняется при ошибках валидации (`VALIDATION_ERROR`) — содержит список `[{"field": "...", "message": "..."}]`.
+
+## REST API
+
+Публичные эндпоинты, аутентификация не требуется.
+
+### Справочник видов растений
+
+| Метод | Путь | Описание |
+|-------|------|----------|
+| GET | `/api/v1/species` | Список видов с пагинацией |
+| GET | `/api/v1/species/{id}` | Детали вида по id |
+
+Параметры `GET /api/v1/species`:
+
+| Параметр | По умолчанию | Описание |
+|----------|--------------|----------|
+| `q` | `` (пусто) | Поиск по подстроке; если пустой — возвращаются все |
+| `page` | `0` | Номер страницы (0-based) |
+| `size` | `20` | Размер страницы; максимум 100 |
+
+Ответ `GET /api/v1/species`:
+```json
+{
+  "content": [
+    {
+      "id": 1,
+      "name": "Монстера",
+      "latinName": "Monstera deliciosa",
+      "wateringDays": 7,
+      "mistingDays": 3,
+      "fertilizingDays": 14,
+      "soilCheckDays": null,
+      "careDifficulty": "EASY",
+      "lightPreference": "INDIRECT"
+    }
+  ],
+  "page": 0,
+  "size": 20,
+  "totalElements": 30,
+  "totalPages": 2
+}
+```
+
+Ответ `GET /api/v1/species/{id}` — те же поля плюс `description`. При отсутствии записи — `404`.
+
+### Типы ухода
+
+`GET /api/v1/care-types` — статический список типов без пагинации:
+
+```json
+[
+  { "code": "WATERING",     "displayName": "Полив" },
+  { "code": "MISTING",      "displayName": "Опрыскивание" },
+  { "code": "FERTILIZING",  "displayName": "Подкормка" },
+  { "code": "SOIL_CHECK",   "displayName": "Проверка грунта" }
+]
+```
+
+Ответы кешируются на стороне сервера (TTL 1 час, Caffeine). Сброс кеша происходит автоматически при изменении данных через админку.
 
 ## Admin Panel
 

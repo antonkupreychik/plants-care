@@ -14,6 +14,10 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMarkup;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardButton;
@@ -56,10 +60,13 @@ class MainMenuServiceTest {
 
     @BeforeEach
     void setUp() {
+        Clock fixedClock = Clock.fixed(Instant.parse("2026-05-22T12:00:00Z"), ZoneOffset.UTC);
         mainMenuService = new MainMenuService(
                 plantRepository,
                 careScheduleRepository,
                 locationService,
+                careHistoryService,
+                fixedClock,
                 careHistoryService,
                 weatherService
         );

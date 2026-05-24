@@ -6,6 +6,7 @@ spring:
 
   flyway:
     enabled: true
+    validate-on-migrate: false
 
 logging:
   level:

@@ -248,6 +248,50 @@ public class LocationService {
         return saved;
     }
 
+    /**
+     * Обновить имя и/или emoji локации (REST API, issue #85).
+     * Логика инлайновая — вызов через this.renameLocation / this.changeEmoji
+     * обходил бы Spring-прокси и игнорировал их @Transactional,
+     * а также приводил к лишним запросам к БД (до 3× getUserLocationOrThrow).
+     */
+    @Transactional
+    public Location updateLocation(Long userId, Long locationId, String name, String emoji) {
+        Location location = getUserLocationOrThrow(userId, locationId);
+        if (name != null && !name.isBlank()) {
+            String normalizedName = normalizeName(name);
+            validateLocationName(normalizedName);
+            boolean duplicateExists = locationRepository.existsByUserIdAndNameIgnoreCaseAndIdNot(
+                    userId, normalizedName, locationId);
+            if (duplicateExists) {
+                throw new IllegalArgumentException("Такая комната уже есть");
+            }
+            location.setName(normalizedName);
+        }
+        if (emoji != null && !emoji.isBlank()) {
+            String normalizedEmoji = normalizeEmoji(emoji);
+            validateEmoji(normalizedEmoji);
+            location.setEmoji(normalizedEmoji);
+        }
+        return locationRepository.save(location);
+    }
+
+    /**
+     * Удалить пустую локацию (без активных растений). REST API, issue #85.
+     */
+    @Transactional
+    public void deleteEmptyLocation(Long userId, Long locationId) {
+        Location location = getUserLocationOrThrow(userId, locationId);
+        if (location.isDefaultLocation()) {
+            throw new IllegalArgumentException("Cannot delete default location");
+        }
+        long plantCount = plantRepository.countByUserIdAndLocationIdAndArchivedAtIsNull(userId, locationId);
+        if (plantCount > 0) {
+            throw new IllegalArgumentException("Location has plants, provide targetLocationId");
+        }
+        locationRepository.delete(location);
+        log.info("Deleted empty location {} for user {}", locationId, userId);
+    }
+
     @Transactional
     public void deleteLocation(Long userId, Long locationId, Long targetLocationId) {
         Location locationToDelete = getUserLocationOrThrow(userId, locationId);
