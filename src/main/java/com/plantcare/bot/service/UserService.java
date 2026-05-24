@@ -34,6 +34,12 @@ public class UserService {
         return userRepository.findByTelegramChatId(chatId);
     }
 
+    @Transactional(readOnly = true)
+    public User getByIdOrThrow(Long userId) {
+        return userRepository.findById(userId)
+                .orElseThrow(() -> new jakarta.persistence.EntityNotFoundException("User not found: " + userId));
+    }
+
     @Transactional
     public void updateState(User user, ConversationState newState) {
         log.info(

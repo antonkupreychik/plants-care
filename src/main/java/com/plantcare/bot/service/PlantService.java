@@ -2,6 +2,7 @@ package com.plantcare.bot.service;
 
 import com.plantcare.bot.domain.CareHistory;
 import com.plantcare.bot.domain.CareSchedule;
+import com.plantcare.bot.domain.Location;
 import com.plantcare.bot.domain.Plant;
 import com.plantcare.bot.domain.Species;
 import com.plantcare.bot.domain.User;
@@ -10,9 +11,14 @@ import com.plantcare.bot.repository.CareHistoryRepository;
 import com.plantcare.bot.repository.CareScheduleRepository;
 import com.plantcare.bot.repository.PlantRepository;
 import com.plantcare.bot.repository.SpeciesRepository;
+import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.access.AccessDeniedException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Limit;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -30,6 +36,84 @@ public class PlantService {
     private final CareHistoryRepository careHistoryRepository;
     private final SpeciesRepository speciesRepository;
     private final LocationService locationService;
+
+    // =================================================================
+    // REST API CRUD (issue #85)
+    // =================================================================
+
+    @Transactional(readOnly = true)
+    public List<Plant> listPlants(Long userId, Long locationId, int offset, int limit) {
+        int safeLimit = Math.max(1, Math.min(limit, 100));
+        int safeOffset = Math.max(0, offset);
+        if (safeOffset % safeLimit != 0) {
+            throw new IllegalArgumentException("offset must be a multiple of limit");
+        }
+        int page = safeOffset / safeLimit;
+        Pageable pageable = PageRequest.of(page, safeLimit, Sort.by("name").ascending());
+        if (locationId != null) {
+            return plantRepository.findAllByUserIdAndLocationIdAndArchivedAtIsNullOrderByNameAsc(
+                    userId, locationId, pageable);
+        }
+        return plantRepository.findAllByUserIdAndArchivedAtIsNullOrderByNameAsc(userId, pageable);
+    }
+
+    @Transactional(readOnly = true)
+    public Plant getPlantOrThrow(Long userId, Long plantId) {
+        Plant plant = plantRepository.findById(plantId)
+                .orElseThrow(() -> new EntityNotFoundException("Plant not found: " + plantId));
+        if (!plant.getUser().getId().equals(userId)) {
+            throw new AccessDeniedException("Access denied");
+        }
+        if (plant.isArchived()) {
+            throw new EntityNotFoundException("Plant not found: " + plantId);
+        }
+        return plant;
+    }
+
+    @Transactional(readOnly = true)
+    public long countPlants(Long userId, Long locationId) {
+        if (locationId != null) {
+            return plantRepository.countByUserIdAndLocationIdAndArchivedAtIsNull(userId, locationId);
+        }
+        return plantRepository.countByUserIdAndArchivedAtIsNull(userId);
+    }
+
+    @Transactional
+    public Plant createPlant(User user, String name, String notes, Long locationId) {
+        Location location;
+        if (locationId != null) {
+            location = locationService.getUserLocationOrThrow(user.getId(), locationId);
+        } else {
+            location = locationService.getOrCreateDefaultLocation(user);
+        }
+        Plant plant = Plant.builder()
+                .user(user)
+                .location(location)
+                .name(name)
+                .notes(notes)
+                .build();
+        Plant saved = plantRepository.save(plant);
+        log.info("Created plant '{}' (id={}) via REST API for user {}", name, saved.getId(), user.getId());
+        return saved;
+    }
+
+    @Transactional
+    public Plant updatePlant(Long userId, Long plantId, String name, String notes, Long locationId) {
+        Plant plant = getPlantOrThrow(userId, plantId);
+        if (name != null) {
+            plant.setName(name);
+        }
+        if (notes != null) {
+            plant.setNotes(notes);
+        }
+        if (locationId != null) {
+            Location location = locationService.getUserLocationOrThrow(userId, locationId);
+            plant.setLocation(location);
+        }
+        Plant saved = plantRepository.save(plant);
+        log.info("Updated plant {} via REST API (user {})", plantId, userId);
+        return saved;
+    }
 
     /**
      * Получить топ популярных видов для отображения на первом экране.
@@ -366,11 +450,11 @@ public class PlantService {
 
     /**
      * Архивирует растение (soft-delete). История ухода остаётся для статистики.
+     * Используется как из Telegram-бота, так и из REST API (issue #85).
      */
     @Transactional
     public void archivePlant(Long userId, Long plantId) {
-        Plant plant = plantRepository.findByUserIdAndIdAndArchivedAtIsNull(userId, plantId)
-                .orElseThrow(() -> new IllegalArgumentException("Растение не найдено"));
+        Plant plant = getPlantOrThrow(userId, plantId);
 
         plant.archive();
         plantRepository.save(plant);
