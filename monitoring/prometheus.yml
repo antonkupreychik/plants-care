@@ -1,0 +1,27 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    monitor: 'plants-care-local'
+
+scrape_configs:
+  - job_name: 'plants-care-bot'
+    metrics_path: '/actuator/prometheus'
+    scheme: http
+    # Локальный dev-стек скрейпит приложение по двум возможным адресам:
+    # 1) host.docker.internal:8080 — когда приложение запущено на хосте
+    #    через `mvn spring-boot:run` (типичный режим разработки).
+    # 2) app:8080 — когда приложение запущено в docker compose
+    #    через `docker compose --profile full --profile monitoring up -d`.
+    # Один из таргетов всегда будет DOWN — это ожидаемо, не алерт.
+    static_configs:
+      - targets:
+          - 'host.docker.internal:8080'
+          - 'app:8080'
+    # На dev-профиле /actuator/prometheus открыт без auth.
+    # На prod (когда заданы ADMIN_USERNAME / ADMIN_PASSWORD_BCRYPT_HASH)
+    # тут понадобится basic_auth — но prod в этом docker-compose не запускается.
+
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
