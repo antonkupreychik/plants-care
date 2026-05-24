@@ -256,7 +256,22 @@ CSRF и session для этого chain выключены: scrape — machine-t
 
 **Содержимое:** 16 панелей в 5 секциях (Users, Notifications, Callbacks, Scheduler, опционально JVM/HTTP).
 
-**Импорт:**
+**Локальный стек одной командой (рекомендуется для разработки):**
+```bash
+docker compose --profile monitoring up -d
+# затем (если app не в Docker, а через mvn spring-boot:run):
+mvn spring-boot:run -Dspring-boot.run.profiles=dev
+```
+Откроет:
+- Prometheus — http://localhost:9090 (таргеты: Status → Targets)
+- Grafana — http://localhost:3000 (без логина, дашборд сразу в «Plants Care → Plants Care Bot — Business Metrics»)
+
+Если app тоже хочется в Docker — добавь профиль `full`:
+```bash
+docker compose --profile full --profile monitoring up -d
+```
+
+**Ручной импорт (если Grafana уже где-то развёрнута):**
 1. В Grafana: **Dashboards → New → Import → Upload JSON file**, выбрать `grafana/plants-care-dashboard.json`.
 2. В выпадающем списке `Prometheus data source` (переменная вверху дашборда) выбрать твой Prometheus.
 3. Save.

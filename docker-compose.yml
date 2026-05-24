@@ -43,5 +43,57 @@ services:
     ports:
       - "${APP_PORT:-8080}:8080"
 
+  prometheus:
+    # Локальный Prometheus, скрейпит /actuator/prometheus приложения.
+    # Запускать через профиль monitoring:
+    #   docker compose --profile monitoring up -d
+    # Если app запущена в контейнере одновременно:
+    #   docker compose --profile full --profile monitoring up -d
+    profiles: ["monitoring"]
+    image: prom/prometheus:v2.54.1
+    container_name: plants-care-prometheus
+    restart: unless-stopped
+    extra_hosts:
+      # На Linux позволяет резолвить host.docker.internal в IP хоста.
+      # На macOS / Windows host.docker.internal работает без этой опции.
+      - "host.docker.internal:host-gateway"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=7d'
+      - '--web.enable-lifecycle'
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+
+  grafana:
+    # Локальная Grafana с автопровиженным дашбордом из grafana/.
+    # Запускать через профиль monitoring:
+    #   docker compose --profile monitoring up -d
+    # Открыть: http://localhost:3000
+    # Anonymous auth включён, логин не нужен; роль — Admin (только для dev).
+    profiles: ["monitoring"]
+    image: grafana/grafana:11.2.2
+    container_name: plants-care-grafana
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: "Admin"
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: "/var/lib/grafana/dashboards/plants-care-dashboard.json"
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+
 volumes:
   postgres_data:
+  prometheus_data:
+  grafana_data:
