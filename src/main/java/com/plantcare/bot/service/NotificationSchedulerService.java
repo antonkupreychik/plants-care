@@ -26,11 +26,9 @@ import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKe
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardRow;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 
+import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDateTime;
-import java.time.LocalTime;
-import java.time.ZoneId;
-import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -51,6 +49,9 @@ public class NotificationSchedulerService {
     private final SchedulerHealthTracker schedulerHealthTracker;
     private final com.plantcare.bot.weather.service.WeatherService weatherService;
     private final com.plantcare.bot.seasonal.service.SeasonalIntervalService seasonalIntervalService;
+    private final QuietHoursPolicy quietHoursPolicy;
+    private final ReminderKeyboardFactory reminderKeyboardFactory;
+    private final Clock clock;
     private final MetricsService metricsService;
 
     @Scheduled(fixedRate = 60_000)
@@ -263,7 +264,11 @@ public class NotificationSchedulerService {
             return false;
         }
 
-        if (isQuietHours(user, now)) {
+        // Quiet-hours считаем по абсолютному Instant из clock'а, а не из
+        // LocalDateTime-параметра `now` — иначе при не-UTC JVM TZ wall-clock
+        // в `now` интерпретировался бы как UTC и quiet-hours съезжали бы на
+        // offset (см. issue #118, регрессия после удаления приватного isQuietHours).
+        if (quietHoursPolicy.isQuiet(user, clock.instant())) {
             return false;
         }
 
@@ -274,38 +279,6 @@ public class NotificationSchedulerService {
                 schedule.getTaskType(),
                 deduplicationCutoff
         );
-    }
-
-    private boolean isQuietHours(User user, LocalDateTime now) {
-        ZoneId userZone;
-
-        try {
-            userZone = ZoneId.of(user.getTimezone());
-        } catch (Exception e) {
-            log.warn("Invalid timezone '{}' for user {}, defaulting to UTC",
-                    user.getTimezone(), user.getTelegramChatId());
-            userZone = ZoneId.of("UTC");
-        }
-
-        // Берём абсолютный момент через Instant.now() — независимо от JVM-зоны.
-        // Раньше брали now.atZone(systemDefault()), что предполагало JVM=UTC. При
-        // случайной переустановке TZ контейнера (TZ=Europe/Moscow на docker run)
-        // quiet-hours смещались бы на величину этой зоны. Instant.now() это исключает.
-        ZonedDateTime userNow = Instant.now().atZone(userZone);
-        LocalTime userTime = userNow.toLocalTime();
-
-        LocalTime start = user.getQuietHoursStart();
-        LocalTime end = user.getQuietHoursEnd();
-
-        if (start.equals(end)) {
-            return false;
-        }
-
-        if (start.isBefore(end)) {
-            return !userTime.isBefore(start) && userTime.isBefore(end);
-        }
-
-        return !userTime.isBefore(start) || userTime.isBefore(end);
     }
 
     private void sendNotification(User user, Plant plant, CareSchedule schedule) {
@@ -462,57 +435,7 @@ public class NotificationSchedulerService {
     }
 
     private InlineKeyboardMarkup buildKeyboard(Long scheduleId, TaskType taskType) {
-        // SOIL_CHECK не имеет "Сделал/Отложить/Пропустить" — у него три варианта результата.
-        if (taskType == TaskType.SOIL_CHECK) {
-            return buildSoilCheckKeyboard(scheduleId);
-        }
-
-        String doneBtnLabel = switch (taskType) {
-            case WATERING -> "✅ Полил";
-            case MISTING -> "✅ Опрыскал";
-            case FERTILIZING -> "✅ Удобрил";
-            case SOIL_CHECK -> "✅ Проверил"; // unreachable, exhaustive switch
-        };
-
-        InlineKeyboardButton doneBtn = InlineKeyboardButton.builder()
-                .text(doneBtnLabel)
-                .callbackData("v1:done:" + scheduleId)
-                .build();
-
-        InlineKeyboardButton snoozeBtn = InlineKeyboardButton.builder()
-                .text("⏰ Через 2 часа")
-                .callbackData("v1:snooze:" + scheduleId)
-                .build();
-
-        InlineKeyboardButton skipBtn = InlineKeyboardButton.builder()
-                .text("❌ Пропустить")
-                .callbackData("v1:skip:" + scheduleId)
-                .build();
-
-        return InlineKeyboardMarkup.builder()
-                .keyboardRow(new InlineKeyboardRow(doneBtn, snoozeBtn, skipBtn))
-                .build();
-    }
-
-    private InlineKeyboardMarkup buildSoilCheckKeyboard(Long scheduleId) {
-        InlineKeyboardButton dryBtn = InlineKeyboardButton.builder()
-                .text("✅ Сухая")
-                .callbackData("v1:soil_dry:" + scheduleId)
-                .build();
-
-        InlineKeyboardButton wetBtn = InlineKeyboardButton.builder()
-                .text("❌ Влажная")
-                .callbackData("v1:soil_wet:" + scheduleId)
-                .build();
-
-        InlineKeyboardButton unkBtn = InlineKeyboardButton.builder()
-                .text("🤷 Не знаю")
-                .callbackData("v1:soil_unk:" + scheduleId)
-                .build();
-
-        return InlineKeyboardMarkup.builder()
-                .keyboardRow(new InlineKeyboardRow(dryBtn, wetBtn, unkBtn))
-                .build();
+        return reminderKeyboardFactory.buildReminderKeyboard(scheduleId, taskType);
     }
 
     private String taskLabel(TaskType taskType) {

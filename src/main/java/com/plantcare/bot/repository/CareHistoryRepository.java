@@ -96,6 +96,25 @@ public interface CareHistoryRepository extends JpaRepository<CareHistory, Long> 
     Optional<CareHistory> findByClientId(String clientId);
 
     /**
+     * Существует ли активная (не-cancelled) запись ухода данного типа за период.
+     * Используется для идемпотентности ретро-отметки (issue #118): юзер второй раз
+     * жмёт «отметить вчера» — не плодим дубликат, говорим «уже отмечено».
+     *
+     * <p>Окно вызывающий передаёт как «начало/конец локального дня в TZ юзера,
+     * сконвертированные в UTC».
+     */
+    @Query("SELECT COUNT(h) > 0 FROM CareHistory h " +
+            "WHERE h.plant.id = :plantId AND h.taskType = :taskType " +
+            "AND h.cancelledBy IS NULL " +
+            "AND h.doneAt >= :from AND h.doneAt < :toExclusive")
+    boolean existsActiveByPlantIdAndTaskTypeInRange(
+            @Param("plantId") Long plantId,
+            @Param("taskType") TaskType taskType,
+            @Param("from") LocalDateTime from,
+            @Param("toExclusive") LocalDateTime toExclusive
+    );
+
+    /**
      * Уникальные пользователи, у которых был хотя бы один активный {@code care_event}
      * за окно {@code (after; now]}. Используется метрикой DAU (issue #115).
      *

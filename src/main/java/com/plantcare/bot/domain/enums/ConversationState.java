@@ -52,5 +52,8 @@ public enum ConversationState {
     AWAITING_VACATION_DAYS,          // ввод числа дней отпуска при выборе «Другое»
 
     // Фото-прогресс (issue #72)
-    AWAITING_PROGRESS_PHOTO            // ждём фото для таймлайна (план «📸 Фото-прогресс»)
+    AWAITING_PROGRESS_PHOTO,           // ждём фото для таймлайна (план «📸 Фото-прогресс»)
+
+    // Ретро-отметка ухода (issue #118): юзер ввёл "Выбрать дату" → ждём DD.MM[.YYYY].
+    AWAITING_CARE_DATE
 }
