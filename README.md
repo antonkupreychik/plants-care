@@ -68,6 +68,8 @@ echo 'testcontainers.reuse.enable=true' >> ~/.testcontainers.properties
 - **V1** — основная схема (7 таблиц, индексы, триггеры)
 - **V2** — сидинг 30 популярных видов растений в `species`
 - **V15** — добавляет `client_id VARCHAR(64) NULL` в `care_history` с partial unique index `WHERE client_id IS NOT NULL`. Колонка nullable — записи из Telegram-бота остаются с NULL без конфликтов
+- **V20** — добавляет `plants.acquired_at DATE NULL` — дата, когда юзер завёл растение. Используется шедулером годовщин и строкой «С тобой с …» в карточке. NULL = в годовщинах не участвует
+- **V21** — таблица `plant_anniversaries_sent` (PK `(plant_id, anniversary_year)`) для идемпотентности годовщин: один пуш на растение в год. FK `ON DELETE CASCADE`. Здесь же — частичный индекс `idx_plants_acquired_active` на `plants(acquired_at) WHERE acquired_at IS NOT NULL AND archived_at IS NULL` под запрос шедулера
 
 ## REST API
 
