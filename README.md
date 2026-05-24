@@ -43,7 +43,8 @@ docker compose --profile full down
 
 После запуска любым способом:
 - Healthcheck: http://localhost:8080/actuator/health
-- Метрики: http://localhost:8080/actuator/metrics
+- Метрики (JSON): http://localhost:8080/actuator/metrics
+- Метрики (Prometheus scrape): http://localhost:8080/actuator/prometheus (см. секцию Observability)
 
 ### Тесты
 
@@ -216,6 +217,40 @@ Rate limit: 5 неудачных попыток в минуту с IP → 429 н
 
 Откат миграций — пересоздание БД (`docker compose down -v && docker compose up -d`).
 Для пет-проекта это нормально, для прода понадобятся undo-миграции.
+
+## Observability
+
+### Prometheus scrape endpoint (issue #115)
+
+`GET /actuator/prometheus` — экспорт бизнес- и инфраструктурных метрик в формате Prometheus. Включён всегда (см. `management.endpoints.web.exposure.include` в `application.yml`).
+
+Доступ:
+
+- **Prod** (заданы `ADMIN_USERNAME` и `ADMIN_PASSWORD_BCRYPT_HASH`) — HTTP Basic с теми же credentials, что и админ-панель, роль `ADMIN`. Prometheus / Grafana Cloud конфигурируется с этими же значениями.
+- **Dev** (admin-credentials не заданы) — без аутентификации, через default security chain. Достаточно `curl http://localhost:8080/actuator/prometheus`.
+
+CSRF и session для этого chain выключены: scrape — machine-to-machine GET, STATELESS.
+
+### Экспортируемые бизнес-метрики
+
+Имена записаны в точечной нотации Micrometer. Prometheus-registry автоматически конвертирует `.` в `_` и добавляет суффикс `_total` для счётчиков.
+
+| Метрика | Тип | Теги | Описание |
+|---|---|---|---|
+| `notifications.sent` | Counter | `channel`, `task_type` | Успешно отправленные одиночные уведомления |
+| `notifications.failed` | Counter | `channel`, `reason` (`rate_limit` / `api_error` / `blocked` / `other`) | Неудачные отправки |
+| `notifications.digest.sent` | Counter | — | Отправленные дайджесты (issue #50, сгруппированные пуши) |
+| `telegram.api.errors` | Counter | `code` (`429` / `400` / `403` / `other`) | Ошибки Telegram Bot API |
+| `callbacks.processed` | Counter | `action`, `outcome` (`ok` / `error` / `idempotent`) | Обработанные callback-кнопки. Неизвестные `action` подменяются на `unknown` (защита от cardinality explosion) |
+| `users.registered.total` | Counter | — | Реальные новые регистрации (не каждый `/start`) |
+| `users.active.dau` | Gauge | — | Уникальные пользователи с care-event за последние 24h. Обновляется раз в час (`DauMetricsUpdater`) |
+| `scheduler.tick.duration` | Timer | — | Длительность тика шедулера уведомлений; публикует процентильную гистограмму |
+
+Дополнительно Micrometer публикует стандартные JVM-метрики (память, GC, потоки) и HTTP-latency по REST-эндпоинтам — без отдельной конфигурации.
+
+Полный контракт имён и тегов — в `MetricsService` (константы и enum'ы `FailureReason` / `TelegramErrorCode` / `CallbackOutcome`). Whitelist допустимых `action`-тегов для `callbacks.processed` лежит в `MetricsService.KNOWN_CALLBACK_ACTIONS`; при добавлении нового callback-action в хендлерах его надо туда же.
+
+Настройка самого Prometheus-сервера, Grafana-дашбордов и алертов — вне scope этого PR.
 
 ## Деплой на Railway
 

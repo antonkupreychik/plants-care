@@ -4,6 +4,7 @@ import com.plantcare.bot.domain.CareSchedule;
 import com.plantcare.bot.domain.Plant;
 import com.plantcare.bot.domain.User;
 import com.plantcare.bot.domain.enums.TaskType;
+import com.plantcare.bot.metrics.MetricsService;
 import com.plantcare.bot.repository.CareHistoryRepository;
 import com.plantcare.bot.repository.CareScheduleRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -48,6 +49,7 @@ class NotificationCallbackServiceAcclimationTest {
     @Mock private TelegramClient telegramClient;
     @Mock private CallbackQuery callbackQuery;
     @Mock private Message message;
+    @Mock private MetricsService metricsService;
 
     @InjectMocks
     private NotificationCallbackService service;

@@ -2,6 +2,7 @@ package com.plantcare.bot.service;
 
 import com.plantcare.bot.domain.User;
 import com.plantcare.bot.domain.enums.ConversationState;
+import com.plantcare.bot.metrics.MetricsService;
 import com.plantcare.bot.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -28,13 +29,24 @@ public class UserService {
 
     private final UserRepository userRepository;
     private final Clock clock;
+    private final MetricsService metricsService;
 
     @Transactional
     public User findOrCreate(Long chatId, String username) {
+        // Issue #115: считаем только реальные регистрации, а не каждый /start
+        // от уже зарегистрированного юзера. existsByTelegramChatId по уникальному
+        // индексу — cheap lookup, в хот-патчах не критичен (вызывается на каждый
+        // update от Telegram, но это не миллион rps).
+        boolean isNew = !userRepository.existsByTelegramChatId(chatId);
+
         userRepository.insertOrIgnore(chatId, username);
 
         User user = userRepository.findByTelegramChatId(chatId)
                 .orElseThrow(() -> new IllegalStateException("User must exist after insert-or-ignore"));
+
+        if (isNew) {
+            metricsService.recordUserRegistered();
+        }
 
         return updateUsernameIfChanged(user, username);
     }

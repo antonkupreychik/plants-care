@@ -6,6 +6,8 @@ import com.plantcare.bot.domain.NotificationDigest;
 import com.plantcare.bot.domain.Plant;
 import com.plantcare.bot.domain.User;
 import com.plantcare.bot.domain.enums.TaskType;
+import com.plantcare.bot.metrics.MetricsService;
+import com.plantcare.bot.metrics.MetricsService.CallbackOutcome;
 import com.plantcare.bot.repository.CareScheduleRepository;
 import com.plantcare.bot.repository.NotificationDigestRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -50,6 +52,9 @@ class NotificationDigestCallbackServiceTest {
 
     @Mock
     private TelegramClient telegramClient;
+
+    @Mock
+    private MetricsService metricsService;
 
     @InjectMocks
     private NotificationDigestCallbackService service;
@@ -246,5 +251,101 @@ class NotificationDigestCallbackServiceTest {
         verify(telegramClient).execute(answerCaptor.capture());
 
         assertThat(answerCaptor.getValue().getText()).contains("Дайджест не найден");
+    }
+
+    // ================================================================
+    // Метрики (#115)
+    // ================================================================
+
+    @Test
+    @DisplayName("Метрики: успешный done_all → recordCallback(digest_done_all, ok)")
+    void should_record_digest_done_all_ok_when_marked() throws TelegramApiException {
+        when(callbackQuery.getData()).thenReturn("digest:done_all:500");
+        when(notificationDigestRepository.findById(500L)).thenReturn(Optional.of(digest));
+        when(careScheduleRepository.findById(100L)).thenReturn(Optional.of(wateringSchedule));
+        when(careScheduleRepository.findById(101L)).thenReturn(Optional.of(mistingSchedule));
+        when(notificationCallbackService.markScheduleDone(any(CareSchedule.class), any()))
+                .thenReturn(true);
+
+        service.handleCallback(callbackQuery, telegramClient);
+
+        verify(metricsService).recordCallback("digest_done_all", CallbackOutcome.OK);
+    }
+
+    @Test
+    @DisplayName("Метрики: повторный done_all → recordCallback(digest_done_all, idempotent)")
+    void should_record_digest_done_all_idempotent_when_already_marked() throws TelegramApiException {
+        when(callbackQuery.getData()).thenReturn("digest:done_all:500");
+        when(notificationDigestRepository.findById(500L)).thenReturn(Optional.of(digest));
+        when(careScheduleRepository.findById(100L)).thenReturn(Optional.of(wateringSchedule));
+        when(careScheduleRepository.findById(101L)).thenReturn(Optional.of(mistingSchedule));
+        when(notificationCallbackService.markScheduleDone(any(CareSchedule.class), any()))
+                .thenReturn(false);
+
+        service.handleCallback(callbackQuery, telegramClient);
+
+        verify(metricsService).recordCallback("digest_done_all", CallbackOutcome.IDEMPOTENT);
+    }
+
+    @Test
+    @DisplayName("Метрики: успешный expand → recordCallback(digest_expand, ok)")
+    void should_record_digest_expand_ok_when_tasks_present() throws TelegramApiException {
+        when(callbackQuery.getData()).thenReturn("digest:expand:500");
+        when(notificationDigestRepository.findById(500L)).thenReturn(Optional.of(digest));
+        when(careScheduleRepository.findById(100L)).thenReturn(Optional.of(wateringSchedule));
+        when(careScheduleRepository.findById(101L)).thenReturn(Optional.of(mistingSchedule));
+
+        service.handleCallback(callbackQuery, telegramClient);
+
+        verify(metricsService).recordCallback("digest_expand", CallbackOutcome.OK);
+    }
+
+    @Test
+    @DisplayName("Метрики: expand когда все задачи уже сделаны → recordCallback(digest_expand, idempotent)")
+    void should_record_digest_expand_idempotent_when_remaining_empty() throws TelegramApiException {
+        // Сдвигаем обоим nextDueAt далеко вперёд — getRemainingTasks вернёт пустой список.
+        wateringSchedule.setNextDueAt(LocalDateTime.now().plusDays(7));
+        mistingSchedule.setNextDueAt(LocalDateTime.now().plusDays(7));
+
+        when(callbackQuery.getData()).thenReturn("digest:expand:500");
+        when(notificationDigestRepository.findById(500L)).thenReturn(Optional.of(digest));
+        when(careScheduleRepository.findById(100L)).thenReturn(Optional.of(wateringSchedule));
+        when(careScheduleRepository.findById(101L)).thenReturn(Optional.of(mistingSchedule));
+
+        service.handleCallback(callbackQuery, telegramClient);
+
+        verify(metricsService).recordCallback("digest_expand", CallbackOutcome.IDEMPOTENT);
+    }
+
+    @Test
+    @DisplayName("Метрики: неизвестный action → recordCallback(digest_<action>, error)")
+    void should_record_error_when_action_unknown() throws TelegramApiException {
+        when(callbackQuery.getData()).thenReturn("digest:nonsense:500");
+        when(notificationDigestRepository.findById(500L)).thenReturn(Optional.of(digest));
+
+        service.handleCallback(callbackQuery, telegramClient);
+
+        verify(metricsService).recordCallback("digest_nonsense", CallbackOutcome.ERROR);
+    }
+
+    @Test
+    @DisplayName("Метрики: невалидный формат callback → recordCallback(digest_unknown, error)")
+    void should_record_digest_unknown_error_when_format_wrong() throws TelegramApiException {
+        when(callbackQuery.getData()).thenReturn("digest:bad");
+
+        service.handleCallback(callbackQuery, telegramClient);
+
+        verify(metricsService).recordCallback("digest_unknown", CallbackOutcome.ERROR);
+    }
+
+    @Test
+    @DisplayName("Метрики: digest не найден → recordCallback(digest_<action>, error)")
+    void should_record_error_when_digest_not_found() throws TelegramApiException {
+        when(callbackQuery.getData()).thenReturn("digest:expand:999");
+        when(notificationDigestRepository.findById(999L)).thenReturn(Optional.empty());
+
+        service.handleCallback(callbackQuery, telegramClient);
+
+        verify(metricsService).recordCallback("digest_expand", CallbackOutcome.ERROR);
     }
 }
