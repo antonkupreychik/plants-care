@@ -70,6 +70,11 @@ public class AdminSecurityConfig {
                 .build();
     }
 
+    /**
+     * Default-цепочка для всего, что не /admin/**. В рамках Phase 0 (issue #84)
+     * {@code /api/v1/**}, {@code /swagger-ui/**} и {@code /v3/api-docs/**} публичны:
+     * аутентификация REST API появится в следующих фазах.
+     */
     @Bean
     @Order(2)
     public SecurityFilterChain defaultSecurityFilterChain(HttpSecurity http) throws Exception {
