@@ -2,6 +2,7 @@ package com.plantcare.bot.command.impl;
 
 import com.plantcare.bot.command.interfaces.BotCommand;
 import com.plantcare.bot.domain.User;
+import com.plantcare.bot.service.MessageService;
 import com.plantcare.bot.service.UserService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -20,6 +21,7 @@ public class StartCommand implements BotCommand {
 
     private final UserService userService;
     private final MenuCommand menuCommand;
+    private final MessageService messageService;
 
     @Override
     public String getCommandName() {
@@ -49,11 +51,7 @@ public class StartCommand implements BotCommand {
     private void sendGreeting(Long chatId, TelegramClient client) {
         SendMessage greeting = SendMessage.builder()
                 .chatId(chatId.toString())
-                .text("""
-                        Привет! Я бот проекта Plants-care 🌱
-                        
-                        Я помогу тебе ухаживать за растениями и напомню, когда их нужно полить, опрыскать или удобрить.
-                        """)
+                .text(messageService.get(chatId, "command.start.greeting"))
                 .build();
 
         try {

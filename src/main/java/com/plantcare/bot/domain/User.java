@@ -77,6 +77,14 @@ public class User extends BaseEntity {
     @Builder.Default
     private boolean blocked = false;
 
+    /**
+     * Issue #79: opaque token for public .ics calendar URL.
+     * NULL until first calendar export request — generated lazily by {@link com.plantcare.bot.service.CalendarService}.
+     * Uniqueness enforced by partial unique index {@code idx_users_calendar_token} (see V14 migration).
+     */
+    @Column(name = "calendar_token", length = 64, unique = true)
+    private String calendarToken;
+
     // ===== Weather integration (issue #69) =====
 
     /** Учитывать погоду в рекомендациях; default false — opt-in через настройки. */

@@ -1,5 +1,7 @@
 package com.plantcare.bot;
 
+import com.plantcare.bot.config.CalendarProperties;
+import com.plantcare.bot.config.SpeciesProperties;
 import com.plantcare.bot.config.SpeciesProperties;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
@@ -11,7 +13,7 @@ import java.time.Clock;
 
 @SpringBootApplication
 @EnableScheduling
-@EnableConfigurationProperties(SpeciesProperties.class)
+@EnableConfigurationProperties({SpeciesProperties.class, CalendarProperties.class})
 public class PlantsCareApplication {
 
     public static void main(String[] args) {
@@ -19,11 +21,11 @@ public class PlantsCareApplication {
     }
 
     /**
-     * Системные часы. Бин — чтобы шедулеры и сервисы, завязанные на «сейчас»
-     * (отпуск, акклиматизация и т.п.), могли подменить Clock в тестах.
+     * Issue #79: единый источник времени для сервисов, чтобы тесты могли
+     * подменять Clock. Все продакшен-вычисления времени должны идти через {@code clock.instant()}.
      */
     @Bean
-    public Clock systemClock() {
+    public Clock clock() {
         return Clock.systemUTC();
     }
 }

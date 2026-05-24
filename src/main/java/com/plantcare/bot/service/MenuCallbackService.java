@@ -7,8 +7,10 @@ import com.plantcare.bot.domain.PlantTemplate;
 import com.plantcare.bot.domain.Species;
 import com.plantcare.bot.domain.User;
 import com.plantcare.bot.domain.enums.ConversationState;
+import com.plantcare.bot.domain.enums.PhotoProgressFrequency;
 import com.plantcare.bot.domain.enums.PlantEventType;
 import com.plantcare.bot.domain.enums.TaskType;
+import com.plantcare.bot.state.impl.AwaitingProgressPhotoStateHandler;
 import com.plantcare.bot.util.TimezoneSupport;
 import com.plantcare.bot.weather.service.WeatherMenuService;
 import lombok.RequiredArgsConstructor;
@@ -56,10 +58,13 @@ public class MenuCallbackService {
     private final PlantMenuService plantMenuService;
     private final PlantCardService plantCardService;
     private final CalendarMenuService calendarMenuService;
+    private final CalendarExportService calendarExportService;
     private final PlantTemplateService plantTemplateService;
     private final NotificationCallbackService notificationCallbackService;
     private final PlantEventService plantEventService;
     private final PlantAcclimationService plantAcclimationService;
+    private final PhotoProgressService photoProgressService;
+    private final PhotoProgressCardService photoProgressCardService;
     private final PlantDiagnosisService plantDiagnosisService;
     private final WeatherMenuService weatherMenuService;
 
@@ -89,6 +94,12 @@ public class MenuCallbackService {
 
         if (data.startsWith("PLANT:")) {
             handlePlantCallback(data, callbackId, messageId, client, user);
+            return;
+        }
+
+        // Фото-прогресс (issue #72). См. handlePhotoProgressCallback для полного списка.
+        if (data.startsWith("PHOTO_PROGRESS:")) {
+            handlePhotoProgressCallback(data, callbackId, messageId, client, user);
             return;
         }
 
@@ -185,6 +196,11 @@ public class MenuCallbackService {
             case "CHANGE_TZ" -> {
                 userService.updateState(user, ConversationState.AWAITING_TIMEZONE);
                 sendTimezonePrompt(user, client);
+                answerCallback(client, callbackId, "");
+            }
+
+            case "CALENDAR_EXPORT" -> {
+                sendCalendarExport(user, client);
                 answerCallback(client, callbackId, "");
             }
 
@@ -1297,6 +1313,12 @@ public class MenuCallbackService {
                 )))
                 .keyboardRow(new InlineKeyboardRow(List.of(
                         InlineKeyboardButton.builder()
+                                .text("📅 Экспорт в календарь")
+                                .callbackData("MENU:CALENDAR_EXPORT")
+                                .build()
+                )))
+                .keyboardRow(new InlineKeyboardRow(List.of(
+                        InlineKeyboardButton.builder()
                                 .text("⬅️ Назад")
                                 .callbackData("MENU:BACK")
                                 .build()
@@ -1319,6 +1341,48 @@ public class MenuCallbackService {
             client.execute(message);
         } catch (TelegramApiException e) {
             log.error("Failed to send settings menu", e);
+        }
+    }
+
+    /**
+     * Issue #79: показывает пользователю публичный URL подписки на .ics календарь.
+     * Сначала вне Telegram-вызова получаем/создаём токен (внутри собственной транзакции
+     * {@code CalendarExportService.getOrCreateToken}), потом строим URL и шлём сообщение.
+     */
+    private void sendCalendarExport(User user, TelegramClient client) {
+        String token = calendarExportService.getOrCreateToken(user);
+        String url = calendarExportService.buildCalendarUrl(token);
+
+        String text = """
+                📅 *Экспорт в календарь*
+
+                Скопируй эту ссылку и подпишись на неё в Google/Apple календаре:
+
+                `%s`
+
+                Календарь обновляется автоматически. Задачи на ближайшие 90 дней показаны как события на весь день.
+                """.formatted(url);
+
+        InlineKeyboardMarkup keyboard = InlineKeyboardMarkup.builder()
+                .keyboardRow(new InlineKeyboardRow(List.of(
+                        InlineKeyboardButton.builder()
+                                .text("⬅️ Назад в настройки")
+                                .callbackData("MENU:SETTINGS")
+                                .build()
+                )))
+                .build();
+
+        SendMessage message = SendMessage.builder()
+                .chatId(user.getTelegramChatId().toString())
+                .text(text)
+                .parseMode("Markdown")
+                .replyMarkup(keyboard)
+                .build();
+
+        try {
+            client.execute(message);
+        } catch (TelegramApiException e) {
+            log.error("Failed to send calendar export menu", e);
         }
     }
 
@@ -1519,6 +1583,309 @@ public class MenuCallbackService {
             log.error("Failed to answer callback: {}", e.getMessage(), e);
         }
     }
+
+    // =================================================================
+    // Фото-прогресс (issue #72)
+    // =================================================================
+
+    /**
+     * Маршрутизация callback'ов префикса {@code PHOTO_PROGRESS:}.
+     *
+     * <p>Поддерживаемые форматы:
+     * <ul>
+     *   <li>{@code PHOTO_PROGRESS:VIEW:{plantId}} — главный экран фото-прогресса</li>
+     *   <li>{@code PHOTO_PROGRESS:FREQ:{plantId}} — экран выбора частоты</li>
+     *   <li>{@code PHOTO_PROGRESS:FREQ:SET:{plantId}:{freq}} — установить частоту</li>
+     *   <li>{@code PHOTO_PROGRESS:ADD:{plantId}} — перевести в AWAITING_PROGRESS_PHOTO</li>
+     *   <li>{@code PHOTO_PROGRESS:SKIP:{plantId}} — пропустить prompt</li>
+     *   <li>{@code PHOTO_PROGRESS:CANCEL} — отмена загрузки фото, возврат в IDLE</li>
+     *   <li>{@code PHOTO_PROGRESS:HISTORY:{plantId}:{page}} — страница истории</li>
+     *   <li>{@code PHOTO_PROGRESS:HISTORY:VIEW:{photoId}} — открыть фото</li>
+     *   <li>{@code PHOTO_PROGRESS:COMPARE:{plantId}} — меню сравнения</li>
+     *   <li>{@code PHOTO_PROGRESS:COMPARE:FIRST_LAST:{plantId}}</li>
+     *   <li>{@code PHOTO_PROGRESS:COMPARE:MONTH_NOW:{plantId}}</li>
+     *   <li>{@code PHOTO_PROGRESS:COMPARE:PICK:{plantId}} — выбор пары вручную</li>
+     *   <li>{@code PHOTO_PROGRESS:COMPARE:LEFT:{plantId}:{photoId}} — выбран левый</li>
+     *   <li>{@code PHOTO_PROGRESS:COMPARE:DO:{plantId}:{leftId}:{rightId}} — сравнение</li>
+     * </ul>
+     */
+    private void handlePhotoProgressCallback(
+            String data,
+            String callbackId,
+            Integer messageId,
+            TelegramClient client,
+            User user
+    ) {
+        // Cancel — обрабатываем до парсинга plantId, иначе уйдём в else.
+        if ("PHOTO_PROGRESS:CANCEL".equals(data)) {
+            Long plantId = readPhotoProgressPlantId(user);
+            userService.resetToIdle(user);
+            answerCallback(client, callbackId, "");
+            if (plantId != null) {
+                photoProgressCardService.showPhotoProgressScreen(user, plantId, null, client);
+            }
+            return;
+        }
+
+        if (data.startsWith("PHOTO_PROGRESS:VIEW:")) {
+            Long plantId = parseLong(data.substring("PHOTO_PROGRESS:VIEW:".length()));
+            if (plantId == null) {
+                answerCallback(client, callbackId, "❌ Неверный ID");
+                return;
+            }
+            photoProgressCardService.showPhotoProgressScreen(user, plantId, messageId, client);
+            answerCallback(client, callbackId, "");
+            return;
+        }
+
+        // SET идёт до FREQ — иначе startsWith("PHOTO_PROGRESS:FREQ:") перехватит.
+        if (data.startsWith("PHOTO_PROGRESS:FREQ:SET:")) {
+            String[] parts = data.substring("PHOTO_PROGRESS:FREQ:SET:".length()).split(":");
+            if (parts.length < 2) {
+                answerCallback(client, callbackId, "❌ Неверная команда");
+                return;
+            }
+            Long plantId = parseLong(parts[0]);
+            PhotoProgressFrequency freq;
+            try {
+                freq = PhotoProgressFrequency.valueOf(parts[1]);
+            } catch (IllegalArgumentException e) {
+                answerCallback(client, callbackId, "❌ Неверный режим");
+                return;
+            }
+            if (plantId == null) {
+                answerCallback(client, callbackId, "❌ Неверный ID");
+                return;
+            }
+            try {
+                photoProgressService.setFrequency(user.getId(), plantId, freq);
+            } catch (IllegalArgumentException e) {
+                answerCallback(client, callbackId, "❌ Растение не найдено");
+                return;
+            }
+            photoProgressCardService.showPhotoProgressScreen(user, plantId, messageId, client);
+            answerCallback(client, callbackId, "✅ Режим обновлён");
+            return;
+        }
+
+        if (data.startsWith("PHOTO_PROGRESS:FREQ:")) {
+            Long plantId = parseLong(data.substring("PHOTO_PROGRESS:FREQ:".length()));
+            if (plantId == null) {
+                answerCallback(client, callbackId, "❌ Неверный ID");
+                return;
+            }
+            photoProgressCardService.showFrequencyChoice(user, plantId, messageId, client);
+            answerCallback(client, callbackId, "");
+            return;
+        }
+
+        if (data.startsWith("PHOTO_PROGRESS:ADD:")) {
+            Long plantId = parseLong(data.substring("PHOTO_PROGRESS:ADD:".length()));
+            if (plantId == null) {
+                answerCallback(client, callbackId, "❌ Неверный ID");
+                return;
+            }
+            // Сохраняем plantId в stateData и переводим в ожидание фото.
+            userService.setStateData(user,
+                    AwaitingProgressPhotoStateHandler.STATE_KEY_PLANT_ID,
+                    String.valueOf(plantId));
+            userService.updateState(user, ConversationState.AWAITING_PROGRESS_PHOTO);
+
+            try {
+                client.execute(SendMessage.builder()
+                        .chatId(user.getTelegramChatId().toString())
+                        .text("📸 Пришли фото для таймлайна — оно попадёт в историю фото-прогресса.")
+                        .replyMarkup(InlineKeyboardMarkup.builder()
+                                .keyboardRow(new InlineKeyboardRow(List.of(
+                                        InlineKeyboardButton.builder()
+                                                .text("⬅️ Отмена")
+                                                .callbackData("PHOTO_PROGRESS:CANCEL")
+                                                .build()
+                                )))
+                                .build())
+                        .build());
+            } catch (TelegramApiException e) {
+                log.error("Failed to send AWAITING_PROGRESS_PHOTO prompt: {}", e.getMessage());
+            }
+            answerCallback(client, callbackId, "");
+            return;
+        }
+
+        if (data.startsWith("PHOTO_PROGRESS:SKIP:")) {
+            Long plantId = parseLong(data.substring("PHOTO_PROGRESS:SKIP:".length()));
+            if (plantId == null) {
+                answerCallback(client, callbackId, "❌ Неверный ID");
+                return;
+            }
+            try {
+                photoProgressService.skipPrompt(user.getId(), plantId);
+            } catch (IllegalArgumentException e) {
+                answerCallback(client, callbackId, "❌ Растение не найдено");
+                return;
+            }
+            answerCallback(client, callbackId, "⏭ Напомню позже");
+            return;
+        }
+
+        // HISTORY:VIEW проверяем до HISTORY: — иначе startsWith перехватит.
+        if (data.startsWith("PHOTO_PROGRESS:HISTORY:VIEW:")) {
+            Long photoId = parseLong(data.substring("PHOTO_PROGRESS:HISTORY:VIEW:".length()));
+            if (photoId == null) {
+                answerCallback(client, callbackId, "❌ Неверный ID");
+                return;
+            }
+            photoProgressCardService.showPhoto(user, photoId, client);
+            answerCallback(client, callbackId, "");
+            return;
+        }
+
+        if (data.startsWith("PHOTO_PROGRESS:HISTORY:")) {
+            String[] parts = data.substring("PHOTO_PROGRESS:HISTORY:".length()).split(":");
+            if (parts.length < 2) {
+                answerCallback(client, callbackId, "❌ Неверная команда");
+                return;
+            }
+            Long plantId = parseLong(parts[0]);
+            Integer page = parseInt(parts[1]);
+            if (plantId == null || page == null) {
+                answerCallback(client, callbackId, "❌ Неверная команда");
+                return;
+            }
+            photoProgressCardService.showHistory(user, plantId, page, messageId, client);
+            answerCallback(client, callbackId, "");
+            return;
+        }
+
+        // COMPARE с подкомандами — проверяем точные префиксы до общего COMPARE:.
+        if (data.startsWith("PHOTO_PROGRESS:COMPARE:FIRST_LAST:")) {
+            Long plantId = parseLong(data.substring("PHOTO_PROGRESS:COMPARE:FIRST_LAST:".length()));
+            if (plantId == null) {
+                answerCallback(client, callbackId, "❌ Неверный ID");
+                return;
+            }
+            photoProgressService.compareFirstVsLast(user.getId(), plantId).ifPresentOrElse(
+                    pair -> photoProgressCardService.sendComparison(user, pair, client),
+                    () -> answerCallback(client, callbackId, "Нужно минимум 2 фото")
+            );
+            answerCallback(client, callbackId, "");
+            return;
+        }
+
+        if (data.startsWith("PHOTO_PROGRESS:COMPARE:MONTH_NOW:")) {
+            Long plantId = parseLong(data.substring("PHOTO_PROGRESS:COMPARE:MONTH_NOW:".length()));
+            if (plantId == null) {
+                answerCallback(client, callbackId, "❌ Неверный ID");
+                return;
+            }
+            photoProgressService.compareMonthVsNow(user.getId(), plantId).ifPresentOrElse(
+                    pair -> photoProgressCardService.sendComparison(user, pair, client),
+                    () -> answerCallback(client, callbackId, "Нет фото месячной давности")
+            );
+            answerCallback(client, callbackId, "");
+            return;
+        }
+
+        if (data.startsWith("PHOTO_PROGRESS:COMPARE:PICK:")) {
+            Long plantId = parseLong(data.substring("PHOTO_PROGRESS:COMPARE:PICK:".length()));
+            if (plantId == null) {
+                answerCallback(client, callbackId, "❌ Неверный ID");
+                return;
+            }
+            photoProgressCardService.showPickList(user, plantId, null, messageId, client);
+            answerCallback(client, callbackId, "");
+            return;
+        }
+
+        if (data.startsWith("PHOTO_PROGRESS:COMPARE:LEFT:")) {
+            String[] parts = data.substring("PHOTO_PROGRESS:COMPARE:LEFT:".length()).split(":");
+            if (parts.length < 2) {
+                answerCallback(client, callbackId, "❌ Неверная команда");
+                return;
+            }
+            Long plantId = parseLong(parts[0]);
+            Long leftId = parseLong(parts[1]);
+            if (plantId == null || leftId == null) {
+                answerCallback(client, callbackId, "❌ Неверная команда");
+                return;
+            }
+            photoProgressCardService.showPickList(user, plantId, leftId, messageId, client);
+            answerCallback(client, callbackId, "");
+            return;
+        }
+
+        if (data.startsWith("PHOTO_PROGRESS:COMPARE:DO:")) {
+            String[] parts = data.substring("PHOTO_PROGRESS:COMPARE:DO:".length()).split(":");
+            if (parts.length < 3) {
+                answerCallback(client, callbackId, "❌ Неверная команда");
+                return;
+            }
+            Long plantId = parseLong(parts[0]);
+            Long leftId = parseLong(parts[1]);
+            Long rightId = parseLong(parts[2]);
+            if (plantId == null || leftId == null || rightId == null) {
+                answerCallback(client, callbackId, "❌ Неверная команда");
+                return;
+            }
+            photoProgressService.compareByIds(user.getId(), plantId, leftId, rightId)
+                    .ifPresentOrElse(
+                            pair -> photoProgressCardService.sendComparison(user, pair, client),
+                            () -> answerCallback(client, callbackId, "❌ Не удалось собрать пару")
+                    );
+            answerCallback(client, callbackId, "");
+            return;
+        }
+
+        if (data.startsWith("PHOTO_PROGRESS:COMPARE:")) {
+            Long plantId = parseLong(data.substring("PHOTO_PROGRESS:COMPARE:".length()));
+            if (plantId == null) {
+                answerCallback(client, callbackId, "❌ Неверный ID");
+                return;
+            }
+            photoProgressCardService.showCompareMenu(user, plantId, messageId, client);
+            answerCallback(client, callbackId, "");
+            return;
+        }
+
+        answerCallback(client, callbackId, "❌ Неизвестная команда");
+    }
+
+    private Long readPhotoProgressPlantId(User user) {
+        if (user.getStateData() == null) {
+            return null;
+        }
+        Object raw = user.getStateData()
+                .get(AwaitingProgressPhotoStateHandler.STATE_KEY_PLANT_ID);
+        if (raw == null) {
+            return null;
+        }
+        return parseLong(String.valueOf(raw));
+    }
+
+    private Long parseLong(String value) {
+        if (value == null) {
+            return null;
+        }
+        try {
+            return Long.parseLong(value);
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    private Integer parseInt(String value) {
+        if (value == null) {
+            return null;
+        }
+        try {
+            return Integer.parseInt(value);
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    // =================================================================
+    // Управление шаблонами растений (issue #68)
+    // =================================================================
 
     private void handleTemplateCallback(
             String data,

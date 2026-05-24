@@ -225,6 +225,7 @@ Rate limit: 5 неудачных попыток в минуту с IP → 429 н
 4. Открыть настройки сервиса приложения → **Variables**:
    - Скопировать `Reference` для `${{Postgres.PGHOST}}`, `${{Postgres.PGPORT}}`, `${{Postgres.PGDATABASE}}`, `${{Postgres.PGUSER}}`, `${{Postgres.PGPASSWORD}}` — Railway сам подставит реальные значения
    - Добавить `TELEGRAM_BOT_TOKEN`, `TELEGRAM_BOT_USERNAME`, `TELEGRAM_BOT_ENABLED=true` — когда дойдём до интеграции с ботом
+   - Добавить `CALENDAR_BASE_URL` — внешний https-URL приложения (например, `https://plants-care-production.up.railway.app`). Используется для построения ссылок `/calendar/{token}.ics`. Дефолт `https://example.com` для прода не годится.
 5. Включить **Public Networking** в Settings → получишь URL вида `plants-care-production.up.railway.app`
 6. Дождаться завершения первой сборки
 

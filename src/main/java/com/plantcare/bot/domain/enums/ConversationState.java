@@ -47,5 +47,8 @@ public enum ConversationState {
     AWAITING_PLANT_DIAGNOSIS, //(issue #73)
     // ожидаем location-сообщение для weather_lat/lon
     // Отпуск (issue #53)
-    AWAITING_VACATION_DAYS          // ввод числа дней отпуска при выборе «Другое»
+    AWAITING_VACATION_DAYS,          // ввод числа дней отпуска при выборе «Другое»
+
+    // Фото-прогресс (issue #72)
+    AWAITING_PROGRESS_PHOTO            // ждём фото для таймлайна (план «📸 Фото-прогресс»)
 }

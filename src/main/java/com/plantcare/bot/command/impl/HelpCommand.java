@@ -1,6 +1,8 @@
 package com.plantcare.bot.command.impl;
 
 import com.plantcare.bot.command.interfaces.BotCommand;
+import com.plantcare.bot.service.MessageService;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
@@ -10,7 +12,10 @@ import org.telegram.telegrambots.meta.generics.TelegramClient;
 
 @Slf4j
 @Component
+@RequiredArgsConstructor
 public class HelpCommand implements BotCommand {
+
+    private final MessageService messageService;
 
     @Override
     public String getCommandName() {
@@ -21,24 +26,9 @@ public class HelpCommand implements BotCommand {
     public void execute(Update update, TelegramClient client) {
         Long chatId = update.getMessage().getChatId();
 
-        String text = """
-                🌿 *Plants Care Bot — Помощь*
-                
-                Доступные команды:
-                /start — Начать или вернуться в главное меню
-                /menu — Главное меню (растения + задачи на сегодня)
-                /add — Добавить новое растение
-                /calendar — Календарь ухода на неделю вперёд
-                /cancel — Отменить текущее действие
-                /help — Эта справка
-                
-                Бот присылает напоминания о поливе, опрыскивании и удобрении. \
-                Вы можете настроить тихие часы, чтобы уведомления не приходили ночью.
-                """;
-
         SendMessage message = SendMessage.builder()
                 .chatId(chatId.toString())
-                .text(text)
+                .text(messageService.get(chatId, "command.help.text"))
                 .parseMode("Markdown")
                 .build();
 
