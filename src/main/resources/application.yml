@@ -113,4 +113,12 @@ logging:
     root: INFO
     com.plantcare.bot: DEBUG
 
+# Issue #114: Sentry. По умолчанию выключен (no-op) — включается только на prod-профиле.
+# На dev/test остаётся false, поэтому реальные отправки в Sentry из тестов невозможны.
+sentry:
+  enabled: false
+  # Никогда не отправляем PII по умолчанию: chat_id/telegram_user_id хешируются
+  # в SentryPiiFilter, тексты заметок/имена растений вырезаются.
+  send-default-pii: false
+
 kind: Application

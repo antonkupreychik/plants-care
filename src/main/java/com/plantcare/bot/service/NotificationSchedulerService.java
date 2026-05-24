@@ -10,11 +10,14 @@ import com.plantcare.bot.domain.User;
 import com.plantcare.bot.domain.enums.NotificationType;
 import com.plantcare.bot.domain.enums.TaskType;
 import com.plantcare.bot.metrics.MetricsService;
+import com.plantcare.bot.observability.SentryTags;
+import com.plantcare.bot.observability.SentryTags.Layer;
 import com.plantcare.bot.repository.CareScheduleRepository;
 import com.plantcare.bot.repository.NotificationDigestRepository;
 import com.plantcare.bot.repository.NotificationLogRepository;
 import com.plantcare.bot.repository.UserRepository;
 import io.micrometer.core.instrument.Timer;
+import io.sentry.Sentry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -57,16 +60,22 @@ public class NotificationSchedulerService {
     @Scheduled(fixedRate = 60_000)
     @Transactional
     public void checkAndSendNotifications() {
-        // Issue #115: оборачиваем тик в Timer, чтобы в Prometheus была видна
-        // длительность обработки (p50/p95/p99). Сам executeTick остаётся
-        // без изменений — Timer.Sample.stop() запишет latency в hot path
-        // только один раз за тик.
-        Timer.Sample sample = metricsService.startSchedulerTickTimer();
-        try {
-            executeTick();
-        } finally {
-            metricsService.stopSchedulerTickTimer(sample);
-        }
+        // Issue #114: весь тик выполняется в изолированном scope с тегом
+        // layer=scheduler/feature — captureException внутри получит верные теги,
+        // а вызовы weather внутри тика не загрязнят scope соседних задач
+        // shared-потока @Scheduled.
+        SentryTags.runWithLayer(Layer.SCHEDULER, "NotificationSchedulerService", () -> {
+            // Issue #115: оборачиваем тик в Timer, чтобы в Prometheus была видна
+            // длительность обработки (p50/p95/p99). Сам executeTick остаётся
+            // без изменений — Timer.Sample.stop() запишет latency в hot path
+            // только один раз за тик.
+            Timer.Sample sample = metricsService.startSchedulerTickTimer();
+            try {
+                executeTick();
+            } finally {
+                metricsService.stopSchedulerTickTimer(sample);
+            }
+        });
     }
 
     /**
@@ -131,6 +140,7 @@ public class NotificationSchedulerService {
             return SendOneResult.sent();
         } catch (Exception e) {
             log.error("sendOneSchedule failed for schedule={}: {}", scheduleId, e.getMessage(), e);
+            Sentry.captureException(e);
             return SendOneResult.failed(e.getMessage());
         }
     }
@@ -214,6 +224,7 @@ public class NotificationSchedulerService {
                         .add(schedule);
             } catch (Exception e) {
                 log.error("Error checking schedule id={}: {}", schedule.getId(), e.getMessage(), e);
+                Sentry.captureException(e);
             }
         }
 
@@ -222,6 +233,7 @@ public class NotificationSchedulerService {
                 sendNotification(soilCheck.getPlant().getUser(), soilCheck.getPlant(), soilCheck);
             } catch (Exception e) {
                 log.error("Error sending soil-check notification: {}", e.getMessage(), e);
+                Sentry.captureException(e);
             }
         }
 
@@ -230,6 +242,7 @@ public class NotificationSchedulerService {
                 sendNotification(acclim.getPlant().getUser(), acclim.getPlant(), acclim);
             } catch (Exception e) {
                 log.error("Error sending acclimation watering notification: {}", e.getMessage(), e);
+                Sentry.captureException(e);
             }
         }
 
@@ -243,6 +256,7 @@ public class NotificationSchedulerService {
                 }
             } catch (Exception e) {
                 log.error("Error sending notifications group: {}", e.getMessage(), e);
+                Sentry.captureException(e);
             }
         }
 

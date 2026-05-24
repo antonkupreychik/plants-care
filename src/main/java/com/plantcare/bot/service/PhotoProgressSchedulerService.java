@@ -3,7 +3,10 @@ package com.plantcare.bot.service;
 import com.plantcare.bot.client.TelegramClientProvider;
 import com.plantcare.bot.domain.Plant;
 import com.plantcare.bot.domain.User;
+import com.plantcare.bot.observability.SentryTags;
+import com.plantcare.bot.observability.SentryTags.Layer;
 import com.plantcare.bot.repository.PlantRepository;
+import io.sentry.Sentry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -56,36 +59,41 @@ public class PhotoProgressSchedulerService {
 
     @Scheduled(fixedRate = INTERVAL_MS)
     public void checkPhotoPrompts() {
-        LocalDateTime now = LocalDateTime.now();
-        List<Plant> due = loadDuePlants(now);
+        // Issue #114: изолированный scope на тик — тег layer=scheduler не течёт на
+        // соседние задачи shared-потока @Scheduled.
+        SentryTags.runWithLayer(Layer.SCHEDULER, "PhotoProgressSchedulerService", () -> {
+            LocalDateTime now = LocalDateTime.now();
+            List<Plant> due = loadDuePlants(now);
 
-        if (due.isEmpty()) {
-            return;
-        }
-        log.info("Photo-progress tick: {} plants due", due.size());
-
-        for (Plant plant : due) {
-            try {
-                User user = plant.getUser();
-                if (user == null) {
-                    continue;
-                }
-                if (user.isPaused() || user.isBlocked()) {
-                    continue;
-                }
-                if (isQuietHours(user, now)) {
-                    continue;
-                }
-
-                boolean sent = sendPhotoPrompt(user, plant);
-                if (sent) {
-                    photoProgressService.markPromptSent(plant.getId(), LocalDateTime.now());
-                }
-            } catch (Exception e) {
-                log.error("Failed to handle photo-progress prompt for plant {}: {}",
-                        plant.getId(), e.getMessage(), e);
+            if (due.isEmpty()) {
+                return;
             }
-        }
+            log.info("Photo-progress tick: {} plants due", due.size());
+
+            for (Plant plant : due) {
+                try {
+                    User user = plant.getUser();
+                    if (user == null) {
+                        continue;
+                    }
+                    if (user.isPaused() || user.isBlocked()) {
+                        continue;
+                    }
+                    if (isQuietHours(user, now)) {
+                        continue;
+                    }
+
+                    boolean sent = sendPhotoPrompt(user, plant);
+                    if (sent) {
+                        photoProgressService.markPromptSent(plant.getId(), LocalDateTime.now());
+                    }
+                } catch (Exception e) {
+                    log.error("Failed to handle photo-progress prompt for plant {}: {}",
+                            plant.getId(), e.getMessage(), e);
+                    Sentry.captureException(e);
+                }
+            }
+        });
     }
 
     /**

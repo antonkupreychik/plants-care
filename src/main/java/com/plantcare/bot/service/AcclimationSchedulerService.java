@@ -3,6 +3,9 @@ package com.plantcare.bot.service;
 import com.plantcare.bot.client.TelegramClientProvider;
 import com.plantcare.bot.domain.Plant;
 import com.plantcare.bot.domain.User;
+import com.plantcare.bot.observability.SentryTags;
+import com.plantcare.bot.observability.SentryTags.Layer;
+import io.sentry.Sentry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -42,37 +45,43 @@ public class AcclimationSchedulerService {
     @Scheduled(fixedRate = 3_600_000L)  // раз в час
     @Transactional
     public void tick() {
-        LocalDateTime now = LocalDateTime.now();
+        // Issue #114: изолированный scope на тик — captureException внутри получит
+        // тег layer=scheduler, и он не утечёт на соседние задачи shared-потока.
+        SentryTags.runWithLayer(Layer.SCHEDULER, "AcclimationSchedulerService", () -> {
+            LocalDateTime now = LocalDateTime.now();
 
-        // 1) Финализация — растения, у которых истёк период акклиматизации.
-        for (Plant plant : plantAcclimationService.findPlantsToFinish(now)) {
-            try {
-                User user = plant.getUser();
-                if (user.isPaused() || isQuietHours(user, now)) {
-                    continue;  // подождём до следующего тика
+            // 1) Финализация — растения, у которых истёк период акклиматизации.
+            for (Plant plant : plantAcclimationService.findPlantsToFinish(now)) {
+                try {
+                    User user = plant.getUser();
+                    if (user.isPaused() || isQuietHours(user, now)) {
+                        continue;  // подождём до следующего тика
+                    }
+                    sendFinishMessage(user, plant);
+                    plantAcclimationService.finish(plant);
+                } catch (Exception e) {
+                    log.error("Failed to finish acclimation for plant {}: {}",
+                            plant.getId(), e.getMessage(), e);
+                    Sentry.captureException(e);
                 }
-                sendFinishMessage(user, plant);
-                plantAcclimationService.finish(plant);
-            } catch (Exception e) {
-                log.error("Failed to finish acclimation for plant {}: {}",
-                        plant.getId(), e.getMessage(), e);
             }
-        }
 
-        // 2) Check-in вопросы — растения, у которых пришло время следующего опроса.
-        for (Plant plant : plantAcclimationService.findPlantsForCheckin(now)) {
-            try {
-                User user = plant.getUser();
-                if (user.isPaused() || isQuietHours(user, now)) {
-                    continue;
+            // 2) Check-in вопросы — растения, у которых пришло время следующего опроса.
+            for (Plant plant : plantAcclimationService.findPlantsForCheckin(now)) {
+                try {
+                    User user = plant.getUser();
+                    if (user.isPaused() || isQuietHours(user, now)) {
+                        continue;
+                    }
+                    sendCheckinMessage(user, plant);
+                    plantAcclimationService.scheduleNextCheckin(plant);
+                } catch (Exception e) {
+                    log.error("Failed to send acclimation checkin for plant {}: {}",
+                            plant.getId(), e.getMessage(), e);
+                    Sentry.captureException(e);
                 }
-                sendCheckinMessage(user, plant);
-                plantAcclimationService.scheduleNextCheckin(plant);
-            } catch (Exception e) {
-                log.error("Failed to send acclimation checkin for plant {}: {}",
-                        plant.getId(), e.getMessage(), e);
             }
-        }
+        });
     }
 
     private void sendFinishMessage(User user, Plant plant) {

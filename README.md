@@ -284,6 +284,26 @@ docker compose --profile full --profile monitoring up -d
 
 Настройка самого Prometheus-сервера и алертов — вне scope этого PR.
 
+### Sentry — агрегация ошибок (issue #114)
+
+Необработанные исключения и проглоченные `catch` в шедулерах и Telegram-диспетчере
+отправляются в Sentry через `sentry-spring-boot-starter-jakarta`.
+
+Включён **только на prod** (`application-prod.yml`); на dev/test выключен (no-op), чтобы
+не тратить квоту и не слать события из тестов. Даже на prod, если `SENTRY_DSN` не задан,
+стартер инициализируется в no-op и ничего не отправляет.
+
+PII не уходит в Sentry: `SentryPiiFilter` (`BeforeSendCallback`) хеширует `chat_id` и
+`telegram_user_id`, маскирует имена растений, заметки и параметры/breadcrumbs, чистит
+данные пользователя. `send-default-pii: false` на всех профилях.
+
+События размечаются тегами `layer` (`telegram` / `scheduler` / `admin` / `weather`) и
+`feature` (имя класса) для фильтрации в Sentry UI.
+
+| Переменная | Дефолт | Где | Обязательная |
+|---|---|---|---|
+| `SENTRY_DSN` | пусто | prod | нет — пустой DSN = Sentry no-op |
+
 ## Деплой на Railway
 
 ### Первичная настройка
@@ -295,6 +315,7 @@ docker compose --profile full --profile monitoring up -d
    - Скопировать `Reference` для `${{Postgres.PGHOST}}`, `${{Postgres.PGPORT}}`, `${{Postgres.PGDATABASE}}`, `${{Postgres.PGUSER}}`, `${{Postgres.PGPASSWORD}}` — Railway сам подставит реальные значения
    - Добавить `TELEGRAM_BOT_TOKEN`, `TELEGRAM_BOT_USERNAME`, `TELEGRAM_BOT_ENABLED=true` — когда дойдём до интеграции с ботом
    - Добавить `CALENDAR_BASE_URL` — внешний https-URL приложения (например, `https://plants-care-production.up.railway.app`). Используется для построения ссылок `/calendar/{token}.ics`. Дефолт `https://example.com` для прода не годится.
+   - (опционально) Добавить `SENTRY_DSN` — DSN проекта Sentry для агрегации ошибок (см. секцию Observability). Если не задан, Sentry на prod работает в no-op.
 5. Включить **Public Networking** в Settings → получишь URL вида `plants-care-production.up.railway.app`
 6. Дождаться завершения первой сборки
 
