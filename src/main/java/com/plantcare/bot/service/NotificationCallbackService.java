@@ -14,6 +14,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.telegram.telegrambots.meta.api.methods.AnswerCallbackQuery;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
+import org.telegram.telegrambots.meta.api.methods.updatingmessages.EditMessageReplyMarkup;
 import org.telegram.telegrambots.meta.api.methods.updatingmessages.EditMessageText;
 import org.telegram.telegrambots.meta.api.objects.CallbackQuery;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMarkup;
@@ -22,8 +23,14 @@ import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKe
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 import org.telegram.telegrambots.meta.generics.TelegramClient;
 
+import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Optional;
 
@@ -31,20 +38,38 @@ import java.util.Optional;
  * Обрабатывает callback'и от inline-кнопок уведомлений.
  * Формат callback_data: v1:{action}:{idOrPayload}
  * Действия:
- *   - done / snooze / skip — на расписании (scheduleId)
- *   - bulk_done            — массовый полив локации (locationId, issue #19)
+ *   - done / snooze / skip                — на расписании (scheduleId). snooze открывает
+ *                                            клавиатуру выбора интервала, не сдвигает сразу
+ *   - snooze_pick / snooze_back           — выбор интервала snooze: час/вечером/завтра
+ *                                            с учётом quiet-hours (issue #118)
+ *   - bulk_done                           — массовый полив локации (locationId, issue #19)
+ *   - wabund / wsoil                      — расширенный полив (issue #71)
+ *   - soil_dry / soil_wet / soil_unk / soil_water — SOIL_CHECK (issue #74)
+ *   - accl_soil / accl_snooze / accl_checkin     — акклиматизация (issue #75)
+ *   - back_care / back_pick / back_custom — ретро-отметка ухода, делегируется в
+ *                                            {@link BackdatedCareCallbackService} (issue #118)
  */
 @Service
 @RequiredArgsConstructor
 @Slf4j
 public class NotificationCallbackService {
 
-    private static final int SNOOZE_HOURS = 2;
     private static final int DEDUP_SECONDS = 60;
     private static final int GRACE_PERIOD_HOURS = 24;
 
+    /**
+     * Граница «уже вечер» для snooze:evening — если в локали юзера сейчас ≥ 18:30,
+     * «вечером» означает 19:00 следующего дня.
+     */
+    private static final LocalTime EVENING_CUTOFF = LocalTime.of(18, 30);
+    /** Целевое локальное время snooze:evening. */
+    private static final LocalTime EVENING_TARGET = LocalTime.of(19, 0);
+
     private static final DateTimeFormatter TIME_FMT = DateTimeFormatter.ofPattern("HH:mm");
     private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("dd.MM.yyyy");
+    /** Формат подтверждения snooze: «28.05 19:00». */
+    private static final DateTimeFormatter SNOOZE_CONFIRM_FMT =
+            DateTimeFormatter.ofPattern("dd.MM HH:mm");
 
     private final CareScheduleRepository careScheduleRepository;
     private final CareHistoryRepository careHistoryRepository;
@@ -53,6 +78,10 @@ public class NotificationCallbackService {
     private final PlantCardService plantCardService;
     private final PlantAcclimationService plantAcclimationService;
     private final com.plantcare.bot.seasonal.service.SeasonalIntervalService seasonalIntervalService;
+    private final QuietHoursPolicy quietHoursPolicy;
+    private final ReminderKeyboardFactory reminderKeyboardFactory;
+    private final BackdatedCareCallbackService backdatedCareCallbackService;
+    private final Clock clock;
 
     @Transactional
     public void handleCallback(CallbackQuery callbackQuery, TelegramClient client) {
@@ -118,6 +147,28 @@ public class NotificationCallbackService {
             default -> { /* fallthrough — обычный done/snooze/skip */ }
         }
 
+        // Snooze-flow с выбором интервала (issue #118).
+        //   v1:snooze_pick:<scheduleId>:<hour|evening|tomorrow>
+        //   v1:snooze_back:<scheduleId>
+        if ("snooze_pick".equals(action)) {
+            handleSnoozePick(parts, chatId, messageId, callbackId, client);
+            return;
+        }
+        if ("snooze_back".equals(action)) {
+            handleSnoozeBack(parts, chatId, messageId, callbackId, client);
+            return;
+        }
+
+        // Ретро-отметка ухода (issue #118) — делегируем в отдельный сервис,
+        // чтобы не разрастать этот класс. Все три callback'а имеют префикс back_*
+        // (a) v1:back_care:<plantId>
+        // (b) v1:back_pick:<plantId>:<taskType>:<daysAgo>
+        // (c) v1:back_custom:<plantId>:<taskType>
+        if ("back_care".equals(action) || "back_pick".equals(action) || "back_custom".equals(action)) {
+            backdatedCareCallbackService.handleCallback(action, parts, chatId, messageId, callbackId, client);
+            return;
+        }
+
         Long scheduleId;
         try {
             scheduleId = Long.parseLong(parts[2]);
@@ -173,11 +224,13 @@ public class NotificationCallbackService {
                 alertText = "Отмечено!";
             }
             case "snooze" -> {
-                schedule.setNextDueAt(now.plusHours(SNOOZE_HOURS));
-                careScheduleRepository.save(schedule);
-
-                responseText = "⏰ " + plant.getName() + " — напомню через " + SNOOZE_HOURS + " часа";
-                alertText = "Отложено!";
+                // issue #118: snooze без выбора (старый формат v1:snooze:<id> +
+                // digest expand-keyboard) теперь открывает клавиатуру выбора
+                // интервала вместо немедленного сдвига на 2 часа. Сам сдвиг
+                // делает handleSnoozePick после выбора варианта.
+                showSnoozeChoice(plant.getName(), scheduleId, chatId, messageId, client);
+                answerCallback(client, callbackId, "");
+                return;
             }
             case "skip" -> {
                 if (isDuplicateDone(plant, schedule, now)) {
@@ -611,6 +664,199 @@ public class NotificationCallbackService {
         } catch (TelegramApiException e) {
             log.error("Failed to send bulk result message: {}", e.getMessage(), e);
         }
+    }
+
+    // ====================================================================
+    // Snooze с выбором интервала (issue #118)
+    // ====================================================================
+
+    /**
+     * Шаг 1: показать клавиатуру выбора интервала вместо немедленного сдвига.
+     * Вызывается при клике на «⏰ Отложить» (старый callback v1:snooze:&lt;id&gt;)
+     * — мы оставили это же callback_data, чтобы старые сообщения в чате тоже
+     * открывали новый flow, а не падали в Unknown action.
+     */
+    private void showSnoozeChoice(
+            String plantName, Long scheduleId, Long chatId, Integer messageId, TelegramClient client
+    ) {
+        EditMessageText edit = EditMessageText.builder()
+                .chatId(chatId.toString())
+                .messageId(messageId)
+                .text("⏰ " + plantName + " — когда напомнить?")
+                .replyMarkup(buildSnoozeChoiceKeyboard(scheduleId))
+                .build();
+        try {
+            client.execute(edit);
+        } catch (TelegramApiException e) {
+            log.error("Failed to show snooze choice: {}", e.getMessage(), e);
+        }
+    }
+
+    private InlineKeyboardMarkup buildSnoozeChoiceKeyboard(Long scheduleId) {
+        InlineKeyboardButton hour = InlineKeyboardButton.builder()
+                .text("🕐 Через час")
+                .callbackData("v1:snooze_pick:" + scheduleId + ":hour")
+                .build();
+        InlineKeyboardButton evening = InlineKeyboardButton.builder()
+                .text("🌆 Вечером")
+                .callbackData("v1:snooze_pick:" + scheduleId + ":evening")
+                .build();
+        InlineKeyboardButton tomorrow = InlineKeyboardButton.builder()
+                .text("📅 Завтра")
+                .callbackData("v1:snooze_pick:" + scheduleId + ":tomorrow")
+                .build();
+        InlineKeyboardButton back = InlineKeyboardButton.builder()
+                .text("◀️ Назад")
+                .callbackData("v1:snooze_back:" + scheduleId)
+                .build();
+        return InlineKeyboardMarkup.builder()
+                .keyboardRow(new InlineKeyboardRow(hour, evening, tomorrow))
+                .keyboardRow(new InlineKeyboardRow(back))
+                .build();
+    }
+
+    /**
+     * Обработка выбора варианта snooze. Считает целевой момент в TZ юзера,
+     * применяет quiet-hours и сохраняет {@code nextDueAt} как UTC-LocalDateTime
+     * (как и остальной код проекта).
+     *
+     * <p>callback: {@code v1:snooze_pick:<scheduleId>:<hour|evening|tomorrow>}
+     */
+    private void handleSnoozePick(
+            String[] parts, Long chatId, Integer messageId, String callbackId, TelegramClient client
+    ) {
+        if (parts.length != 4) {
+            answerCallback(client, callbackId, "❌ Неверный формат");
+            return;
+        }
+        Long scheduleId;
+        try {
+            scheduleId = Long.parseLong(parts[2]);
+        } catch (NumberFormatException e) {
+            answerCallback(client, callbackId, "❌ Неверный ID");
+            return;
+        }
+        String option = parts[3];
+
+        Optional<CareSchedule> opt = careScheduleRepository.findById(scheduleId);
+        if (opt.isEmpty()) {
+            answerCallback(client, callbackId, "❌ Расписание не найдено");
+            return;
+        }
+        CareSchedule schedule = opt.get();
+        // Если юзер выключил тип ухода после того, как пуш ушёл, — findDueSchedules
+        // его больше не подхватит, но snooze всё равно поставит next_due_at и юзер
+        // увидит «⏰ Напомню...», которое никогда не сработает. Это silent UX failure.
+        if (!schedule.isActive()) {
+            editMessage(client, chatId, messageId, "Это расписание отключено");
+            answerCallback(client, callbackId, "Расписание отключено");
+            return;
+        }
+        Plant plant = schedule.getPlant();
+        if (plant.isArchived()) {
+            editMessage(client, chatId, messageId, "Растение уже удалено");
+            answerCallback(client, callbackId, "Растение удалено");
+            return;
+        }
+
+        User user = plant.getUser();
+        ZoneId userZone = TimezoneSupport.zoneOf(user);
+        Instant nowInstant = clock.instant();
+
+        Instant target = switch (option) {
+            case "hour"     -> nowInstant.plusSeconds(3600);
+            case "tomorrow" -> nowInstant.plusSeconds(24 * 3600);
+            case "evening"  -> computeEveningTarget(nowInstant, userZone);
+            default         -> null;
+        };
+        if (target == null) {
+            answerCallback(client, callbackId, "❌ Неизвестный вариант");
+            return;
+        }
+
+        Instant shifted = quietHoursPolicy.shiftOutOfQuietHours(user, target);
+        boolean wasShifted = !shifted.equals(target);
+
+        LocalDateTime newNextDueUtc = LocalDateTime.ofInstant(shifted, ZoneOffset.UTC);
+        schedule.setNextDueAt(newNextDueUtc);
+        careScheduleRepository.save(schedule);
+
+        String localStr = shifted.atZone(userZone).format(SNOOZE_CONFIRM_FMT);
+        String confirm = "⏰ Напомню " + localStr
+                + (wasShifted ? " (сдвинуто из тихих часов)" : ".");
+        editMessage(client, chatId, messageId, confirm);
+        answerCallback(client, callbackId, "Отложено");
+
+        log.info("Snooze picked: schedule={} option={} target={} shifted={} wasShifted={}",
+                scheduleId, option, target, shifted, wasShifted);
+    }
+
+    /**
+     * Возвращает Instant, соответствующий 19:00 локального дня юзера.
+     * Если сейчас уже ≥ 18:30 локально — берём 19:00 следующего дня.
+     */
+    private Instant computeEveningTarget(Instant nowInstant, ZoneId userZone) {
+        ZonedDateTime nowLocal = nowInstant.atZone(userZone);
+        LocalDate dayLocal = nowLocal.toLocalDate();
+        if (!nowLocal.toLocalTime().isBefore(EVENING_CUTOFF)) {
+            dayLocal = dayLocal.plusDays(1);
+        }
+        return ZonedDateTime.of(dayLocal, EVENING_TARGET, userZone).toInstant();
+    }
+
+    /**
+     * «Назад» из choice-клавиатуры — восстанавливаем оригинальную клавиатуру
+     * напоминания (Сделал/Отложить/Пропустить), текст оставляем как был.
+     * Используем editMessageReplyMarkup, чтобы не пытаться угадать исходный
+     * текст пуша (он у разных типов задач разный и зависит от погоды).
+     *
+     * <p>callback: {@code v1:snooze_back:<scheduleId>}
+     */
+    private void handleSnoozeBack(
+            String[] parts, Long chatId, Integer messageId, String callbackId, TelegramClient client
+    ) {
+        if (parts.length != 3) {
+            answerCallback(client, callbackId, "❌ Неверный формат");
+            return;
+        }
+        Long scheduleId;
+        try {
+            scheduleId = Long.parseLong(parts[2]);
+        } catch (NumberFormatException e) {
+            answerCallback(client, callbackId, "❌ Неверный ID");
+            return;
+        }
+
+        Optional<CareSchedule> opt = careScheduleRepository.findById(scheduleId);
+        if (opt.isEmpty()) {
+            answerCallback(client, callbackId, "❌ Расписание не найдено");
+            return;
+        }
+        CareSchedule schedule = opt.get();
+
+        // Если расписание уже отключили — восстанавливать reminder-клавиатуру
+        // бессмысленно: кнопки «Сделал/Отложить/Пропустить» будут вести в никуда.
+        // Чистим кнопки и сообщаем юзеру явно.
+        if (!schedule.isActive()) {
+            editMessage(client, chatId, messageId, "Расписание уже отключено");
+            answerCallback(client, callbackId, "Расписание отключено");
+            return;
+        }
+
+        InlineKeyboardMarkup original = reminderKeyboardFactory.buildReminderKeyboard(
+                scheduleId, schedule.getTaskType());
+
+        EditMessageReplyMarkup edit = EditMessageReplyMarkup.builder()
+                .chatId(chatId.toString())
+                .messageId(messageId)
+                .replyMarkup(original)
+                .build();
+        try {
+            client.execute(edit);
+        } catch (TelegramApiException e) {
+            log.error("Failed to restore reminder keyboard: {}", e.getMessage(), e);
+        }
+        answerCallback(client, callbackId, "");
     }
 
     // ====================================================================

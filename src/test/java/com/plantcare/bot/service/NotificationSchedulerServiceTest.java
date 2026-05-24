@@ -30,8 +30,11 @@ import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKe
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 import org.telegram.telegrambots.meta.generics.TelegramClient;
 
+import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.time.ZoneOffset;
 import java.util.Collection;
 import java.util.List;
 
@@ -64,6 +67,35 @@ class NotificationSchedulerServiceTest {
 
     @Mock
     private SchedulerHealthTracker schedulerHealthTracker;
+
+    // Зависимости, добавленные после рефакторинга (issue #69 weather, #67 seasonal,
+    // #118 quiet-hours/keyboard вынесены в отдельные компоненты). Моки нужны
+    // потому что без них @InjectMocks вернёт null и тик упадёт в NPE на первом
+    // же вызове isWeatherUsable/isQuiet/buildReminderKeyboard.
+    @Mock
+    private com.plantcare.bot.weather.service.WeatherService weatherService;
+
+    @Mock
+    private com.plantcare.bot.seasonal.service.SeasonalIntervalService seasonalIntervalService;
+
+    @Mock
+    private QuietHoursPolicy quietHoursPolicy;
+
+    /**
+     * Реальный экземпляр, не мок: проверки в тестах смотрят на содержимое
+     * клавиатуры (число кнопок, callback_data). Фабрика — pure-функция без
+     * зависимостей, мокать смысла нет.
+     */
+    @org.mockito.Spy
+    private ReminderKeyboardFactory reminderKeyboardFactory = new ReminderKeyboardFactory();
+
+    /**
+     * Реальный Clock с фиксированным моментом — quiet-hours проверка теперь
+     * читает {@code clock.instant()} вместо передаваемого LocalDateTime
+     * (фикс регрессии после #118, см. NotificationSchedulerService.shouldSend).
+     */
+    @org.mockito.Spy
+    private Clock clock = Clock.fixed(Instant.parse("2026-05-24T12:00:00Z"), ZoneOffset.UTC);
 
     @InjectMocks
     private NotificationSchedulerService service;
@@ -98,6 +130,16 @@ class NotificationSchedulerServiceTest {
         ReflectionTestUtils.setField(user, "id", 1L);
         ReflectionTestUtils.setField(plant, "id", 10L);
         ReflectionTestUtils.setField(schedule, "id", 100L);
+
+        // По умолчанию quiet-hours не активны (любой момент проходит фильтр).
+        // Конкретные тесты QuietHours переопределяют через свой when(...).
+        // Шедулер с #118-фикса вызывает Instant-перегрузку (см. shouldSend).
+        when(quietHoursPolicy.isQuiet(any(User.class), any(Instant.class)))
+                .thenReturn(false);
+        // По умолчанию сезонная корректировка возвращает базовый интервал —
+        // тесты, проверяющие сезонную логику, есть отдельно от этого набора.
+        when(seasonalIntervalService.effectiveIntervalDays(any(), any(), any(Integer.class)))
+                .thenAnswer(inv -> inv.getArgument(2, Integer.class));
     }
 
     @Nested
@@ -565,6 +607,9 @@ class NotificationSchedulerServiceTest {
             user.setQuietHoursEnd(LocalTime.of(23, 59));
 
             when(careScheduleRepository.findDueSchedules(any())).thenReturn(List.of(schedule));
+            // С #118-фикса quiet-проверка идёт через Instant-перегрузку.
+            when(quietHoursPolicy.isQuiet(any(User.class), any(Instant.class)))
+                    .thenReturn(true);
 
             service.checkAndSendNotifications();
 

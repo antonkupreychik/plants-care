@@ -1252,6 +1252,17 @@ public class PlantCardService {
             }
 
             rows.add(careRow);
+
+            // 1a) Ретро-отметка (issue #118): «Я уже ухаживал». Показываем только
+            // когда активные расписания есть — иначе ретро отмечать просто нечего.
+            // Формулировку выбираем компактно по числу активных типов: для одного
+            // — точное слово ("полил/опрыскал/удобрил"), для нескольких — обобщённо.
+            InlineKeyboardRow retroRow = new InlineKeyboardRow();
+            retroRow.add(InlineKeyboardButton.builder()
+                    .text(retroCareLabel(sorted))
+                    .callbackData("v1:back_care:" + plant.getId())
+                    .build());
+            rows.add(retroRow);
         }
 
         // 2) Вспомогательные действия: Фото (если есть), История, Настройки.
@@ -1488,6 +1499,30 @@ public class PlantCardService {
             case FERTILIZING -> "Удобрил";
             case SOIL_CHECK -> "Проверил";
         };
+    }
+
+    /**
+     * Текст кнопки ретро-отметки ухода в карточке (issue #118).
+     * Если активный тип один — берём его глагол: «Я уже полил», «Я уже опрыскал»,
+     * «Я уже удобрил». Если их несколько — общее «Я уже ухаживал», чтобы кнопка
+     * не вырастала в полстроки. SOIL_CHECK как таковой ретро-отметкой не считаем
+     * (это not-care, а check), его сюда не пускаем.
+     */
+    private String retroCareLabel(List<CareSchedule> activeSchedules) {
+        long careTypes = activeSchedules.stream()
+                .map(CareSchedule::getTaskType)
+                .filter(t -> t != TaskType.SOIL_CHECK)
+                .distinct()
+                .count();
+        if (careTypes == 1) {
+            TaskType only = activeSchedules.stream()
+                    .map(CareSchedule::getTaskType)
+                    .filter(t -> t != TaskType.SOIL_CHECK)
+                    .findFirst()
+                    .orElse(TaskType.WATERING);
+            return "✅ Я уже " + doneVerb(only).toLowerCase();
+        }
+        return "✅ Я уже ухаживал";
     }
 
     /**

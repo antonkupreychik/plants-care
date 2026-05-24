@@ -64,6 +64,31 @@ class NotificationCallbackServiceTest {
     @Mock
     private Message message;
 
+    // Зависимости, появившиеся после рефакторингов #71/#74/#75/#118.
+    // Без них @InjectMocks инжектит null и тесты падают NPE на новых ветках.
+    @Mock
+    private PlantCardService plantCardService;
+
+    @Mock
+    private PlantAcclimationService plantAcclimationService;
+
+    @Mock
+    private QuietHoursPolicy quietHoursPolicy;
+
+    @Mock
+    private ReminderKeyboardFactory reminderKeyboardFactory;
+
+    @Mock
+    private BackdatedCareCallbackService backdatedCareCallbackService;
+
+    /**
+     * Реальный Clock-bean: snooze-flow вызывает {@code clock.instant()} напрямую,
+     * мокать смысла нет — оставляем системный, тесты проверяют только относительный
+     * сдвиг (between(before+1h; before+3h)).
+     */
+    @org.mockito.Spy
+    private java.time.Clock clock = java.time.Clock.systemUTC();
+
     @InjectMocks
     private NotificationCallbackService service;
 
@@ -385,19 +410,22 @@ class NotificationCallbackServiceTest {
     @DisplayName("Действие: snooze")
     class SnoozeAction {
 
+        // После issue #118 v1:snooze:<id> больше не сдвигает время сразу:
+        // показывает клавиатуру выбора интервала (через час / вечером / завтра),
+        // а сдвиг делает только v1:snooze_pick. Поэтому тест ниже проверяет,
+        // что время и история не меняются.
         @Test
-        @DisplayName("+2 часа, без CareHistory")
+        @DisplayName("Клик «Отложить» не пишет CareHistory и не двигает время (#118)")
         void shouldSnoozeWithoutHistory() throws TelegramApiException {
             when(callbackQuery.getData()).thenReturn("v1:snooze:1");
             when(careScheduleRepository.findById(1L)).thenReturn(Optional.of(schedule));
 
-            LocalDateTime before = LocalDateTime.now();
+            LocalDateTime originalNext = schedule.getNextDueAt();
 
             service.handleCallback(callbackQuery, telegramClient);
 
-            assertThat(schedule.getNextDueAt()).isAfter(before.plusHours(1));
-            assertThat(schedule.getNextDueAt()).isBefore(before.plusHours(3));
-            verify(careScheduleRepository).save(schedule);
+            assertThat(schedule.getNextDueAt()).isEqualTo(originalNext);
+            verify(careScheduleRepository, never()).save(any());
             verify(careHistoryRepository, never()).save(any());
         }
 
