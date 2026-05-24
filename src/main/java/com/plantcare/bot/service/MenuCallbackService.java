@@ -10,6 +10,7 @@ import com.plantcare.bot.domain.enums.ConversationState;
 import com.plantcare.bot.domain.enums.PlantEventType;
 import com.plantcare.bot.domain.enums.TaskType;
 import com.plantcare.bot.util.TimezoneSupport;
+import com.plantcare.bot.weather.service.WeatherMenuService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -60,6 +61,7 @@ public class MenuCallbackService {
     private final PlantEventService plantEventService;
     private final PlantAcclimationService plantAcclimationService;
     private final PlantDiagnosisService plantDiagnosisService;
+    private final WeatherMenuService weatherMenuService;
 
     private record LocationPreset(String name, String emoji) {
     }
@@ -156,6 +158,10 @@ public class MenuCallbackService {
                 locationMenuService.sendLocationsMenu(user, client);
                 answerCallback(client, callbackId, "");
             }
+            case "WEATHER" -> {
+                weatherMenuService.sendWeatherScreen(user, client);
+                answerCallback(client, callbackId, "");
+            }
             case "BACK" -> {
                 mainMenuService.sendMainMenu(user, client);
                 answerCallback(client, callbackId, "");
@@ -181,6 +187,43 @@ public class MenuCallbackService {
                 sendTimezonePrompt(user, client);
                 answerCallback(client, callbackId, "");
             }
+
+            // ===== Отпуск (issue #53) =====
+            case "VACATION" -> {
+                sendVacationDaysMenu(user, client);
+                answerCallback(client, callbackId, "");
+            }
+            case "VACATION_3" -> {
+                startVacation(user, client, 3);
+                answerCallback(client, callbackId, "");
+            }
+            case "VACATION_7" -> {
+                startVacation(user, client, 7);
+                answerCallback(client, callbackId, "");
+            }
+            case "VACATION_14" -> {
+                startVacation(user, client, 14);
+                answerCallback(client, callbackId, "");
+            }
+            case "VACATION_OTHER" -> {
+                userService.updateState(user, ConversationState.AWAITING_VACATION_DAYS);
+                sendText(user, client, "Введи число дней от "
+                        + UserService.MIN_VACATION_DAYS + " до " + UserService.MAX_VACATION_DAYS + ":");
+                answerCallback(client, callbackId, "");
+            }
+            case "VACATION_END" -> {
+                endVacation(user, client);
+                answerCallback(client, callbackId, "");
+            }
+            case "VACATION_EXTEND_3" -> {
+                extendVacation(user, client, 3);
+                answerCallback(client, callbackId, "");
+            }
+            case "VACATION_EXTEND_7" -> {
+                extendVacation(user, client, 7);
+                answerCallback(client, callbackId, "");
+            }
+
             default -> answerCallback(client, callbackId, "❌ Неизвестная команда");
         }
     }
@@ -1138,6 +1181,94 @@ public class MenuCallbackService {
         };
     }
 
+    // =================================================================
+    // Отпуск (issue #53)
+    // =================================================================
+
+    private static final DateTimeFormatter VACATION_DATE_FMT =
+            DateTimeFormatter.ofPattern("dd.MM");
+
+    private void sendVacationDaysMenu(User user, TelegramClient client) {
+        InlineKeyboardMarkup keyboard = InlineKeyboardMarkup.builder()
+                .keyboardRow(new InlineKeyboardRow(List.of(
+                        InlineKeyboardButton.builder()
+                                .text("3").callbackData("MENU:VACATION_3").build(),
+                        InlineKeyboardButton.builder()
+                                .text("7").callbackData("MENU:VACATION_7").build(),
+                        InlineKeyboardButton.builder()
+                                .text("14").callbackData("MENU:VACATION_14").build()
+                )))
+                .keyboardRow(new InlineKeyboardRow(List.of(
+                        InlineKeyboardButton.builder()
+                                .text("Другое").callbackData("MENU:VACATION_OTHER").build()
+                )))
+                .keyboardRow(new InlineKeyboardRow(List.of(
+                        InlineKeyboardButton.builder()
+                                .text("⬅️ Отмена").callbackData("MENU:SETTINGS").build()
+                )))
+                .build();
+
+        SendMessage message = SendMessage.builder()
+                .chatId(user.getTelegramChatId().toString())
+                .text("🏖 На сколько дней уезжаешь?")
+                .replyMarkup(keyboard)
+                .build();
+
+        try {
+            client.execute(message);
+        } catch (TelegramApiException e) {
+            log.error("Failed to send vacation days menu", e);
+        }
+    }
+
+    private void startVacation(User user, TelegramClient client, int days) {
+        try {
+            User updated = userService.startVacation(user, days);
+            String date = formatPausedUntilInUserZone(updated);
+            sendText(user, client,
+                    "🏖 Отпуск до " + date + ". Бот будет молчать, удачной поездки!");
+        } catch (IllegalArgumentException e) {
+            sendText(user, client, "❌ " + e.getMessage());
+        }
+    }
+
+    private void endVacation(User user, TelegramClient client) {
+        userService.endVacation(user);
+        sendText(user, client, "🌿 С возвращением! Возобновляю напоминания");
+    }
+
+    private void extendVacation(User user, TelegramClient client, int days) {
+        try {
+            User updated = userService.extendVacation(user, days);
+            String date = formatPausedUntilInUserZone(updated);
+            sendText(user, client, "🏖 Отпуск продлён до " + date);
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            sendText(user, client, "❌ " + e.getMessage());
+        }
+    }
+
+    /**
+     * Форматирует {@code pausedUntil} (хранится как UTC LocalDateTime) в дату
+     * локальной TZ юзера. Если время = null — возвращает «—».
+     */
+    private String formatPausedUntilInUserZone(User user) {
+        LocalDateTime utc = user.getPausedUntil();
+        if (utc == null) return "—";
+        return TimezoneSupport.dateInUserZone(utc, user).format(VACATION_DATE_FMT);
+    }
+
+    private void sendText(User user, TelegramClient client, String text) {
+        SendMessage message = SendMessage.builder()
+                .chatId(user.getTelegramChatId().toString())
+                .text(text)
+                .build();
+        try {
+            client.execute(message);
+        } catch (TelegramApiException e) {
+            log.error("Failed to send text message to {}", user.getTelegramChatId(), e);
+        }
+    }
+
     private void sendSettingsMenu(User user, TelegramClient client) {
         InlineKeyboardMarkup keyboard = InlineKeyboardMarkup.builder()
                 .keyboardRow(new InlineKeyboardRow(List.of(
@@ -1150,6 +1281,18 @@ public class MenuCallbackService {
                         InlineKeyboardButton.builder()
                                 .text("🌍 Изменить регион")
                                 .callbackData("MENU:CHANGE_TZ")
+                                .build()
+                )))
+                .keyboardRow(new InlineKeyboardRow(List.of(
+                        InlineKeyboardButton.builder()
+                                .text("⛅ Учитывать погоду")
+                                .callbackData("MENU:WEATHER")
+                                .build()
+                )))
+                .keyboardRow(new InlineKeyboardRow(List.of(
+                        InlineKeyboardButton.builder()
+                                .text("🏖 Уехать в отпуск")
+                                .callbackData("MENU:VACATION")
                                 .build()
                 )))
                 .keyboardRow(new InlineKeyboardRow(List.of(

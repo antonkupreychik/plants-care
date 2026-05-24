@@ -44,6 +44,8 @@ public enum ConversationState {
 
     // Интеграция с погодой (issue #69)
     AWAITING_WEATHER_LOCATION,
-    AWAITING_PLANT_DIAGNOSIS //(issue #73)
+    AWAITING_PLANT_DIAGNOSIS, //(issue #73)
     // ожидаем location-сообщение для weather_lat/lon
+    // Отпуск (issue #53)
+    AWAITING_VACATION_DAYS          // ввод числа дней отпуска при выборе «Другое»
 }
