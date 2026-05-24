@@ -5,6 +5,8 @@ import com.plantcare.bot.domain.CareSchedule;
 import com.plantcare.bot.domain.Plant;
 import com.plantcare.bot.domain.User;
 import com.plantcare.bot.domain.enums.TaskType;
+import com.plantcare.bot.metrics.MetricsService;
+import com.plantcare.bot.metrics.MetricsService.CallbackOutcome;
 import com.plantcare.bot.repository.CareHistoryRepository;
 import com.plantcare.bot.repository.CareScheduleRepository;
 import com.plantcare.bot.util.TimezoneSupport;
@@ -82,6 +84,7 @@ public class NotificationCallbackService {
     private final ReminderKeyboardFactory reminderKeyboardFactory;
     private final BackdatedCareCallbackService backdatedCareCallbackService;
     private final Clock clock;
+    private final MetricsService metricsService;
 
     @Transactional
     public void handleCallback(CallbackQuery callbackQuery, TelegramClient client) {
@@ -94,6 +97,7 @@ public class NotificationCallbackService {
 
         if (parts.length < 3) {
             answerCallback(client, callbackId, "❌ Неизвестная команда");
+            metricsService.recordCallback("unknown", CallbackOutcome.ERROR);
             return;
         }
 
@@ -174,6 +178,7 @@ public class NotificationCallbackService {
             scheduleId = Long.parseLong(parts[2]);
         } catch (NumberFormatException e) {
             answerCallback(client, callbackId, "❌ Неверный ID");
+            metricsService.recordCallback(action, CallbackOutcome.ERROR);
             return;
         }
 
@@ -181,6 +186,7 @@ public class NotificationCallbackService {
 
         if (optSchedule.isEmpty()) {
             answerCallback(client, callbackId, "❌ Расписание не найдено");
+            metricsService.recordCallback(action, CallbackOutcome.ERROR);
             return;
         }
 
@@ -190,6 +196,8 @@ public class NotificationCallbackService {
         if (plant.isArchived()) {
             editMessage(client, chatId, messageId, "Растение уже удалено");
             answerCallback(client, callbackId, "Растение удалено");
+            // Архив — это идемпотентный «уже не актуально», а не ошибка.
+            metricsService.recordCallback(action, CallbackOutcome.IDEMPOTENT);
             return;
         }
 
@@ -204,6 +212,9 @@ public class NotificationCallbackService {
                 if (schedule.getTaskType() == TaskType.WATERING) {
                     askWateringAbundance(plant.getName(), scheduleId, chatId, messageId, client);
                     answerCallback(client, callbackId, "");
+                    // OK — flow корректно отстартовал. Финальная отметка
+                    // (с wabund/wsoil) считается отдельным callback'ом.
+                    metricsService.recordCallback(action, CallbackOutcome.OK);
                     return;
                 }
 
@@ -211,6 +222,7 @@ public class NotificationCallbackService {
 
                 if (!marked) {
                     answerCallback(client, callbackId, "Уже отмечено!");
+                    metricsService.recordCallback(action, CallbackOutcome.IDEMPOTENT);
                     return;
                 }
 
@@ -230,11 +242,13 @@ public class NotificationCallbackService {
                 // делает handleSnoozePick после выбора варианта.
                 showSnoozeChoice(plant.getName(), scheduleId, chatId, messageId, client);
                 answerCallback(client, callbackId, "");
+                metricsService.recordCallback(action, CallbackOutcome.OK);
                 return;
             }
             case "skip" -> {
                 if (isDuplicateDone(plant, schedule, now)) {
                     answerCallback(client, callbackId, "Уже отмечено!");
+                    metricsService.recordCallback(action, CallbackOutcome.IDEMPOTENT);
                     return;
                 }
 
@@ -261,12 +275,14 @@ public class NotificationCallbackService {
             }
             default -> {
                 answerCallback(client, callbackId, "❌ Неизвестное действие");
+                metricsService.recordCallback(action, CallbackOutcome.ERROR);
                 return;
             }
         }
 
         editMessage(client, chatId, messageId, responseText);
         answerCallback(client, callbackId, alertText);
+        metricsService.recordCallback(action, CallbackOutcome.OK);
     }
 
     // ====================================================================
@@ -344,6 +360,7 @@ public class NotificationCallbackService {
     ) {
         if (parts.length != 4) {
             answerCallback(client, callbackId, "❌ Неверный формат");
+            metricsService.recordCallback("wabund", CallbackOutcome.ERROR);
             return;
         }
         Long scheduleId;
@@ -351,23 +368,27 @@ public class NotificationCallbackService {
             scheduleId = Long.parseLong(parts[2]);
         } catch (NumberFormatException e) {
             answerCallback(client, callbackId, "❌ Неверный ID");
+            metricsService.recordCallback("wabund", CallbackOutcome.ERROR);
             return;
         }
         String abundance = parts[3];
         if (!"HEAVY".equals(abundance) && !"NORMAL".equals(abundance)) {
             answerCallback(client, callbackId, "❌ Неверный ответ");
+            metricsService.recordCallback("wabund", CallbackOutcome.ERROR);
             return;
         }
 
         Optional<CareSchedule> opt = careScheduleRepository.findById(scheduleId);
         if (opt.isEmpty() || opt.get().getTaskType() != TaskType.WATERING) {
             answerCallback(client, callbackId, "❌ Расписание не найдено");
+            metricsService.recordCallback("wabund", CallbackOutcome.ERROR);
             return;
         }
         Plant plant = opt.get().getPlant();
         if (plant.isArchived()) {
             editMessage(client, chatId, messageId, "Растение уже удалено");
             answerCallback(client, callbackId, "Растение удалено");
+            metricsService.recordCallback("wabund", CallbackOutcome.IDEMPOTENT);
             return;
         }
 
@@ -385,6 +406,7 @@ public class NotificationCallbackService {
             log.error("Failed to edit message to soil-dry question: {}", e.getMessage(), e);
         }
         answerCallback(client, callbackId, "");
+        metricsService.recordCallback("wabund", CallbackOutcome.OK);
     }
 
     private InlineKeyboardMarkup buildSoilDryKeyboard(Long scheduleId, String abundance) {
@@ -414,6 +436,7 @@ public class NotificationCallbackService {
     ) {
         if (parts.length != 5) {
             answerCallback(client, callbackId, "❌ Неверный формат");
+            metricsService.recordCallback("wsoil", CallbackOutcome.ERROR);
             return;
         }
         Long scheduleId;
@@ -421,6 +444,7 @@ public class NotificationCallbackService {
             scheduleId = Long.parseLong(parts[2]);
         } catch (NumberFormatException e) {
             answerCallback(client, callbackId, "❌ Неверный ID");
+            metricsService.recordCallback("wsoil", CallbackOutcome.ERROR);
             return;
         }
         String abundanceStr = parts[3];
@@ -429,6 +453,7 @@ public class NotificationCallbackService {
         boolean wasAbundant = "HEAVY".equals(abundanceStr);
         if (!"HEAVY".equals(abundanceStr) && !"NORMAL".equals(abundanceStr)) {
             answerCallback(client, callbackId, "❌ Неверный ответ");
+            metricsService.recordCallback("wsoil", CallbackOutcome.ERROR);
             return;
         }
         Boolean soilWasDry = switch (soilStr) {
@@ -439,12 +464,14 @@ public class NotificationCallbackService {
         };
         // Если был неизвестный soilStr — уже ответили выше, но нам нужно явно выйти.
         if (!"DRY".equals(soilStr) && !"WET".equals(soilStr) && !"UNKNOWN".equals(soilStr)) {
+            metricsService.recordCallback("wsoil", CallbackOutcome.ERROR);
             return;
         }
 
         Optional<CareSchedule> opt = careScheduleRepository.findById(scheduleId);
         if (opt.isEmpty() || opt.get().getTaskType() != TaskType.WATERING) {
             answerCallback(client, callbackId, "❌ Расписание не найдено");
+            metricsService.recordCallback("wsoil", CallbackOutcome.ERROR);
             return;
         }
         CareSchedule schedule = opt.get();
@@ -452,6 +479,7 @@ public class NotificationCallbackService {
         if (plant.isArchived()) {
             editMessage(client, chatId, messageId, "Растение уже удалено");
             answerCallback(client, callbackId, "Растение удалено");
+            metricsService.recordCallback("wsoil", CallbackOutcome.IDEMPOTENT);
             return;
         }
 
@@ -459,6 +487,7 @@ public class NotificationCallbackService {
 
         if (isDuplicateDone(plant, schedule, now)) {
             answerCallback(client, callbackId, "Уже отмечено!");
+            metricsService.recordCallback("wsoil", CallbackOutcome.IDEMPOTENT);
             return;
         }
 
@@ -494,6 +523,7 @@ public class NotificationCallbackService {
         );
 
         answerCallback(client, callbackId, "Записано");
+        metricsService.recordCallback("wsoil", CallbackOutcome.OK);
 
         log.info("Watering with details: plant={}, abundant={}, soil_dry={}, schedule={}",
                 plant.getId(), wasAbundant, soilWasDry, scheduleId);
@@ -606,6 +636,7 @@ public class NotificationCallbackService {
             locationId = Long.parseLong(rawLocationId);
         } catch (NumberFormatException e) {
             answerCallback(client, callbackId, "❌ Неверный ID локации");
+            metricsService.recordCallback("bulk_done", CallbackOutcome.ERROR);
             return;
         }
 
@@ -613,6 +644,7 @@ public class NotificationCallbackService {
         if (user == null) {
             log.warn("bulk_done callback from unknown chatId={}", chatId);
             answerCallback(client, callbackId, "❌ Сначала /start");
+            metricsService.recordCallback("bulk_done", CallbackOutcome.ERROR);
             return;
         }
 
@@ -623,12 +655,14 @@ public class NotificationCallbackService {
         // расписания отключены, либо все растения архивированы).
         if (result.total() == 0) {
             answerCallback(client, callbackId, "В этой комнате пока нечего поливать");
+            metricsService.recordCallback("bulk_done", CallbackOutcome.IDEMPOTENT);
             return;
         }
 
         // Все растения были политы недавно (< 60 сек) — это double-click по кнопке.
         if (result.updated() == 0) {
             answerCallback(client, callbackId, "Уже полито");
+            metricsService.recordCallback("bulk_done", CallbackOutcome.IDEMPOTENT);
             return;
         }
 
@@ -638,6 +672,7 @@ public class NotificationCallbackService {
                 + " в локации " + result.locationName();
         sendMessage(client, chatId, resultText);
         answerCallback(client, callbackId, "Готово!");
+        metricsService.recordCallback("bulk_done", CallbackOutcome.OK);
 
         log.info("Bulk WATERING done: user={}, location={}, updated={}, deduped={}",
                 user.getId(), locationId, result.updated(), result.deduped());
@@ -881,23 +916,37 @@ public class NotificationCallbackService {
             String callbackId,
             TelegramClient client
     ) {
+        // Маппинг result → tag-значение action: явный switch, чтобы имя
+        // метрики совпадало с callback action из роутера (см. switch выше,
+        // case "soil_unk"). Конкатенация ".toLowerCase()" давала бы
+        // "soil_unknown" против "soil_unk" в whitelist → расщепление
+        // дашбордов на два имени и подмена на "unknown".
+        String metricAction = switch (result) {
+            case "DRY" -> "soil_dry";
+            case "WET" -> "soil_wet";
+            case "UNKNOWN" -> "soil_unk";
+            default -> "unknown";
+        };
         Long scheduleId;
         try {
             scheduleId = Long.parseLong(rawScheduleId);
         } catch (NumberFormatException e) {
             answerCallback(client, callbackId, "❌ Неверный ID");
+            metricsService.recordCallback(metricAction, CallbackOutcome.ERROR);
             return;
         }
 
         Optional<CareSchedule> opt = careScheduleRepository.findById(scheduleId);
         if (opt.isEmpty()) {
             answerCallback(client, callbackId, "❌ Расписание не найдено");
+            metricsService.recordCallback(metricAction, CallbackOutcome.ERROR);
             return;
         }
         CareSchedule schedule = opt.get();
 
         if (schedule.getTaskType() != TaskType.SOIL_CHECK) {
             answerCallback(client, callbackId, "❌ Неверный тип");
+            metricsService.recordCallback(metricAction, CallbackOutcome.ERROR);
             return;
         }
 
@@ -905,6 +954,7 @@ public class NotificationCallbackService {
         if (plant.isArchived()) {
             editMessage(client, chatId, messageId, "🗑 Растение уже удалено.");
             answerCallback(client, callbackId, "");
+            metricsService.recordCallback(metricAction, CallbackOutcome.IDEMPOTENT);
             return;
         }
 
@@ -915,6 +965,7 @@ public class NotificationCallbackService {
                 .findFirstByPlantIdAndTaskTypeOrderByDoneAtDesc(plant.getId(), TaskType.SOIL_CHECK);
         if (last.isPresent() && last.get().getDoneAt().plusSeconds(DEDUP_SECONDS).isAfter(now)) {
             answerCallback(client, callbackId, "Уже отмечено!");
+            metricsService.recordCallback(metricAction, CallbackOutcome.IDEMPOTENT);
             return;
         }
 
@@ -964,6 +1015,7 @@ public class NotificationCallbackService {
             case "WET" -> "Записано: влажно";
             default    -> "Записано";
         });
+        metricsService.recordCallback(metricAction, CallbackOutcome.OK);
 
         log.info("Soil check result for plant {} (schedule {}): {}",
                 plant.getId(), scheduleId, result);
@@ -985,12 +1037,14 @@ public class NotificationCallbackService {
             wateringScheduleId = Long.parseLong(rawWateringScheduleId);
         } catch (NumberFormatException e) {
             answerCallback(client, callbackId, "❌ Неверный ID");
+            metricsService.recordCallback("soil_water", CallbackOutcome.ERROR);
             return;
         }
 
         Optional<CareSchedule> opt = careScheduleRepository.findById(wateringScheduleId);
         if (opt.isEmpty() || opt.get().getTaskType() != TaskType.WATERING) {
             answerCallback(client, callbackId, "❌ Расписание полива не найдено");
+            metricsService.recordCallback("soil_water", CallbackOutcome.ERROR);
             return;
         }
         CareSchedule wateringSchedule = opt.get();
@@ -999,6 +1053,7 @@ public class NotificationCallbackService {
         if (plant.isArchived()) {
             editMessage(client, chatId, messageId, "🗑 Растение уже удалено.");
             answerCallback(client, callbackId, "");
+            metricsService.recordCallback("soil_water", CallbackOutcome.IDEMPOTENT);
             return;
         }
 
@@ -1007,6 +1062,7 @@ public class NotificationCallbackService {
 
         if (!marked) {
             answerCallback(client, callbackId, "Уже отмечено!");
+            metricsService.recordCallback("soil_water", CallbackOutcome.IDEMPOTENT);
             return;
         }
 
@@ -1015,6 +1071,7 @@ public class NotificationCallbackService {
         editMessage(client, chatId, messageId,
                 "💧 Полил " + plant.getName() + ".\nСледующий полив — " + nextDateStr);
         answerCallback(client, callbackId, "Готово!");
+        metricsService.recordCallback("soil_water", CallbackOutcome.OK);
 
         log.info("Soil-check follow-up watering done: plant={}, schedule={}",
                 plant.getId(), wateringScheduleId);
@@ -1070,6 +1127,7 @@ public class NotificationCallbackService {
     ) {
         if (parts.length != 4) {
             answerCallback(client, callbackId, "❌ Неверный формат");
+            metricsService.recordCallback("accl_soil", CallbackOutcome.ERROR);
             return;
         }
         Long scheduleId;
@@ -1077,6 +1135,7 @@ public class NotificationCallbackService {
             scheduleId = Long.parseLong(parts[2]);
         } catch (NumberFormatException e) {
             answerCallback(client, callbackId, "❌ Неверный ID");
+            metricsService.recordCallback("accl_soil", CallbackOutcome.ERROR);
             return;
         }
         String answer = parts[3];
@@ -1084,6 +1143,7 @@ public class NotificationCallbackService {
         Optional<CareSchedule> opt = careScheduleRepository.findById(scheduleId);
         if (opt.isEmpty() || opt.get().getTaskType() != TaskType.WATERING) {
             answerCallback(client, callbackId, "❌ Расписание не найдено");
+            metricsService.recordCallback("accl_soil", CallbackOutcome.ERROR);
             return;
         }
         CareSchedule schedule = opt.get();
@@ -1091,6 +1151,7 @@ public class NotificationCallbackService {
         if (plant.isArchived()) {
             editMessage(client, chatId, messageId, "Растение уже удалено");
             answerCallback(client, callbackId, "Растение удалено");
+            metricsService.recordCallback("accl_soil", CallbackOutcome.IDEMPOTENT);
             return;
         }
 
@@ -1103,6 +1164,7 @@ public class NotificationCallbackService {
                 // но с edit'ом исходного сообщения, не отдельным send).
                 askWateringAbundance(plant.getName(), scheduleId, chatId, messageId, client);
                 answerCallback(client, callbackId, "");
+                metricsService.recordCallback("accl_soil", CallbackOutcome.OK);
             }
             case "WET" -> {
                 // Влажно → откладываем полив на 1 день, не пишем CareHistory.
@@ -1112,6 +1174,7 @@ public class NotificationCallbackService {
                         "💧 Тогда пока не поливаем. Напомню завтра.",
                         buildAcclSnoozeKeyboard(scheduleId));
                 answerCallback(client, callbackId, "Ок, отложил");
+                metricsService.recordCallback("accl_soil", CallbackOutcome.OK);
                 log.info("Acclimation WET: plant={} schedule={} snoozed +1d", plant.getId(), scheduleId);
             }
             case "UNKNOWN" -> {
@@ -1122,9 +1185,13 @@ public class NotificationCallbackService {
                         + "Напомню завтра.";
                 editMessage(client, chatId, messageId, hint, buildAcclSnoozeKeyboard(scheduleId));
                 answerCallback(client, callbackId, "");
+                metricsService.recordCallback("accl_soil", CallbackOutcome.OK);
                 log.info("Acclimation UNKNOWN: plant={} schedule={} snoozed +1d", plant.getId(), scheduleId);
             }
-            default -> answerCallback(client, callbackId, "❌ Неизвестный ответ");
+            default -> {
+                answerCallback(client, callbackId, "❌ Неизвестный ответ");
+                metricsService.recordCallback("accl_soil", CallbackOutcome.ERROR);
+            }
         }
     }
 
@@ -1137,6 +1204,7 @@ public class NotificationCallbackService {
     ) {
         if (parts.length != 4) {
             answerCallback(client, callbackId, "❌ Неверный формат");
+            metricsService.recordCallback("accl_snooze", CallbackOutcome.ERROR);
             return;
         }
         Long scheduleId;
@@ -1146,16 +1214,19 @@ public class NotificationCallbackService {
             days = Integer.parseInt(parts[3]);
         } catch (NumberFormatException e) {
             answerCallback(client, callbackId, "❌ Неверный формат");
+            metricsService.recordCallback("accl_snooze", CallbackOutcome.ERROR);
             return;
         }
         if (days < 1 || days > 7) {
             answerCallback(client, callbackId, "❌ Неверный интервал");
+            metricsService.recordCallback("accl_snooze", CallbackOutcome.ERROR);
             return;
         }
 
         Optional<CareSchedule> opt = careScheduleRepository.findById(scheduleId);
         if (opt.isEmpty()) {
             answerCallback(client, callbackId, "❌ Расписание не найдено");
+            metricsService.recordCallback("accl_snooze", CallbackOutcome.ERROR);
             return;
         }
         CareSchedule schedule = opt.get();
@@ -1165,6 +1236,7 @@ public class NotificationCallbackService {
         editMessage(client, chatId, messageId,
                 "⏰ Ок, напомню через " + days + " " + dayWord(days) + ".");
         answerCallback(client, callbackId, "Отложено");
+        metricsService.recordCallback("accl_snooze", CallbackOutcome.OK);
     }
 
     /**
@@ -1176,6 +1248,7 @@ public class NotificationCallbackService {
     ) {
         if (parts.length != 4) {
             answerCallback(client, callbackId, "❌ Неверный формат");
+            metricsService.recordCallback("accl_checkin", CallbackOutcome.ERROR);
             return;
         }
         Long plantId;
@@ -1183,6 +1256,7 @@ public class NotificationCallbackService {
             plantId = Long.parseLong(parts[2]);
         } catch (NumberFormatException e) {
             answerCallback(client, callbackId, "❌ Неверный ID");
+            metricsService.recordCallback("accl_checkin", CallbackOutcome.ERROR);
             return;
         }
         String answer = parts[3];
@@ -1190,11 +1264,13 @@ public class NotificationCallbackService {
         Plant plant = plantAcclimationService.findById(plantId).orElse(null);
         if (plant == null) {
             answerCallback(client, callbackId, "❌ Растение не найдено");
+            metricsService.recordCallback("accl_checkin", CallbackOutcome.ERROR);
             return;
         }
         if (plant.isArchived()) {
             editMessage(client, chatId, messageId, "Растение уже удалено");
             answerCallback(client, callbackId, "Растение удалено");
+            metricsService.recordCallback("accl_checkin", CallbackOutcome.IDEMPOTENT);
             return;
         }
 
@@ -1212,11 +1288,13 @@ public class NotificationCallbackService {
         };
         if (summary == null) {
             answerCallback(client, callbackId, "❌ Неизвестный ответ");
+            metricsService.recordCallback("accl_checkin", CallbackOutcome.ERROR);
             return;
         }
 
         editMessage(client, chatId, messageId, summary);
         answerCallback(client, callbackId, "Записано");
+        metricsService.recordCallback("accl_checkin", CallbackOutcome.OK);
 
         // Перепланируем следующий check-in через 3 дня (или вычистим, если режим скоро закончится).
         plantAcclimationService.scheduleNextCheckin(plant);

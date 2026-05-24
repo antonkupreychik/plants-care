@@ -1,0 +1,194 @@
+# CRUD локаций пользователя.
+
+paths:
+  Collection:
+    get:
+      tags: [Locations]
+      operationId: listLocations
+      summary: Список локаций пользователя
+      description: |
+        Возвращает все локации, принадлежащие пользователю из `X-User-Id`.
+        Без пагинации — у пользователя обычно меньше десятка локаций.
+      parameters:
+        - $ref: '../_common/parameters.yaml#/XUserId'
+      responses:
+        '200':
+          description: Список локаций.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/schemas/LocationDto'
+    post:
+      tags: [Locations]
+      operationId: createLocation
+      summary: Создать локацию
+      description: |
+        Создаёт локацию от имени пользователя. Имя уникально в рамках
+        пользователя — при коллизии возвращается 400 с `code=BAD_REQUEST`.
+      parameters:
+        - $ref: '../_common/parameters.yaml#/XUserId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/schemas/LocationCreateRequest'
+            example:
+              name: Подоконник
+              emoji: "🪟"
+      responses:
+        '201':
+          description: Локация создана.
+          content:
+            application/json:
+              schema:
+                $ref: '#/schemas/LocationDto'
+        '400':
+          $ref: '../_common/responses.yaml#/BadRequest'
+
+  Item:
+    get:
+      tags: [Locations]
+      operationId: getLocation
+      summary: Получить локацию по ID
+      description: |
+        Возвращает локацию, если она принадлежит пользователю. Чужие или
+        несуществующие локации — 404 (различения не делаем, чтобы не
+        раскрывать существование чужих ID).
+      parameters:
+        - $ref: '../_common/parameters.yaml#/XUserId'
+        - $ref: '../_common/parameters.yaml#/LocationIdPath'
+      responses:
+        '200':
+          description: Локация найдена.
+          content:
+            application/json:
+              schema:
+                $ref: '#/schemas/LocationDto'
+        '404':
+          $ref: '../_common/responses.yaml#/NotFound'
+    put:
+      tags: [Locations]
+      operationId: updateLocation
+      summary: Обновить локацию
+      description: PATCH-семантика — обновляются только переданные поля.
+      parameters:
+        - $ref: '../_common/parameters.yaml#/XUserId'
+        - $ref: '../_common/parameters.yaml#/LocationIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/schemas/LocationUpdateRequest'
+      responses:
+        '200':
+          description: Локация обновлена.
+          content:
+            application/json:
+              schema:
+                $ref: '#/schemas/LocationDto'
+        '400':
+          $ref: '../_common/responses.yaml#/BadRequest'
+        '404':
+          $ref: '../_common/responses.yaml#/NotFound'
+    delete:
+      tags: [Locations]
+      operationId: deleteLocation
+      summary: Удалить локацию
+      description: |
+        Удаляет локацию. Если в локации есть растения — обязательно передать
+        `targetLocationId`, чтобы переместить их в другую локацию того же
+        пользователя.
+
+        Если растений нет — `targetLocationId` игнорируется.
+
+        Особый код ошибки `LOCATION_NOT_EMPTY` возвращается, когда в локации
+        есть растения, а `targetLocationId` не задан.
+      parameters:
+        - $ref: '../_common/parameters.yaml#/XUserId'
+        - $ref: '../_common/parameters.yaml#/LocationIdPath'
+        - name: targetLocationId
+          in: query
+          required: false
+          description: Локация, куда переместить растения. Обязателен, если в удаляемой локации есть растения.
+          schema:
+            type: integer
+            format: int64
+            example: 2
+      responses:
+        '204':
+          description: Локация удалена.
+        '400':
+          description: |
+            Невалидный запрос или попытка удалить непустую локацию без
+            `targetLocationId`. В последнем случае `code=LOCATION_NOT_EMPTY`.
+          content:
+            application/json:
+              schema:
+                $ref: '../_common/errors.yaml#/schemas/ApiErrorResponse'
+              examples:
+                notEmpty:
+                  summary: Локация содержит растения
+                  value:
+                    error:
+                      code: LOCATION_NOT_EMPTY
+                      message: Provide targetLocationId to move plants
+        '404':
+          $ref: '../_common/responses.yaml#/NotFound'
+
+schemas:
+  LocationDto:
+    type: object
+    description: Локация (комната/место), в которой пользователь держит растения.
+    required: [id, name, defaultLocation]
+    properties:
+      id:
+        type: integer
+        format: int64
+      name:
+        type: string
+        example: Подоконник
+      emoji:
+        type: string
+        nullable: true
+        example: "🪟"
+      defaultLocation:
+        type: boolean
+        description: Является ли локация дефолтной для пользователя.
+        example: false
+      createdAt:
+        type: string
+        format: date-time
+        nullable: true
+
+  LocationCreateRequest:
+    type: object
+    required: [name]
+    properties:
+      name:
+        type: string
+        minLength: 1
+        maxLength: 30
+        example: Подоконник
+      emoji:
+        type: string
+        maxLength: 16
+        nullable: true
+        example: "🌿"
+
+  LocationUpdateRequest:
+    type: object
+    description: Все поля опциональны.
+    properties:
+      name:
+        type: string
+        minLength: 1
+        maxLength: 30
+        nullable: true
+      emoji:
+        type: string
+        maxLength: 16
+        nullable: true

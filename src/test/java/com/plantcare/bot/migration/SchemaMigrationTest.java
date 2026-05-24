@@ -92,4 +92,66 @@ class SchemaMigrationTest extends IntegrationTestBase {
 
         assertThat(triggerCount).isEqualTo(3);
     }
+
+    // ===================== issue #117 — V20/V21 =====================
+
+    @Test
+    void v20_should_add_nullable_acquired_at_column_to_plants() {
+        // arrange: ищем колонку в information_schema
+        var row = jdbc.queryForMap(
+                "SELECT data_type, is_nullable FROM information_schema.columns "
+                        + "WHERE table_schema = 'public' AND table_name = 'plants' "
+                        + "AND column_name = 'acquired_at'");
+
+        // assert: тип DATE и nullable — обязательное условие back-compat
+        assertThat(row.get("data_type")).isEqualTo("date");
+        assertThat(row.get("is_nullable")).isEqualTo("YES");
+    }
+
+    @Test
+    void v21_should_create_plant_anniversaries_sent_table_with_composite_pk() {
+        // arrange: таблица существует
+        Integer tableCount = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM information_schema.tables "
+                        + "WHERE table_schema = 'public' AND table_name = 'plant_anniversaries_sent'",
+                Integer.class);
+        assertThat(tableCount).isEqualTo(1);
+
+        // assert: PK — композитный (plant_id, anniversary_year)
+        var pkColumns = jdbc.queryForList(
+                "SELECT a.attname AS col "
+                        + "FROM pg_index i "
+                        + "JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey) "
+                        + "WHERE i.indrelid = 'plant_anniversaries_sent'::regclass "
+                        + "AND i.indisprimary "
+                        + "ORDER BY a.attname",
+                String.class);
+        assertThat(pkColumns).containsExactly("anniversary_year", "plant_id");
+    }
+
+    @Test
+    void v21_should_create_partial_index_for_active_plants_with_acquired_date() {
+        // Частичный индекс под запрос шедулера годовщин — критично для производительности.
+        Integer count = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM pg_indexes "
+                        + "WHERE schemaname = 'public' AND indexname = 'idx_plants_acquired_active'",
+                Integer.class);
+
+        assertThat(count).isEqualTo(1);
+    }
+
+    @Test
+    void v20_and_v21_should_keep_existing_plants_intact() {
+        // Issue #117 backward-compat: миграция NULLABLE и не сносит ни одной строки.
+        // На момент запуска теста таблица plants пуста (тесты чистят за собой), но
+        // если seed-данные есть — они должны иметь acquired_at = NULL и не падать.
+        Integer plantsWithNullAcquired = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM plants WHERE acquired_at IS NULL",
+                Integer.class);
+        Integer totalPlants = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM plants", Integer.class);
+
+        // Все ровно те же = ничего не «съело» миграцией
+        assertThat(plantsWithNullAcquired).isEqualTo(totalPlants);
+    }
 }

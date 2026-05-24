@@ -1,0 +1,48 @@
+# Статистика по уходу. Сейчас доступен только стрик растения.
+
+paths:
+  Streak:
+    get:
+      tags: [Stats]
+      operationId: getPlantStreak
+      summary: Текущий стрик растения
+      description: |
+        Возвращает текущий «стрик» растения — количество последовательных
+        выполнений ухода без пропусков (`on_time = true` подряд).
+
+        Проверяется владение растением: если растение принадлежит другому
+        пользователю или не существует — 404.
+      parameters:
+        - $ref: '../_common/parameters.yaml#/XChatId'
+        - name: plantId
+          in: query
+          required: true
+          description: Идентификатор растения, для которого считаем стрик.
+          schema:
+            type: integer
+            format: int64
+            example: 10
+      responses:
+        '200':
+          description: Стрик посчитан.
+          content:
+            application/json:
+              schema:
+                $ref: '#/schemas/StreakResponse'
+        '404':
+          $ref: '../_common/responses.yaml#/NotFound'
+
+schemas:
+  StreakResponse:
+    type: object
+    description: Ответ `GET /api/v1/stats/streak`.
+    required: [plantId, streak]
+    properties:
+      plantId:
+        type: integer
+        format: int64
+      streak:
+        type: integer
+        format: int32
+        description: Количество on-time подряд.
+        example: 7

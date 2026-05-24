@@ -67,6 +67,8 @@ public class MenuCallbackService {
     private final PhotoProgressCardService photoProgressCardService;
     private final PlantDiagnosisService plantDiagnosisService;
     private final WeatherMenuService weatherMenuService;
+    private final PlantArchiveService plantArchiveService;
+    private final PlantArchiveMenuService plantArchiveMenuService;
 
     private record LocationPreset(String name, String emoji) {
     }
@@ -94,6 +96,12 @@ public class MenuCallbackService {
 
         if (data.startsWith("PLANT:")) {
             handlePlantCallback(data, callbackId, messageId, client, user);
+            return;
+        }
+
+        // issue #117: архив / memorial.
+        if (data.startsWith("ARCHIVE:")) {
+            handleArchiveCallback(data, callbackId, messageId, client, user);
             return;
         }
 
@@ -1194,6 +1202,90 @@ public class MenuCallbackService {
             }
             default -> answerCallback(client, callbackId, "❌ Неизвестное действие");
         }
+    }
+
+    // =================================================================
+    // Архив (issue #117)
+    // =================================================================
+
+    private void handleArchiveCallback(
+            String data,
+            String callbackId,
+            Integer messageId,
+            TelegramClient client,
+            User user
+    ) {
+        if ("ARCHIVE:LIST".equals(data)) {
+            plantArchiveMenuService.showArchiveList(user, messageId, client);
+            answerCallback(client, callbackId, "");
+            return;
+        }
+
+        if (data.startsWith("ARCHIVE:VIEW:")) {
+            Long plantId = parseLong(data.substring("ARCHIVE:VIEW:".length()));
+            if (plantId == null) {
+                answerCallback(client, callbackId, "❌ Неверный ID");
+                return;
+            }
+            plantArchiveMenuService.showArchiveCard(user, plantId, messageId, client);
+            answerCallback(client, callbackId, "");
+            return;
+        }
+
+        if (data.startsWith("ARCHIVE:RESTORE:")) {
+            Long plantId = parseLong(data.substring("ARCHIVE:RESTORE:".length()));
+            if (plantId == null) {
+                answerCallback(client, callbackId, "❌ Неверный ID");
+                return;
+            }
+            try {
+                com.plantcare.bot.domain.Plant restored = plantArchiveService.restore(user.getId(), plantId);
+                answerCallback(client, callbackId, "♻️ Восстановлено");
+                sendText(user, client,
+                        restored.getName() + " снова в твоём списке. "
+                                + "Не забудь проверить расписания — могло измениться.");
+                // Возврат к списку «Мои растения», т.к. растение из архива ушло.
+                plantMenuService.sendMyPlantsList(user, messageId, client);
+            } catch (jakarta.persistence.EntityNotFoundException e) {
+                answerCallback(client, callbackId, "❌ Растение не найдено");
+            }
+            return;
+        }
+
+        if (data.startsWith("ARCHIVE:DELETE_CONFIRM:")) {
+            Long plantId = parseLong(data.substring("ARCHIVE:DELETE_CONFIRM:".length()));
+            if (plantId == null) {
+                answerCallback(client, callbackId, "❌ Неверный ID");
+                return;
+            }
+            plantArchiveMenuService.showDeleteConfirm(user, plantId, messageId, client);
+            answerCallback(client, callbackId, "");
+            return;
+        }
+
+        if (data.startsWith("ARCHIVE:DELETE_FINAL:")) {
+            Long plantId = parseLong(data.substring("ARCHIVE:DELETE_FINAL:".length()));
+            if (plantId == null) {
+                answerCallback(client, callbackId, "❌ Неверный ID");
+                return;
+            }
+            try {
+                plantArchiveService.deleteForever(user.getId(), plantId);
+                answerCallback(client, callbackId, "🗑 Удалено навсегда");
+                plantArchiveMenuService.showArchiveList(user, messageId, client);
+            } catch (jakarta.persistence.EntityNotFoundException e) {
+                answerCallback(client, callbackId, "❌ Растение не найдено");
+            }
+            return;
+        }
+
+        if (data.startsWith("ARCHIVE:HISTORY:")) {
+            // Полная история архива не входит в scope issue #117 — alert-заглушка.
+            answerCallback(client, callbackId, "Полная история в разработке");
+            return;
+        }
+
+        answerCallback(client, callbackId, "❌ Неизвестная команда");
     }
 
     private String parseBackTarget(String[] parts, int startIndex) {

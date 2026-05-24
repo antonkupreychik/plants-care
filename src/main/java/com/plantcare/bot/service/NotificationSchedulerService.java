@@ -9,10 +9,12 @@ import com.plantcare.bot.domain.Plant;
 import com.plantcare.bot.domain.User;
 import com.plantcare.bot.domain.enums.NotificationType;
 import com.plantcare.bot.domain.enums.TaskType;
+import com.plantcare.bot.metrics.MetricsService;
 import com.plantcare.bot.repository.CareScheduleRepository;
 import com.plantcare.bot.repository.NotificationDigestRepository;
 import com.plantcare.bot.repository.NotificationLogRepository;
 import com.plantcare.bot.repository.UserRepository;
+import io.micrometer.core.instrument.Timer;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -50,11 +52,21 @@ public class NotificationSchedulerService {
     private final QuietHoursPolicy quietHoursPolicy;
     private final ReminderKeyboardFactory reminderKeyboardFactory;
     private final Clock clock;
+    private final MetricsService metricsService;
 
     @Scheduled(fixedRate = 60_000)
     @Transactional
     public void checkAndSendNotifications() {
-        executeTick();
+        // Issue #115: оборачиваем тик в Timer, чтобы в Prometheus была видна
+        // длительность обработки (p50/p95/p99). Сам executeTick остаётся
+        // без изменений — Timer.Sample.stop() запишет latency в hot path
+        // только один раз за тик.
+        Timer.Sample sample = metricsService.startSchedulerTickTimer();
+        try {
+            executeTick();
+        } finally {
+            metricsService.stopSchedulerTickTimer(sample);
+        }
     }
 
     /**
@@ -294,6 +306,7 @@ public class NotificationSchedulerService {
         try {
             telegramClientProvider.getTelegramClient().execute(message);
             saveNotificationLog(plant, schedule.getTaskType());
+            metricsService.recordNotificationSent(MetricsService.CHANNEL_TELEGRAM, schedule.getTaskType());
 
             log.info("Sent notification for plant '{}' id={} to user {} (acclimation={})",
                     plant.getName(), plant.getId(), user.getTelegramChatId(), inAcclimation);
@@ -354,7 +367,15 @@ public class NotificationSchedulerService {
 
             for (CareSchedule schedule : schedules) {
                 saveNotificationLog(schedule.getPlant(), schedule.getTaskType());
+                // Каждый сгруппированный пуш считаем за отправленное уведомление —
+                // юзер получил один message, но он покрывает N задач, и срезы по
+                // task_type нужны для аналитики «сколько поливных пушей в день».
+                metricsService.recordNotificationSent(
+                        MetricsService.CHANNEL_TELEGRAM, schedule.getTaskType());
             }
+            // Плюс отдельный счётчик именно для дайджестов — чтобы видеть, какая
+            // доля уведомлений уходит группой, а какая поштучно.
+            metricsService.recordDigestSent();
 
             log.info("Sent digest id={} with {} tasks to user {}",
                     savedDigest.getId(), schedules.size(), user.getTelegramChatId());
@@ -428,14 +449,24 @@ public class NotificationSchedulerService {
 
     private void handleTelegramError(User user, TelegramApiException e) {
         String errorMessage = e.getMessage();
+        MetricsService.TelegramErrorCode code = MetricsService.TelegramErrorCode.fromMessage(errorMessage);
+        metricsService.recordTelegramApiError(code);
 
         if (errorMessage != null && errorMessage.contains("403")) {
             log.warn("Bot blocked by user {}, marking as blocked", user.getTelegramChatId());
             user.setBlocked(true);
             userRepository.save(user);
+            metricsService.recordNotificationFailed(
+                    MetricsService.CHANNEL_TELEGRAM, MetricsService.FailureReason.BLOCKED);
         } else {
             log.error("Failed to send notification to user {}: {}",
                     user.getTelegramChatId(), errorMessage, e);
+            MetricsService.FailureReason reason = switch (code) {
+                case RATE_LIMITED -> MetricsService.FailureReason.RATE_LIMIT;
+                case BAD_REQUEST, FORBIDDEN -> MetricsService.FailureReason.API_ERROR;
+                case OTHER -> MetricsService.FailureReason.OTHER;
+            };
+            metricsService.recordNotificationFailed(MetricsService.CHANNEL_TELEGRAM, reason);
         }
     }
 

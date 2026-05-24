@@ -1,0 +1,192 @@
+# Публичный справочник видов растений. Без авторизации.
+
+paths:
+  Collection:
+    get:
+      tags: [Species]
+      operationId: listSpecies
+      summary: Поиск/список видов растений
+      description: |
+        Публичный справочник видов. Без авторизации. Кеширован на стороне
+        сервера (TTL 1 час) для популярных запросов.
+
+        Параметр `q` — необязательный поиск по подстроке имени/латинского имени.
+        Если пустой — возвращаются все виды постранично.
+
+        Пагинация в этой версии переведена с `page/size` на унифицированный
+        `offset/limit` (как в остальных списках API). Внутри сервиса
+        конвертируется в `PageRequest.of(offset/limit, limit)`, поэтому
+        `offset` должен быть кратен `limit` для предсказуемой страницы.
+
+        `limit` обрезается до 100.
+      parameters:
+        - name: q
+          in: query
+          required: false
+          description: Подстрока для поиска по имени или латинскому имени. Если пустая — без фильтра.
+          schema:
+            type: string
+            default: ""
+            example: монстера
+        - name: offset
+          in: query
+          required: false
+          description: Сдвиг от начала.
+          schema:
+            type: integer
+            format: int32
+            default: 0
+            minimum: 0
+        - name: limit
+          in: query
+          required: false
+          description: Размер страницы. Обрезается до 100.
+          schema:
+            type: integer
+            format: int32
+            default: 20
+            minimum: 1
+            maximum: 100
+      responses:
+        '200':
+          description: Страница видов.
+          content:
+            application/json:
+              schema:
+                $ref: '#/schemas/PageResponseSpeciesSummaryDto'
+
+  Item:
+    get:
+      tags: [Species]
+      operationId: getSpecies
+      summary: Детали вида растения
+      description: |
+        Полная карточка вида, включая `description`. Кешируется по `id`
+        (TTL 1 час).
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Идентификатор вида.
+          schema:
+            type: integer
+            format: int64
+            example: 5
+      responses:
+        '200':
+          description: Вид найден.
+          content:
+            application/json:
+              schema:
+                $ref: '#/schemas/SpeciesDetailDto'
+        '404':
+          $ref: '../_common/responses.yaml#/NotFound'
+
+schemas:
+  SpeciesSummaryDto:
+    type: object
+    description: Краткая карточка вида для списка.
+    required: [id, name]
+    properties:
+      id:
+        type: integer
+        format: int64
+      name:
+        type: string
+        example: Монстера
+      latinName:
+        type: string
+        nullable: true
+        example: Monstera deliciosa
+      wateringDays:
+        type: integer
+        format: int32
+        nullable: true
+        description: Рекомендуемый интервал полива в днях.
+      mistingDays:
+        type: integer
+        format: int32
+        nullable: true
+      fertilizingDays:
+        type: integer
+        format: int32
+        nullable: true
+      soilCheckDays:
+        type: integer
+        format: int32
+        nullable: true
+      careDifficulty:
+        type: string
+        nullable: true
+        description: Имя enum'а `CareDifficulty.name()`.
+        example: EASY
+      lightPreference:
+        type: string
+        nullable: true
+        description: Имя enum'а `LightPreference.name()`.
+        example: BRIGHT_INDIRECT
+
+  SpeciesDetailDto:
+    type: object
+    description: |
+      Полная карточка вида. Все поля `SpeciesSummaryDto` плюс `description`.
+    required: [id, name]
+    properties:
+      id:
+        type: integer
+        format: int64
+      name:
+        type: string
+      latinName:
+        type: string
+        nullable: true
+      wateringDays:
+        type: integer
+        format: int32
+        nullable: true
+      mistingDays:
+        type: integer
+        format: int32
+        nullable: true
+      fertilizingDays:
+        type: integer
+        format: int32
+        nullable: true
+      soilCheckDays:
+        type: integer
+        format: int32
+        nullable: true
+      careDifficulty:
+        type: string
+        nullable: true
+      lightPreference:
+        type: string
+        nullable: true
+      description:
+        type: string
+        nullable: true
+        description: Длинное текстовое описание вида.
+
+  PageResponseSpeciesSummaryDto:
+    type: object
+    description: |
+      Постраничный ответ со списком видов. Унифицирован под `{items, total,
+      offset, limit}` — отличается от прошлой реализации, где было
+      `{content, page, size, totalElements, totalPages}`. Это **breaking
+      change** для существующих клиентов `/api/v1/species`.
+    required: [items, total, offset, limit]
+    properties:
+      items:
+        type: array
+        items:
+          $ref: '#/schemas/SpeciesSummaryDto'
+      total:
+        type: integer
+        format: int64
+        description: Общее количество видов (с учётом фильтра `q`).
+      offset:
+        type: integer
+        format: int32
+      limit:
+        type: integer
+        format: int32

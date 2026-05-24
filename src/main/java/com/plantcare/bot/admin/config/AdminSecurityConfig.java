@@ -21,9 +21,13 @@ import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 
 /**
- * Две SecurityFilterChain:
+ * Три SecurityFilterChain:
  *   1. @Order(1) /admin/** — form login, CSRF, session 8h, rate limiter
- *   2. @Order(2) всё остальное — permitAll, CSRF off (бот, /actuator/**)
+ *   2. @Order(2) /actuator/prometheus — HTTP Basic, ADMIN role (issue #115).
+ *      Регистрируется только если admin enabled (есть креды). На dev без кредов
+ *      падает в default chain (permitAll) — это осознанный компромисс, чтобы
+ *      разработчик мог локально посмотреть метрики без настройки логина.
+ *   3. @Order(3) всё остальное — permitAll, CSRF off (бот, /actuator/health и т.п.)
  *
  * Бины с form login создаются ТОЛЬКО при заданных env. Если их нет —
  * adminFilterChain не поднимается, /admin/** падает в default chain (permitAll),
@@ -72,12 +76,38 @@ public class AdminSecurityConfig {
     }
 
     /**
+     * Issue #115: {@code /actuator/prometheus} закрыт HTTP Basic с ролью ADMIN.
+     * Используем тот же {@link InMemoryUserDetailsManager} что и для /admin/**,
+     * чтобы не плодить отдельных учёток для скрейпа метрик. Prometheus в
+     * Railway/Grafana Cloud конфигурируется с теми же {@code ADMIN_USERNAME} /
+     * пара-bcrypt-хешем, что и админ-панель.
+     *
+     * <p>CSRF выключаем — это GET-эндпоинт для machine-to-machine, никаких форм.
+     * Session создавать тоже не нужно (STATELESS): scrape — это серия независимых
+     * запросов.
+     */
+    @Bean
+    @Order(2)
+    @ConditionalOnExpression(ADMIN_ENABLED_EXPR)
+    public SecurityFilterChain prometheusSecurityFilterChain(HttpSecurity http) throws Exception {
+        return http
+                .securityMatcher("/actuator/prometheus")
+                .authorizeHttpRequests(auth -> auth.anyRequest().hasRole("ADMIN"))
+                .httpBasic(org.springframework.security.config.Customizer.withDefaults())
+                .csrf(csrf -> csrf.disable())
+                .sessionManagement(session -> session
+                        .sessionCreationPolicy(
+                                org.springframework.security.config.http.SessionCreationPolicy.STATELESS))
+                .build();
+    }
+
+    /**
      * Default-цепочка для всего, что не /admin/**. В рамках Phase 0 (issue #84)
      * {@code /api/v1/**}, {@code /swagger-ui/**} и {@code /v3/api-docs/**} публичны:
      * аутентификация REST API появится в следующих фазах.
      */
     @Bean
-    @Order(2)
+    @Order(3)
     public SecurityFilterChain defaultSecurityFilterChain(HttpSecurity http) throws Exception {
         return http
                 .authorizeHttpRequests(auth -> auth.anyRequest().permitAll())

@@ -1,0 +1,85 @@
+# Календарь задач ухода на диапазон дат. Также экспортирует TaskDto, который
+# переиспользует today.yaml.
+
+paths:
+  Collection:
+    get:
+      tags: [Calendar]
+      operationId: getCalendar
+      summary: Календарь задач ухода на диапазон дат
+      description: |
+        Возвращает проекцию активных расписаний пользователя на диапазон дат
+        `[from, to]` (включительно), сгруппированную по дате.
+
+        Дни без задач в ответе **не появляются**. Ключи объекта-результата —
+        строки-даты в формате `YYYY-MM-DD`, упорядоченные по возрастанию.
+
+        Максимальная длина диапазона — 60 дней; больше → 400.
+      parameters:
+        - $ref: '../_common/parameters.yaml#/XChatId'
+        - name: from
+          in: query
+          required: true
+          description: Начало диапазона (включительно).
+          schema:
+            type: string
+            format: date
+            example: 2026-05-24
+        - name: to
+          in: query
+          required: true
+          description: Конец диапазона (включительно). Разница `to - from` ≤ 60 дней.
+          schema:
+            type: string
+            format: date
+            example: 2026-06-22
+      responses:
+        '200':
+          description: Карта «дата → задачи».
+          content:
+            application/json:
+              schema:
+                $ref: '#/schemas/CalendarResponse'
+        '400':
+          $ref: '../_common/responses.yaml#/BadRequest'
+
+schemas:
+  TaskDto:
+    type: object
+    description: Задача ухода в выдаче `today`/`calendar`.
+    required: [scheduleId, plantId, plantName, taskType, nextDueAt]
+    properties:
+      scheduleId:
+        type: integer
+        format: int64
+      plantId:
+        type: integer
+        format: int64
+      plantName:
+        type: string
+      taskType:
+        type: string
+        description: Имя `TaskType.name()` — `WATERING` / `MISTING` / `FERTILIZING` / `SOIL_CHECK`.
+        example: WATERING
+      locationName:
+        type: string
+        nullable: true
+      nextDueAt:
+        type: string
+        format: date-time
+        description: Ближайший дедлайн (UTC).
+
+  CalendarResponse:
+    type: object
+    description: |
+      Карта `date → tasks` для эндпоинта `/api/v1/calendar`. Ключи — строки
+      в формате `YYYY-MM-DD`. В JSON отсортированы по возрастанию.
+
+      ⚠️ Внутренний $ref на TaskDto использует bundle-путь
+      `#/components/schemas/TaskDto` (а не относительный к этому файлу),
+      потому что openapi-generator 7.10 теряет типизацию items внутри
+      `additionalProperties` при cross-file разрешении.
+    additionalProperties:
+      type: array
+      items:
+        $ref: '#/components/schemas/TaskDto'

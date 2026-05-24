@@ -79,10 +79,17 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,metrics
+        # Issue #115: prometheus добавлен для Prometheus scrape.
+        # На prod /actuator/prometheus требует роли ADMIN (см. AdminSecurityConfig),
+        # health/info остаются публичными (UptimeRobot и т.п.).
+        include: health,info,metrics,prometheus
   endpoint:
     health:
       show-details: when-authorized
+  prometheus:
+    metrics:
+      export:
+        enabled: true
 
 # Параметры приложения (issue #28: healthcheck шедулера)
 plants:

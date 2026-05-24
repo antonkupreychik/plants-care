@@ -1,10 +1,9 @@
 package com.plantcare.bot.web;
 
+import com.plantcare.bot.api.generated.CareTypesApi;
+import com.plantcare.bot.api.generated.model.CareTypeDto;
 import com.plantcare.bot.domain.enums.TaskType;
-import com.plantcare.bot.web.dto.CareTypeDto;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.Arrays;
@@ -13,31 +12,30 @@ import java.util.List;
 /**
  * Публичный REST API справочника типов ухода.
  *
- * Возвращает статический список, построенный из значений {@link com.plantcare.bot.domain.enums.TaskType}.
- * Аутентификация не требуется.
+ * <p>Документация и mapping живут в сгенерированном {@link CareTypesApi}.
  */
 @Slf4j
 @RestController
-@RequestMapping("/api/v1/care-types")
-public class CareTypeController {
+public class CareTypeController implements CareTypesApi {
 
-    /**
-     * Возвращает все типы ухода с локализованными русскими названиями.
-     *
-     * Список фиксирован и соответствует значениям перечисления {@code TaskType}:
-     * WATERING, MISTING, FERTILIZING, SOIL_CHECK.
-     *
-     * @return список {@link CareTypeDto} с полями {@code code} и {@code displayName}
-     */
-    @GetMapping
-    public List<CareTypeDto> list() {
+    @Override
+    public List<CareTypeDto> listCareTypes() {
         log.debug("Care types list request");
         return Arrays.stream(TaskType.values())
-                .map(t -> new CareTypeDto(t.name(), toDisplayName(t)))
+                .map(t -> new CareTypeDto(toCodeEnum(t), toDisplayName(t)))
                 .toList();
     }
 
-    private String toDisplayName(TaskType taskType) {
+    private static CareTypeDto.CodeEnum toCodeEnum(TaskType taskType) {
+        return switch (taskType) {
+            case WATERING -> CareTypeDto.CodeEnum.WATERING;
+            case MISTING -> CareTypeDto.CodeEnum.MISTING;
+            case FERTILIZING -> CareTypeDto.CodeEnum.FERTILIZING;
+            case SOIL_CHECK -> CareTypeDto.CodeEnum.SOIL_CHECK;
+        };
+    }
+
+    private static String toDisplayName(TaskType taskType) {
         return switch (taskType) {
             case WATERING -> "Полив";
             case MISTING -> "Опрыскивание";

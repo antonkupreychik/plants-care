@@ -1,0 +1,206 @@
+# Корневой файл спеки. Содержит только метаданные и $ref на:
+# - resources/<name>.yaml  — paths + локальные схемы конкретного ресурса
+# - _common/*.yaml         — общие параметры, ответы, схемы ошибок
+#
+# Чтобы добавить новый эндпоинт:
+#   1. Положи описание в resources/<name>.yaml (или создай новый файл).
+#   2. Зарегистрируй пути ниже в paths.
+#   3. Если схема используется из других ресурсов — добавь её в
+#      components.schemas как $ref на resources/<name>.yaml#/schemas/<X>.
+
+openapi: 3.0.3
+info:
+  title: Plants Care API
+  description: |
+    Публичный REST API сервиса Plants Care — Telegram-бота для напоминаний об
+    уходе за домашними растениями.
+
+    ## Аутентификация
+
+    В текущей версии (PoC, issue #85/#86) большинство пользовательских
+    эндпоинтов идентифицируют вызывающего по числовому заголовку:
+
+    * **`X-User-Id`** — внутренний идентификатор пользователя в БД. Используется
+      эндпоинтами `/api/v1/plants`, `/api/v1/locations`.
+    * **`X-Chat-Id`** — Telegram `chat_id`. Используется эндпоинтами
+      `/api/v1/care-events`, `/api/v1/today`, `/api/v1/calendar`,
+      `/api/v1/stats/streak` и историей растения.
+
+    Публичные справочники (`/api/v1/species`, `/api/v1/care-types`) аутентификацию
+    не требуют.
+
+    ## Таймзоны и время
+
+    Все временные метки в ответах — UTC, формат `date-time` (ISO-8601).
+    Расписания и расчёт «сегодня» выполняются в таймзоне конкретного
+    пользователя (поле `users.timezone`), но в API наружу пробрасываются как UTC.
+
+    ## Ошибки
+
+    Все ошибки имеют единый формат — обёртку `{ "error": { code, message, details? } }`,
+    см. схему [`ApiErrorResponse`](#/components/schemas/ApiErrorResponse).
+  version: 0.1.0
+  contact:
+    name: Plants Care Bot
+    url: https://github.com/kupreichik/plants-care
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:8080
+    description: Локальная разработка
+  - url: https://plants-care.up.railway.app
+    description: Production (Railway)
+
+tags:
+  - name: Health
+    description: Liveness probe — простой пинг для оркестратора (Railway, Docker), не проверяет состояние БД и внешних API.
+  - name: Plants
+    description: |
+      CRUD растений, принадлежащих авторизованному пользователю. Удаление —
+      soft-delete (флаг `archivedAt`), физически записи в БД остаются.
+  - name: Plant History
+    description: История событий ухода для конкретного растения с пагинацией.
+  - name: Locations
+    description: |
+      Локации (комнаты/места) пользователя, в которых стоят растения. Каждый
+      пользователь имеет «дефолтную» локацию, создаваемую автоматически.
+  - name: Care Events
+    description: |
+      Регистрация выполнения ухода (полив, опрыскивание, удобрение) и его отмена.
+      Поддерживается идемпотентность по `clientId`.
+  - name: Calendar
+    description: |
+      Календарь будущих задач ухода для пользователя. Проекция активных
+      расписаний на диапазон дат (до 60 дней) в таймзоне пользователя.
+  - name: Today
+    description: Задачи ухода, дедлайн которых до конца сегодняшнего дня в таймзоне пользователя.
+  - name: Stats
+    description: Статистика по уходу. Сейчас доступен только стрик растения.
+  - name: Species
+    description: Публичный справочник видов растений. Без авторизации.
+  - name: Care Types
+    description: Публичный справочник типов ухода (полив, опрыскивание, и т.п.). Без авторизации.
+
+paths:
+  /api/v1/health:
+    $ref: './resources/health.yaml#/paths/Health'
+
+  /api/v1/plants:
+    $ref: './resources/plants.yaml#/paths/Collection'
+  /api/v1/plants/{id}:
+    $ref: './resources/plants.yaml#/paths/Item'
+  /api/v1/plants/{id}/history:
+    $ref: './resources/plant-history.yaml#/paths/ItemHistory'
+
+  /api/v1/locations:
+    $ref: './resources/locations.yaml#/paths/Collection'
+  /api/v1/locations/{id}:
+    $ref: './resources/locations.yaml#/paths/Item'
+
+  /api/v1/care-events:
+    $ref: './resources/care-events.yaml#/paths/Collection'
+  /api/v1/care-events/{id}:
+    $ref: './resources/care-events.yaml#/paths/Item'
+
+  /api/v1/calendar:
+    $ref: './resources/calendar.yaml#/paths/Collection'
+
+  /api/v1/today:
+    $ref: './resources/today.yaml#/paths/Collection'
+
+  /api/v1/stats/streak:
+    $ref: './resources/stats.yaml#/paths/Streak'
+
+  /api/v1/species:
+    $ref: './resources/species.yaml#/paths/Collection'
+  /api/v1/species/{id}:
+    $ref: './resources/species.yaml#/paths/Item'
+
+  /api/v1/care-types:
+    $ref: './resources/care-types.yaml#/paths/Collection'
+
+components:
+  # Параметры дублируются через $ref в каждом ресурсе (для удобства локального чтения),
+  # здесь регистрируем только для верхнеуровневого свагер-баннера.
+  parameters:
+    XUserId:
+      $ref: './_common/parameters.yaml#/XUserId'
+    XChatId:
+      $ref: './_common/parameters.yaml#/XChatId'
+    PlantIdPath:
+      $ref: './_common/parameters.yaml#/PlantIdPath'
+    LocationIdPath:
+      $ref: './_common/parameters.yaml#/LocationIdPath'
+
+  responses:
+    BadRequest:
+      $ref: './_common/responses.yaml#/BadRequest'
+    Forbidden:
+      $ref: './_common/responses.yaml#/Forbidden'
+    NotFound:
+      $ref: './_common/responses.yaml#/NotFound'
+    Conflict:
+      $ref: './_common/responses.yaml#/Conflict'
+
+  # Все доменные схемы регистрируются здесь, чтобы они появились в
+  # /v3/api-docs и были генерированы openapi-generator'ом как Java-классы
+  # с одинаковыми именами вне зависимости от того, в каком ресурсе живёт
+  # их определение.
+  schemas:
+    HealthResponse:
+      $ref: './resources/health.yaml#/schemas/HealthResponse'
+
+    PlantDto:
+      $ref: './resources/plants.yaml#/schemas/PlantDto'
+    PlantCreateRequest:
+      $ref: './resources/plants.yaml#/schemas/PlantCreateRequest'
+    PlantUpdateRequest:
+      $ref: './resources/plants.yaml#/schemas/PlantUpdateRequest'
+    PageResponsePlantDto:
+      $ref: './resources/plants.yaml#/schemas/PageResponsePlantDto'
+
+    PlantHistoryResponse:
+      $ref: './resources/plant-history.yaml#/schemas/PlantHistoryResponse'
+
+    LocationDto:
+      $ref: './resources/locations.yaml#/schemas/LocationDto'
+    LocationCreateRequest:
+      $ref: './resources/locations.yaml#/schemas/LocationCreateRequest'
+    LocationUpdateRequest:
+      $ref: './resources/locations.yaml#/schemas/LocationUpdateRequest'
+
+    CareEventType:
+      $ref: './resources/care-events.yaml#/schemas/CareEventType'
+    CreateCareEventRequest:
+      $ref: './resources/care-events.yaml#/schemas/CreateCareEventRequest'
+    CareEventResponse:
+      $ref: './resources/care-events.yaml#/schemas/CareEventResponse'
+
+    TaskDto:
+      $ref: './resources/calendar.yaml#/schemas/TaskDto'
+    CalendarResponse:
+      $ref: './resources/calendar.yaml#/schemas/CalendarResponse'
+
+    TodayResponse:
+      $ref: './resources/today.yaml#/schemas/TodayResponse'
+
+    StreakResponse:
+      $ref: './resources/stats.yaml#/schemas/StreakResponse'
+
+    SpeciesSummaryDto:
+      $ref: './resources/species.yaml#/schemas/SpeciesSummaryDto'
+    SpeciesDetailDto:
+      $ref: './resources/species.yaml#/schemas/SpeciesDetailDto'
+    PageResponseSpeciesSummaryDto:
+      $ref: './resources/species.yaml#/schemas/PageResponseSpeciesSummaryDto'
+
+    CareTypeDto:
+      $ref: './resources/care-types.yaml#/schemas/CareTypeDto'
+
+    ApiErrorResponse:
+      $ref: './_common/errors.yaml#/schemas/ApiErrorResponse'
+    ApiError:
+      $ref: './_common/errors.yaml#/schemas/ApiError'
+    FieldError:
+      $ref: './_common/errors.yaml#/schemas/FieldError'

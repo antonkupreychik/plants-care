@@ -1,0 +1,38 @@
+# Публичный справочник типов ухода. Без авторизации.
+
+paths:
+  Collection:
+    get:
+      tags: [Care Types]
+      operationId: listCareTypes
+      summary: Справочник типов ухода
+      description: |
+        Возвращает все типы ухода с локализованными русскими названиями.
+        Список фиксирован: `WATERING`, `MISTING`, `FERTILIZING`, `SOIL_CHECK`.
+
+        Аутентификация не требуется.
+      responses:
+        '200':
+          description: Список типов ухода.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/schemas/CareTypeDto'
+
+schemas:
+  CareTypeDto:
+    type: object
+    description: Локализованная карточка типа ухода.
+    required: [code, displayName]
+    properties:
+      code:
+        type: string
+        description: Машинное имя `TaskType.name()`.
+        enum: [WATERING, MISTING, FERTILIZING, SOIL_CHECK]
+        example: WATERING
+      displayName:
+        type: string
+        description: Локализованное русское имя для UI.
+        example: Полив

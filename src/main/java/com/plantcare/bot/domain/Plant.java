@@ -17,6 +17,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -61,6 +62,15 @@ public class Plant extends BaseEntity {
 
     @Column(name = "archived_at")
     private LocalDateTime archivedAt;
+
+    /**
+     * Дата, когда юзер «завёл» растение (issue #117). NULL = юзер не указал,
+     * в годовщинах не участвует и строка «С тобой с …» в карточке не печатается.
+     * Тип — {@link LocalDate}, в БД хранится как DATE (без TZ): юбилеи привязаны
+     * к календарной дате в TZ юзера, а не к моменту во времени.
+     */
+    @Column(name = "acquired_at")
+    private LocalDate acquiredAt;
 
     /**
      * Endpoint режима акклиматизации (issue #75). Если задано и больше now() —
