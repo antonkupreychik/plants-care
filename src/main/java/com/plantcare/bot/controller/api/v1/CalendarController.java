@@ -27,7 +27,7 @@ import java.util.TreeMap;
  * Проекция расписаний на даты выполняется в {@link CalendarApiService}.
  */
 @Slf4j
-@RestController
+@RestController("calendarApiV1Controller")
 @RequestMapping("/api/v1/calendar")
 @RequiredArgsConstructor
 public class CalendarController {

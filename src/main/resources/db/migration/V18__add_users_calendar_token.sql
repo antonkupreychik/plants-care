@@ -1,4 +1,4 @@
--- V14__add_users_calendar_token.sql
+-- V18__add_users_calendar_token.sql
 -- Issue #79: per-user calendar (.ics) export.
 -- Add a nullable opaque token used to resolve a user from a public calendar URL
 -- (GET /calendar/{token}.ics). Token is generated lazily on first export request

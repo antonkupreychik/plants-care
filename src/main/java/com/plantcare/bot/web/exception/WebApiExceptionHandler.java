@@ -10,7 +10,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 @Slf4j
 @RestControllerAdvice(basePackages = "com.plantcare.bot.web")
-public class ApiExceptionHandler {
+public class WebApiExceptionHandler {
 
     record ApiError(String error, String message) {
     }

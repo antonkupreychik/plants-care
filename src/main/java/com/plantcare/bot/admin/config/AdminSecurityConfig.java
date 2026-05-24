@@ -4,6 +4,7 @@ import com.plantcare.bot.admin.handler.LoggingAuthenticationFailureHandler;
 import com.plantcare.bot.admin.handler.LoggingAuthenticationSuccessHandler;
 import com.plantcare.bot.admin.ratelimit.LoginRateLimitFilter;
 import lombok.RequiredArgsConstructor;
+import com.plantcare.bot.admin.ratelimit.LoginRateLimiter;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
@@ -97,5 +98,17 @@ public class AdminSecurityConfig {
     @Bean
     public PasswordEncoder passwordEncoder() {
         return PasswordEncoderFactories.createDelegatingPasswordEncoder();
+    }
+
+    /**
+     * LoginRateLimitFilter регистрируем как @Bean (а не через @Component на классе),
+     * чтобы @WebMvcTest, который автоматически подхватывает все Filter-beans вне
+     * зависимости от @ConditionalOn*, не пытался создать его в слайс-тестах
+     * контроллеров, где AdminSecurityConfig не импортирован.
+     */
+    @Bean
+    @ConditionalOnExpression(ADMIN_ENABLED_EXPR)
+    public LoginRateLimitFilter loginRateLimitFilter(LoginRateLimiter loginRateLimiter) {
+        return new LoginRateLimitFilter(loginRateLimiter);
     }
 }

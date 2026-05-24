@@ -1,16 +1,15 @@
 package com.plantcare.bot.web;
 
-import com.plantcare.bot.admin.config.AdminSecurityConfig;
 import com.plantcare.bot.domain.Species;
 import com.plantcare.bot.domain.enums.CareDifficulty;
 import com.plantcare.bot.domain.enums.LightPreference;
 import com.plantcare.bot.service.SpeciesService;
-import com.plantcare.bot.web.exception.ApiExceptionHandler;
+import com.plantcare.bot.web.exception.WebApiExceptionHandler;
 import jakarta.persistence.EntityNotFoundException;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
-import org.springframework.context.annotation.Import;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
@@ -28,8 +27,8 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-@WebMvcTest(controllers = {SpeciesController.class, ApiExceptionHandler.class})
-@Import(AdminSecurityConfig.class)
+@WebMvcTest(controllers = {SpeciesController.class, WebApiExceptionHandler.class})
+@AutoConfigureMockMvc(addFilters = false)
 class SpeciesControllerTest {
 
     @Autowired

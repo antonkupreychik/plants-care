@@ -17,7 +17,10 @@ import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKe
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 import org.telegram.telegrambots.meta.generics.TelegramClient;
 
+import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.Collection;
 import java.util.List;
 
@@ -47,11 +50,14 @@ class MainMenuServiceVacationBannerTest {
 
     @BeforeEach
     void setUp() {
+        Clock fixedClock = Clock.fixed(Instant.parse("2026-05-22T12:00:00Z"), ZoneOffset.UTC);
+
         service = new MainMenuService(
                 plantRepository,
                 careScheduleRepository,
                 locationService,
                 careHistoryService,
+                fixedClock,
                 weatherService
         );
 

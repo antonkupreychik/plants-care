@@ -1,15 +1,12 @@
 package com.plantcare.bot.admin.ratelimit;
 
-import com.plantcare.bot.admin.config.AdminSecurityConfig;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.http.HttpMethod;
-import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
@@ -18,9 +15,10 @@ import java.io.IOException;
  * Перехватывает только POST /admin/login. Если IP в чёрном списке → 429
  * с Retry-After: 60. Срабатывает ПЕРЕД UsernamePasswordAuthenticationFilter,
  * чтобы атакующий не нагружал BCrypt (cost=12, медленный by design).
+ *
+ * <p>Регистрация как @Bean — в {@code AdminSecurityConfig}, чтобы слайс-тесты
+ * (@WebMvcTest) не пытались создать его автоматически (см. комментарий там).
  */
-@Component
-@ConditionalOnExpression(AdminSecurityConfig.ADMIN_ENABLED_EXPR)
 @RequiredArgsConstructor
 @Slf4j
 public class LoginRateLimitFilter extends OncePerRequestFilter {
