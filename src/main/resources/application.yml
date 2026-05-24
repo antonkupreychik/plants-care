@@ -16,6 +16,11 @@ app:
   species:
     search-limit: 5
 
+  # Issue #79: публичная подписка на .ics календарь.
+  calendar:
+    base-url: ${CALENDAR_BASE_URL:https://example.com}
+    event-window-days: 90
+
   jpa:
     open-in-view: false
     hibernate:

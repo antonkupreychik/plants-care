@@ -117,4 +117,26 @@ public interface CareScheduleRepository extends JpaRepository<CareSchedule, Long
             @Param("locationId") Long locationId,
             @Param("taskType") TaskType taskType
     );
+
+    /**
+     * Issue #79: активные расписания пользователя с {@code nextDueAt} в полуоткрытом
+     * окне {@code [from; to)} — используются для экспорта в .ics календарь.
+     * JOIN FETCH plant, чтобы избежать N+1 при рендере событий, так как
+     * read-only транзакция закроется до возврата ICS наружу.
+     */
+    @Query("""
+        SELECT s FROM CareSchedule s
+        JOIN FETCH s.plant p
+        WHERE p.user.id = :userId
+          AND p.archivedAt IS NULL
+          AND s.active = true
+          AND s.nextDueAt >= :from
+          AND s.nextDueAt < :to
+        ORDER BY s.nextDueAt ASC
+        """)
+    List<CareSchedule> findUpcomingForUser(
+            @Param("userId") Long userId,
+            @Param("from") LocalDateTime from,
+            @Param("to") LocalDateTime to
+    );
 }

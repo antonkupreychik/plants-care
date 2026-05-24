@@ -41,6 +41,7 @@ public class MenuCallbackService {
     private final PlantMenuService plantMenuService;
     private final PlantCardService plantCardService;
     private final CalendarMenuService calendarMenuService;
+    private final CalendarExportService calendarExportService;
     private final PlantTemplateService plantTemplateService;
     private final NotificationCallbackService notificationCallbackService;
     private final PlantEventService plantEventService;
@@ -176,6 +177,11 @@ public class MenuCallbackService {
             case "CHANGE_TZ" -> {
                 userService.updateState(user, ConversationState.AWAITING_TIMEZONE);
                 sendTimezonePrompt(user, client);
+                answerCallback(client, callbackId, "");
+            }
+
+            case "CALENDAR_EXPORT" -> {
+                sendCalendarExport(user, client);
                 answerCallback(client, callbackId, "");
             }
 
@@ -1128,6 +1134,12 @@ public class MenuCallbackService {
                 )))
                 .keyboardRow(new InlineKeyboardRow(List.of(
                         InlineKeyboardButton.builder()
+                                .text("📅 Экспорт в календарь")
+                                .callbackData("MENU:CALENDAR_EXPORT")
+                                .build()
+                )))
+                .keyboardRow(new InlineKeyboardRow(List.of(
+                        InlineKeyboardButton.builder()
                                 .text("⬅️ Назад")
                                 .callbackData("MENU:BACK")
                                 .build()
@@ -1150,6 +1162,48 @@ public class MenuCallbackService {
             client.execute(message);
         } catch (TelegramApiException e) {
             log.error("Failed to send settings menu", e);
+        }
+    }
+
+    /**
+     * Issue #79: показывает пользователю публичный URL подписки на .ics календарь.
+     * Сначала вне Telegram-вызова получаем/создаём токен (внутри собственной транзакции
+     * {@code CalendarExportService.getOrCreateToken}), потом строим URL и шлём сообщение.
+     */
+    private void sendCalendarExport(User user, TelegramClient client) {
+        String token = calendarExportService.getOrCreateToken(user);
+        String url = calendarExportService.buildCalendarUrl(token);
+
+        String text = """
+                📅 *Экспорт в календарь*
+
+                Скопируй эту ссылку и подпишись на неё в Google/Apple календаре:
+
+                `%s`
+
+                Календарь обновляется автоматически. Задачи на ближайшие 90 дней показаны как события на весь день.
+                """.formatted(url);
+
+        InlineKeyboardMarkup keyboard = InlineKeyboardMarkup.builder()
+                .keyboardRow(new InlineKeyboardRow(List.of(
+                        InlineKeyboardButton.builder()
+                                .text("⬅️ Назад в настройки")
+                                .callbackData("MENU:SETTINGS")
+                                .build()
+                )))
+                .build();
+
+        SendMessage message = SendMessage.builder()
+                .chatId(user.getTelegramChatId().toString())
+                .text(text)
+                .parseMode("Markdown")
+                .replyMarkup(keyboard)
+                .build();
+
+        try {
+            client.execute(message);
+        } catch (TelegramApiException e) {
+            log.error("Failed to send calendar export menu", e);
         }
     }
 
