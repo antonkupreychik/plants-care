@@ -39,6 +39,11 @@ app:
     enabled: true
     locations: classpath:db/migration
     baseline-on-migrate: true
+    # out-of-order=true: фича-ветки мерджатся в разном порядке, миграция
+    # с меньшим номером (V15) может прийти после уже применённой большей (V16).
+    # Без этого флага прод-Flyway откажется применять V15. Контент миграций
+    # независим друг от друга — порядок применения внутри одного релиза не критичен.
+    out-of-order: true
 
 weather:
   cache-minutes: 60          # дефолт 60
@@ -49,8 +54,8 @@ weather:
     timeout-seconds: 5
 
 admin:
-  username: ${ADMIN_USERNAME:admin}
-  password-bcrypt-hash: ${ADMIN_PASSWORD_BCRYPT_HASH:$2y$12$ftNTb9hxqgSpjjvgs8Jhc.7UYwngNcXhL51fwqtdPtlQL8DVsvrCW}
+  username: ${ADMIN_USERNAME:}
+  password-bcrypt-hash: ${ADMIN_PASSWORD_BCRYPT_HASH:}
   session-timeout-hours: 8
   rate-limit:
     max-attempts: 5
@@ -94,8 +99,8 @@ plants:
 # Telegram (placeholder, используется со следующей задачи)
 telegram:
   bot:
-    token: ${TELEGRAM_BOT_TOKEN:8576298042:AAGelJx5JDc06qk2o6XSGcOawRAyW-XvQlw}
-    username: ${TELEGRAM_BOT_USERNAME:PlnatsCareLocalDevelopBot}
+    token: ${TELEGRAM_BOT_TOKEN:}
+    username: ${TELEGRAM_BOT_USERNAME:}
     enabled: ${TELEGRAM_BOT_ENABLED:true}
 
 logging:
