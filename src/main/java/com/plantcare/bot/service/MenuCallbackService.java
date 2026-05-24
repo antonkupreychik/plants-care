@@ -10,6 +10,7 @@ import com.plantcare.bot.domain.enums.ConversationState;
 import com.plantcare.bot.domain.enums.PlantEventType;
 import com.plantcare.bot.domain.enums.TaskType;
 import com.plantcare.bot.util.TimezoneSupport;
+import com.plantcare.bot.weather.service.WeatherMenuService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -60,6 +61,7 @@ public class MenuCallbackService {
     private final PlantEventService plantEventService;
     private final PlantAcclimationService plantAcclimationService;
     private final PlantDiagnosisService plantDiagnosisService;
+    private final WeatherMenuService weatherMenuService;
 
     private record LocationPreset(String name, String emoji) {
     }
@@ -154,6 +156,10 @@ public class MenuCallbackService {
             }
             case "LOCATIONS" -> {
                 locationMenuService.sendLocationsMenu(user, client);
+                answerCallback(client, callbackId, "");
+            }
+            case "WEATHER" -> {
+                weatherMenuService.sendWeatherScreen(user, client);
                 answerCallback(client, callbackId, "");
             }
             case "BACK" -> {
@@ -1275,6 +1281,12 @@ public class MenuCallbackService {
                         InlineKeyboardButton.builder()
                                 .text("🌍 Изменить регион")
                                 .callbackData("MENU:CHANGE_TZ")
+                                .build()
+                )))
+                .keyboardRow(new InlineKeyboardRow(List.of(
+                        InlineKeyboardButton.builder()
+                                .text("⛅ Учитывать погоду")
+                                .callbackData("MENU:WEATHER")
                                 .build()
                 )))
                 .keyboardRow(new InlineKeyboardRow(List.of(

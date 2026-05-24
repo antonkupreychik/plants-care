@@ -3,6 +3,7 @@ package com.plantcare.bot.service;
 import com.plantcare.bot.domain.User;
 import com.plantcare.bot.repository.CareScheduleRepository;
 import com.plantcare.bot.repository.PlantRepository;
+import com.plantcare.bot.weather.service.WeatherService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -40,6 +41,7 @@ class MainMenuServiceVacationBannerTest {
     @Mock private LocationService locationService;
     @Mock private CareHistoryService careHistoryService;
     @Mock private TelegramClient telegramClient;
+    @Mock private WeatherService weatherService;
 
     private MainMenuService service;
 
@@ -49,7 +51,8 @@ class MainMenuServiceVacationBannerTest {
                 plantRepository,
                 careScheduleRepository,
                 locationService,
-                careHistoryService
+                careHistoryService,
+                weatherService
         );
 
         lenient().when(careHistoryService.computeUserStreak(any(), any())).thenReturn(0);

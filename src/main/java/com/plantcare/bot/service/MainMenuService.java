@@ -3,7 +3,6 @@ package com.plantcare.bot.service;
 import com.plantcare.bot.domain.CareSchedule;
 import com.plantcare.bot.domain.Location;
 import com.plantcare.bot.domain.User;
-import com.plantcare.bot.domain.featureflag.FeatureFlag;
 import com.plantcare.bot.repository.CareScheduleRepository;
 import com.plantcare.bot.repository.PlantRepository;
 import com.plantcare.bot.weather.service.WeatherService;
@@ -59,7 +58,7 @@ public class MainMenuService {
         // короткие серии не должны давить на эго в духе "ваш стрик 1 день".
         int userStreak = careHistoryService.computeUserStreak(user.getId(), user.getTimezone());
 
-        String text = buildMenuText(plantCount, todaySchedules, locations, userStreak);
+        String text = buildMenuText(plantCount, todaySchedules, locations, userStreak, user);
 
         // Погодная подсказка для блока полива (issue #69). Одна строка на меню,
         // а не на каждую задачу — иначе текст растёт линейно по количеству
@@ -70,13 +69,11 @@ public class MainMenuService {
             text = text + "\n\n" + weatherHint;
         }
 
-        boolean paused = user.isPaused();
-
         SendMessage message = SendMessage.builder()
                 .chatId(user.getTelegramChatId().toString())
-                .text(buildMenuText(plantCount, todaySchedules, locations, userStreak, user, paused))
+                .text(text)
                 .parseMode("Markdown")
-                .replyMarkup(buildMenuKeyboard(paused))
+                .replyMarkup(buildMenuKeyboard(user))
                 .build();
 
         try {
@@ -89,9 +86,9 @@ public class MainMenuService {
 
     /**
      * Возвращает подсказку про текущую влажность, если:
-     *   1) у юзера погода включена и есть локация,
-     *   2) среди сегодняшних задач есть хотя бы один WATERING,
-     *   3) Open-Meteo (или кеш) вернул значение.
+     * 1) у юзера погода включена и есть локация,
+     * 2) среди сегодняшних задач есть хотя бы один WATERING,
+     * 3) Open-Meteo (или кеш) вернул значение.
      * Иначе — пустая строка, caller просто не добавляет ничего к меню.
      */
     private String buildWeatherHintForWatering(User user, List<CareSchedule> todaySchedules) {
@@ -109,15 +106,14 @@ public class MainMenuService {
             List<CareSchedule> todaySchedules,
             List<Location> locations,
             int userStreak,
-            User user,
-            boolean paused
+            User user
     ) {
         StringBuilder sb = new StringBuilder();
 
         sb.append("🏠 *Главное меню*\n\n");
 
         // issue #53: баннер отпуска идёт первой строкой, чтобы юзер сразу видел статус.
-        if (paused) {
+        if (user.isPaused()) {
             String date = TimezoneSupport.dateInUserZone(user.getPausedUntil(), user)
                     .format(VACATION_DATE_FMT);
             sb.append("🏖 *Отпуск до ").append(date).append("*\n\n");
@@ -237,11 +233,11 @@ public class MainMenuService {
         };
     }
 
-    private InlineKeyboardMarkup buildMenuKeyboard(boolean paused) {
-        InlineKeyboardMarkup.InlineKeyboardMarkupBuilder builder = InlineKeyboardMarkup.builder();
+    private InlineKeyboardMarkup buildMenuKeyboard(User user) {
+        InlineKeyboardMarkup.InlineKeyboardMarkupBuilder<?, ?> builder = InlineKeyboardMarkup.builder();
 
         // issue #53: верхняя строка-баннер с возвратом из отпуска, если активен.
-        if (paused) {
+        if (user.isPaused()) {
             builder.keyboardRow(new InlineKeyboardRow(List.of(
                     InlineKeyboardButton.builder()
                             .text("🌿 Вернуться сейчас")
@@ -250,30 +246,7 @@ public class MainMenuService {
             )));
         }
 
-        // Календарь скрыт за feature flag (issue #78): пока обкатываем
-        // на узком круге, в общем меню кнопки нет. Когда раскатим — уберём
-        // условие или сменим логику на «по умолчанию включён».
-        boolean calendarEnabled = user.hasFeature(FeatureFlag.CALENDAR);
-
-        // Когда календаря нет, нижняя строка содержит только «Настройки» —
-        // оставляем её отдельной кнопкой во всю ширину, а не парой.
-        InlineKeyboardRow bottomRow = calendarEnabled
-                ? new InlineKeyboardRow(List.of(
-                        InlineKeyboardButton.builder()
-                                .text("📅 Календарь")
-                                .callbackData("MENU:CALENDAR")
-                                .build(),
-                        InlineKeyboardButton.builder()
-                                .text("⚙️ Настройки")
-                                .callbackData("MENU:SETTINGS")
-                                .build()))
-                : new InlineKeyboardRow(List.of(
-                        InlineKeyboardButton.builder()
-                                .text("⚙️ Настройки")
-                                .callbackData("MENU:SETTINGS")
-                                .build()));
-
-        return InlineKeyboardMarkup.builder()
+        return builder
                 .keyboardRow(new InlineKeyboardRow(List.of(
                         InlineKeyboardButton.builder()
                                 .text("➕ Добавить растение")
@@ -299,10 +272,7 @@ public class MainMenuService {
                                 .text("⚙️ Настройки")
                                 .callbackData("MENU:SETTINGS")
                                 .build()
-                )));
-
-        return builder
-                .keyboardRow(bottomRow)
+                )))
                 .build();
     }
 
