@@ -1,6 +1,7 @@
 package com.plantcare.bot.diagnosis;
 
 import com.plantcare.bot.domain.Plant;
+import com.plantcare.bot.service.DiseaseCard;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
@@ -86,6 +87,40 @@ public class DiagnosisTextFormatter {
         appendSection(text, "Проверь дополнительно", result.additionalChecks(), "• ");
 
         text.append("\n_Это не точный диагноз. Наблюдай за динамикой и не делай резких изменений сразу._");
+
+        return text.toString();
+    }
+
+    /**
+     * Мягкая подсказка по справочнику болезней (issue #140, ADR-013).
+     *
+     * <p>Формирует отдельный блок «Похоже на: …» со ссылками на карточки болезней,
+     * подобранных по симптому через {@code DiseaseService.matchBySymptom}. Не часть
+     * результата rule engine (#73) — диагноз он не ставит. Если совпадений нет,
+     * возвращает {@code null}, и блок не показывается.
+     *
+     * <p>Отправляется отдельным сообщением БЕЗ Markdown: команды вида
+     * {@code /disease_5} остаются кликабельными (в Markdown подчёркивание ломает
+     * команду), а названия болезней не нужно экранировать.
+     *
+     * @param matches подобранные карточки болезней; может быть пустым
+     * @return текст подсказки или {@code null}, если совпадений нет
+     */
+    public String diseaseHint(List<DiseaseCard> matches) {
+        if (matches == null || matches.isEmpty()) {
+            return null;
+        }
+
+        StringBuilder text = new StringBuilder();
+        text.append("🦠 Похоже на распространённые проблемы:\n\n");
+
+        for (DiseaseCard match : matches) {
+            text.append("• ").append(match.name())
+                    .append(" — подробнее: /disease_").append(match.id())
+                    .append("\n");
+        }
+
+        text.append("\nЭто справочные совпадения по симптому, а не диагноз.");
 
         return text.toString();
     }

@@ -5,6 +5,7 @@ import com.plantcare.bot.command.CommandContainer;
 import com.plantcare.bot.command.impl.CancelCommand;
 import com.plantcare.bot.domain.User;
 import com.plantcare.bot.domain.enums.ConversationState;
+import com.plantcare.bot.service.DiseaseMenuService;
 import com.plantcare.bot.service.MenuCallbackService;
 import com.plantcare.bot.service.NotificationCallbackService;
 import com.plantcare.bot.service.NotificationDigestCallbackService;
@@ -36,6 +37,7 @@ public class PlantsCareBot implements LongPollingSingleThreadUpdateConsumer, Tel
     private static final String WEATHER_CALLBACK_PREFIX = "WEATHER:";
     private static final String SEASON_CALLBACK_PREFIX = "SEASON:";
     private static final String PHOTO_PROGRESS_CALLBACK_PREFIX = "PHOTO_PROGRESS:";
+    private static final String DISEASE_CALLBACK_PREFIX = "DISEASE:";
 
     private final TelegramClient telegramClient;
     private final CommandContainer commandContainer;
@@ -45,6 +47,7 @@ public class PlantsCareBot implements LongPollingSingleThreadUpdateConsumer, Tel
     private final NotificationCallbackService notificationCallbackService;
     private final NotificationDigestCallbackService notificationDigestCallbackService;
     private final MenuCallbackService menuCallbackService;
+    private final DiseaseMenuService diseaseMenuService;
 
     public PlantsCareBot(
             @Value("${telegram.bot.token}") String botToken,
@@ -54,7 +57,8 @@ public class PlantsCareBot implements LongPollingSingleThreadUpdateConsumer, Tel
             CancelCommand cancelCommand,
             NotificationCallbackService notificationCallbackService,
             NotificationDigestCallbackService notificationDigestCallbackService,
-            MenuCallbackService menuCallbackService
+            MenuCallbackService menuCallbackService,
+            DiseaseMenuService diseaseMenuService
     ) {
         this.telegramClient = new OkHttpTelegramClient(botToken);
         this.commandContainer = commandContainer;
@@ -64,6 +68,7 @@ public class PlantsCareBot implements LongPollingSingleThreadUpdateConsumer, Tel
         this.notificationCallbackService = notificationCallbackService;
         this.notificationDigestCallbackService = notificationDigestCallbackService;
         this.menuCallbackService = menuCallbackService;
+        this.diseaseMenuService = diseaseMenuService;
     }
 
     @Override
@@ -113,7 +118,8 @@ public class PlantsCareBot implements LongPollingSingleThreadUpdateConsumer, Tel
                                 data.startsWith(WEATHER_CALLBACK_PREFIX) ||
                                 data.startsWith(SEASON_CALLBACK_PREFIX) ||
                                 data.startsWith(CALENDAR_CALLBACK_PREFIX) ||
-                                data.startsWith(PHOTO_PROGRESS_CALLBACK_PREFIX)
+                                data.startsWith(PHOTO_PROGRESS_CALLBACK_PREFIX) ||
+                                data.startsWith(DISEASE_CALLBACK_PREFIX)
                 )) {
                     String userName = getUserName(update);
                     User user = userService.findOrCreate(chatId, userName);
@@ -139,6 +145,16 @@ public class PlantsCareBot implements LongPollingSingleThreadUpdateConsumer, Tel
                     && update.getMessage().hasText()
                     && "/cancel".equalsIgnoreCase(update.getMessage().getText())) {
                 cancelCommand.execute(update, telegramClient);
+                return;
+            }
+
+            // Диплинк-команда /disease_<id> из подсказки диагностики (#73, #140).
+            // Динамический id не ложится в CommandContainer (точное совпадение имени),
+            // поэтому перехватываем здесь по префиксу — в любом состоянии.
+            if (update.hasMessage()
+                    && update.getMessage().hasText()
+                    && isDiseaseCommand(update.getMessage().getText())) {
+                handleDiseaseCommand(update.getMessage().getText(), user);
                 return;
             }
 
@@ -188,6 +204,33 @@ public class PlantsCareBot implements LongPollingSingleThreadUpdateConsumer, Tel
         }
 
         return "unknown";
+    }
+
+    private static final String DISEASE_COMMAND_PREFIX = "/disease_";
+
+    private boolean isDiseaseCommand(String text) {
+        if (text == null) {
+            return false;
+        }
+
+        // Берём первый токен (Telegram может прислать "/disease_5@botname").
+        String token = text.trim().split("\\s+")[0].split("@")[0];
+        return token.startsWith(DISEASE_COMMAND_PREFIX);
+    }
+
+    private void handleDiseaseCommand(String text, User user) {
+        String token = text.trim().split("\\s+")[0].split("@")[0];
+        String idPart = token.substring(DISEASE_COMMAND_PREFIX.length());
+
+        Long diseaseId;
+        try {
+            diseaseId = Long.parseLong(idPart);
+        } catch (NumberFormatException e) {
+            log.warn("Invalid /disease_ command: '{}'", text);
+            return;
+        }
+
+        diseaseMenuService.sendCard(user, diseaseId, telegramClient);
     }
 
     private String getCommandName(String text) {
