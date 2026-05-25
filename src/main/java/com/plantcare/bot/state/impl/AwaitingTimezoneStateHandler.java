@@ -3,6 +3,8 @@ package com.plantcare.bot.state.impl;
 import com.plantcare.bot.domain.User;
 import com.plantcare.bot.domain.enums.ConversationState;
 import com.plantcare.bot.service.UserService;
+import com.plantcare.bot.service.UserSettingsService;
+import com.plantcare.bot.service.UserSettingsService.TimezoneChangeResult;
 import com.plantcare.bot.state.interfaces.StateHandler;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -18,6 +20,7 @@ import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKe
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 import org.telegram.telegrambots.meta.generics.TelegramClient;
 
+import java.time.ZoneId;
 import java.util.List;
 
 @Slf4j
@@ -26,6 +29,7 @@ import java.util.List;
 public class AwaitingTimezoneStateHandler implements StateHandler {
 
     private final UserService userService;
+    private final UserSettingsService userSettingsService;
     private final TimeZoneEngine engine;
 
     @Override
@@ -83,16 +87,15 @@ public class AwaitingTimezoneStateHandler implements StateHandler {
     }
 
     private void saveAndFinish(User user, String timezoneId, TelegramClient client) {
-        user.setTimezone(timezoneId);
+        TimezoneChangeResult result = userSettingsService.changeTimezone(user, ZoneId.of(timezoneId));
         userService.updateState(user, ConversationState.IDLE);
 
-        log.info("Timezone set to {} for user {}", timezoneId, user.getTelegramChatId());
+        String text = UserSettingsService.buildTimezoneConfirmation(result, user.getQuietHoursEnd())
+                + "\n\nОткрой /menu, чтобы продолжить.";
 
         SendMessage message = SendMessage.builder()
                 .chatId(user.getTelegramChatId().toString())
-                .text("✅ Часовой пояс обновлён: *" + timezoneId + "*.\n\n" +
-                        "Открой /menu, чтобы продолжить.")
-                .parseMode("Markdown")
+                .text(text)
                 .replyMarkup(new ReplyKeyboardRemove(true))
                 .build();
 
@@ -109,9 +112,9 @@ public class AwaitingTimezoneStateHandler implements StateHandler {
                 "Europe/Moscow",
                 "Europe/Kyiv",
                 "Asia/Almaty",
-                "Europe/Berlin",
-                "Europe/London",
-                "America/New_York"
+                "Asia/Tbilisi",
+                "Europe/Warsaw",
+                "Europe/Berlin"
         );
 
         InlineKeyboardMarkup.InlineKeyboardMarkupBuilder<?, ?> markup = InlineKeyboardMarkup.builder();
@@ -124,6 +127,11 @@ public class AwaitingTimezoneStateHandler implements StateHandler {
 
             markup.keyboardRow(new InlineKeyboardRow(button));
         });
+
+        markup.keyboardRow(new InlineKeyboardRow(InlineKeyboardButton.builder()
+                .text("🌍 Другая (ввести вручную)")
+                .callbackData("SET_TZ_CUSTOM")
+                .build()));
 
         SendMessage message = SendMessage.builder()
                 .chatId(chatId.toString())

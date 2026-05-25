@@ -19,6 +19,7 @@ import org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMa
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 import org.telegram.telegrambots.meta.generics.TelegramClient;
 
+import java.time.format.DateTimeFormatter;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -159,7 +160,7 @@ class MenuCallbackServiceTest {
     }
 
     @Test
-    @DisplayName("SETTINGS показывает меню настроек с кнопкой изменения региона")
+    @DisplayName("SETTINGS показывает меню настроек с кнопками таймзоны и тихих часов (#116)")
     void shouldShowSettingsMenu() throws TelegramApiException {
         when(callbackQuery.getData()).thenReturn("MENU:SETTINGS");
 
@@ -190,10 +191,16 @@ class MenuCallbackServiceTest {
                 .map(InlineKeyboardButton::getCallbackData)
                 .toList();
 
-        assertThat(buttonTexts).contains("🌍 Изменить регион");
+        assertThat(buttonTexts).contains("🌐 Таймзона: " + testUser.getTimezone());
+        assertThat(buttonTexts).contains(
+                "🌙 Тихие часы: "
+                        + testUser.getQuietHoursStart().format(DateTimeFormatter.ofPattern("HH:mm"))
+                        + "–"
+                        + testUser.getQuietHoursEnd().format(DateTimeFormatter.ofPattern("HH:mm")));
         assertThat(buttonTexts).contains("⬅️ Назад");
 
         assertThat(callbackData).contains("MENU:CHANGE_TZ");
+        assertThat(callbackData).contains("MENU:QUIET_HOURS");
         assertThat(callbackData).contains("MENU:BACK");
 
         verify(telegramClient).execute(any(AnswerCallbackQuery.class));
