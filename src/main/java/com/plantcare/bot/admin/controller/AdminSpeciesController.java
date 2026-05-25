@@ -3,6 +3,7 @@ package com.plantcare.bot.admin.controller;
 import com.plantcare.bot.admin.dto.SpeciesFormDto;
 import com.plantcare.bot.admin.dto.SpeciesListItem;
 import com.plantcare.bot.admin.exception.DuplicateSpeciesNameException;
+import com.plantcare.bot.admin.service.AdminSpeciesFactService;
 import com.plantcare.bot.admin.service.AdminSpeciesService;
 import com.plantcare.bot.domain.Species;
 import com.plantcare.bot.domain.enums.CareDifficulty;
@@ -43,6 +44,7 @@ public class AdminSpeciesController {
     );
 
     private final AdminSpeciesService adminSpeciesService;
+    private final AdminSpeciesFactService adminSpeciesFactService;
 
     // ============================================================ list + search
 
@@ -110,6 +112,11 @@ public class AdminSpeciesController {
         Species species = adminSpeciesService.findById(id);
         prepareFormModel(model, toDto(species),
                 "/admin/species/" + id, "Редактирование: " + species.getName(), id);
+
+        // Секция управления фактами (issue #131) — только на странице редактирования.
+        AdminSpeciesFactController.populateFactsSection(
+                id, adminSpeciesFactService.getFactsGrouped(id), model);
+
         return "admin/species/form";
     }
 
@@ -215,6 +222,9 @@ public class AdminSpeciesController {
         dto.setDescription(s.getDescription());
         dto.setSearchTags(s.getSearchTags());
         dto.setPopularity(s.getPopularity());
+        dto.setToxicToCats(s.getToxicToCats());
+        dto.setToxicToDogs(s.getToxicToDogs());
+        dto.setToxicToHumans(s.getToxicToHumans());
         return dto;
     }
 }

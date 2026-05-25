@@ -5,6 +5,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Доступ к энциклопедическим фактам видов (ADR-011, issue #129).
@@ -31,4 +32,16 @@ public interface SpeciesFactRepository extends JpaRepository<SpeciesFact, Long> 
      * @return {@code true}, если у вида есть хотя бы один факт
      */
     boolean existsBySpeciesId(Long speciesId);
+
+    /**
+     * Факт по идентификатору с проверкой принадлежности виду.
+     *
+     * <p>Защита от подмены {@code factId} в админке: редактировать и удалять
+     * можно только факт, привязанный к виду из URL ({@code /admin/species/{speciesId}/facts/{factId}}).
+     *
+     * @param id        идентификатор факта
+     * @param speciesId идентификатор вида-владельца
+     * @return факт, если он принадлежит виду; иначе пусто
+     */
+    Optional<SpeciesFact> findByIdAndSpeciesId(Long id, Long speciesId);
 }

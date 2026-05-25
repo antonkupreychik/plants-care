@@ -41,4 +41,18 @@ public class SpeciesFormDto {
     @Min(value = 0, message = "Популярность от 0 до 100")
     @Max(value = 100, message = "Популярность от 0 до 100")
     private Integer popularity = 50;
+
+    /**
+     * Токсичность для кошек. Tri-state: {@code true} — токсично,
+     * {@code false} — безопасно, {@code null} — нет данных. Все три состояния
+     * валидны. Пустое значение из {@code <select>} биндится в {@code null}
+     * штатным конвертером Spring (пустая строка → {@code null} для Boolean).
+     */
+    private Boolean toxicToCats;
+
+    /** Токсичность для собак. Tri-state, см. {@link #toxicToCats}. */
+    private Boolean toxicToDogs;
+
+    /** Токсичность для людей/детей. Tri-state, см. {@link #toxicToCats}. */
+    private Boolean toxicToHumans;
 }
