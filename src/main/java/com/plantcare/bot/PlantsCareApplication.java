@@ -1,6 +1,7 @@
 package com.plantcare.bot;
 
 import com.plantcare.bot.config.CalendarProperties;
+import com.plantcare.bot.config.HealthScoreProperties;
 import com.plantcare.bot.config.SpeciesProperties;
 import com.plantcare.bot.config.TelegramRateLimitProperties;
 import org.springframework.boot.SpringApplication;
@@ -10,7 +11,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 
 @SpringBootApplication
 @EnableScheduling
-@EnableConfigurationProperties({SpeciesProperties.class, CalendarProperties.class, TelegramRateLimitProperties.class})
+@EnableConfigurationProperties({SpeciesProperties.class, CalendarProperties.class, HealthScoreProperties.class, TelegramRateLimitProperties.class})
 public class PlantsCareApplication {
 
     public static void main(String[] args) {

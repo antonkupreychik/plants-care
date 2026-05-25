@@ -35,6 +35,7 @@ import java.util.List;
 public class PlantMenuService {
 
     private final PlantRepository plantRepository;
+    private final HealthScoreService healthScoreService;
 
     /**
      * Показать список растений пользователя.
@@ -77,9 +78,42 @@ public class PlantMenuService {
             return sb.toString();
         }
 
-        sb.append("Всего: ").append(plants.size()).append("\n\n");
-        sb.append("Открой карточку, чтобы увидеть статус ухода и быстро отметить полив.");
+        sb.append("Всего: ").append(plants.size()).append("\n");
+
+        // issue #138: сводка по зонам health-score. Растения с «мало данных»
+        // (<3 действий) в сводку не попадают — у них балл ещё не считается.
+        appendHealthSummary(sb, plants);
+
+        sb.append("\nОткрой карточку, чтобы увидеть статус ухода и быстро отметить полив.");
         return sb.toString();
+    }
+
+    /**
+     * Сводка «🟢 N · 🟡 N · 🔴 N» по активным растениям коллекции (issue #138).
+     * Печатается только если есть хотя бы одно растение с достаточными данными.
+     */
+    private void appendHealthSummary(StringBuilder sb, List<Plant> plants) {
+        int green = 0;
+        int yellow = 0;
+        int red = 0;
+        for (Plant plant : plants) {
+            HealthScoreService.HealthScore health = healthScoreService.computeForPlant(plant);
+            if (health.insufficientData()) {
+                continue;
+            }
+            switch (health.zone()) {
+                case GREEN -> green++;
+                case YELLOW -> yellow++;
+                case RED -> red++;
+            }
+        }
+        if (green + yellow + red == 0) {
+            return;
+        }
+        sb.append("🟢 ").append(green)
+                .append(" · 🟡 ").append(yellow)
+                .append(" · 🔴 ").append(red)
+                .append("\n");
     }
 
     private InlineKeyboardMarkup buildListKeyboard(List<Plant> plants, long archivedCount) {

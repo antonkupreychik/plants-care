@@ -85,6 +85,7 @@ public class PlantCardService {
     private final MainMenuService mainMenuService;
     private final UserService userService;
     private final CareHistoryService careHistoryService;
+    private final HealthScoreService healthScoreService;
     private final PlantEventService plantEventService;
     private final SpeciesFactService speciesFactService;
     private final com.plantcare.bot.seasonal.service.SeasonalIntervalService seasonalIntervalService;
@@ -1391,6 +1392,9 @@ public class PlantCardService {
             sb.append("🌱 Потомки: ").append(childrenCount).append("\n");
         }
 
+        // issue #138: health-score после локации/потомков, до «С тобой с …».
+        appendHealthScoreLine(sb, plant);
+
         // issue #117: «С тобой с …» — после имени/локации, до фото/баннеров.
         appendAcquiredAtLine(sb, plant);
 
@@ -1810,6 +1814,23 @@ public class PlantCardService {
             return "✅ Я уже " + doneVerb(only).toLowerCase();
         }
         return "✅ Я уже ухаживал";
+    }
+
+    /**
+     * Добавляет в карточку строку health-score (issue #138):
+     * «Health: 82 🟢» либо «Health: Пока мало данных», если действий &lt; 3.
+     */
+    private void appendHealthScoreLine(StringBuilder sb, Plant plant) {
+        HealthScoreService.HealthScore health = healthScoreService.computeForPlant(plant);
+        if (health.insufficientData()) {
+            sb.append("❤️ Health: Пока мало данных\n");
+        } else {
+            sb.append("❤️ Health: ")
+                    .append(health.score())
+                    .append(" ")
+                    .append(health.zone().emoji())
+                    .append("\n");
+        }
     }
 
     /**

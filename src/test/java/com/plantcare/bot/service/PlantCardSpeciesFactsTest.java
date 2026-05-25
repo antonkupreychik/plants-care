@@ -22,6 +22,8 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
 
 /**
@@ -43,6 +45,7 @@ class PlantCardSpeciesFactsTest {
     @Mock private MainMenuService mainMenuService;
     @Mock private UserService userService;
     @Mock private CareHistoryService careHistoryService;
+    @Mock private HealthScoreService healthScoreService;
     @Mock private PlantEventService plantEventService;
     @Mock private SpeciesFactService speciesFactService;
     @Mock private SeasonalIntervalService seasonalIntervalService;
@@ -55,7 +58,12 @@ class PlantCardSpeciesFactsTest {
     void setUp() {
         cardService = new PlantCardService(
                 plantService, plantRepository, careScheduleRepository, mainMenuService, userService,
-                careHistoryService, plantEventService, speciesFactService, seasonalIntervalService);
+                careHistoryService, healthScoreService, plantEventService, speciesFactService,
+                seasonalIntervalService);
+
+        // issue #138: карточка дёргает health-score; для фактов вида он не важен.
+        lenient().when(healthScoreService.computeForPlant(any()))
+                .thenReturn(HealthScoreService.HealthScore.insufficient());
     }
 
     @Test
