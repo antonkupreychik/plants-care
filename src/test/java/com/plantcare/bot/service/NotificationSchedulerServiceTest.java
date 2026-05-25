@@ -1,15 +1,18 @@
 package com.plantcare.bot.service;
 
-import com.plantcare.bot.domain.CareSchedule;
-import com.plantcare.bot.domain.NotificationDigest;
-import com.plantcare.bot.domain.Plant;
-import com.plantcare.bot.domain.User;
-import com.plantcare.bot.domain.enums.TaskType;
-import com.plantcare.bot.metrics.MetricsService;
-import com.plantcare.bot.repository.CareScheduleRepository;
-import com.plantcare.bot.repository.NotificationDigestRepository;
-import com.plantcare.bot.repository.NotificationLogRepository;
-import com.plantcare.bot.repository.UserRepository;
+import com.plantcare.core.service.QuietHoursPolicy;
+import com.plantcare.core.service.SchedulerHealthTracker;
+
+import com.plantcare.core.domain.CareSchedule;
+import com.plantcare.core.domain.NotificationDigest;
+import com.plantcare.core.domain.Plant;
+import com.plantcare.core.domain.User;
+import com.plantcare.core.domain.enums.TaskType;
+import com.plantcare.core.metrics.MetricsService;
+import com.plantcare.core.repository.CareScheduleRepository;
+import com.plantcare.core.repository.NotificationDigestRepository;
+import com.plantcare.core.repository.NotificationLogRepository;
+import com.plantcare.core.repository.UserRepository;
 import com.plantcare.bot.telegram.RateLimitedTelegramSender;
 import com.plantcare.bot.telegram.SendCallbacks;
 import org.junit.jupiter.api.BeforeEach;
@@ -81,10 +84,10 @@ class NotificationSchedulerServiceTest {
     private SchedulerHealthTracker schedulerHealthTracker;
 
     @Mock
-    private com.plantcare.bot.weather.service.WeatherService weatherService;
+    private com.plantcare.core.weather.service.WeatherService weatherService;
 
     @Mock
-    private com.plantcare.bot.seasonal.service.SeasonalIntervalService seasonalIntervalService;
+    private com.plantcare.core.seasonal.service.SeasonalIntervalService seasonalIntervalService;
 
     @Mock
     private QuietHoursPolicy quietHoursPolicy;

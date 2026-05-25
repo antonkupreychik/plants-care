@@ -1,10 +1,17 @@
 package com.plantcare.bot.service;
 
-import com.plantcare.bot.domain.Plant;
-import com.plantcare.bot.domain.Species;
-import com.plantcare.bot.domain.User;
-import com.plantcare.bot.repository.PlantRepository;
-import com.plantcare.bot.seasonal.service.SeasonalIntervalService;
+import com.plantcare.core.service.CareHistoryService;
+import com.plantcare.core.service.HealthScoreService;
+import com.plantcare.core.service.PlantEventService;
+import com.plantcare.core.service.PlantService;
+import com.plantcare.core.service.SpeciesFactService;
+import com.plantcare.core.service.UserService;
+
+import com.plantcare.core.domain.Plant;
+import com.plantcare.core.domain.Species;
+import com.plantcare.core.domain.User;
+import com.plantcare.core.repository.PlantRepository;
+import com.plantcare.core.seasonal.service.SeasonalIntervalService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -41,7 +48,7 @@ class PlantCardSpeciesFactsTest {
 
     @Mock private PlantService plantService;
     @Mock private PlantRepository plantRepository;
-    @Mock private com.plantcare.bot.repository.CareScheduleRepository careScheduleRepository;
+    @Mock private com.plantcare.core.repository.CareScheduleRepository careScheduleRepository;
     @Mock private MainMenuService mainMenuService;
     @Mock private UserService userService;
     @Mock private CareHistoryService careHistoryService;
@@ -152,7 +159,7 @@ class PlantCardSpeciesFactsTest {
 
     private static void setId(Object entity, Long id) {
         try {
-            Field f = com.plantcare.bot.domain.base.BaseEntity.class.getDeclaredField("id");
+            Field f = com.plantcare.core.domain.base.BaseEntity.class.getDeclaredField("id");
             f.setAccessible(true);
             f.set(entity, id);
         } catch (Exception e) {

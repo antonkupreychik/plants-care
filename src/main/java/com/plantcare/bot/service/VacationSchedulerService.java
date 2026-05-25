@@ -1,12 +1,12 @@
 package com.plantcare.bot.service;
 
-import com.plantcare.bot.domain.CareSchedule;
-import com.plantcare.bot.domain.User;
-import com.plantcare.bot.domain.enums.TaskType;
-import com.plantcare.bot.observability.SentryTags;
-import com.plantcare.bot.observability.SentryTags.Layer;
-import com.plantcare.bot.repository.CareScheduleRepository;
-import com.plantcare.bot.repository.UserRepository;
+import com.plantcare.core.domain.CareSchedule;
+import com.plantcare.core.domain.User;
+import com.plantcare.core.domain.enums.TaskType;
+import com.plantcare.core.observability.SentryTags;
+import com.plantcare.core.observability.SentryTags.Layer;
+import com.plantcare.core.repository.CareScheduleRepository;
+import com.plantcare.core.repository.UserRepository;
 import com.plantcare.bot.telegram.RateLimitedTelegramSender;
 import io.sentry.Sentry;
 import lombok.RequiredArgsConstructor;

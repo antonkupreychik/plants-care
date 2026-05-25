@@ -1,6 +1,6 @@
 package com.plantcare.bot.command.impl;
 
-import com.plantcare.bot.service.MessageService;
+import com.plantcare.core.service.MessageService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;

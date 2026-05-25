@@ -1,10 +1,10 @@
 package com.plantcare.bot.admin.service;
 
 import com.plantcare.bot.admin.dto.SpeciesFactFormDto;
-import com.plantcare.bot.domain.Species;
-import com.plantcare.bot.domain.enums.FactCategory;
-import com.plantcare.bot.repository.SpeciesFactRepository;
-import com.plantcare.bot.repository.SpeciesRepository;
+import com.plantcare.core.domain.Species;
+import com.plantcare.core.domain.enums.FactCategory;
+import com.plantcare.core.repository.SpeciesFactRepository;
+import com.plantcare.core.repository.SpeciesRepository;
 import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;

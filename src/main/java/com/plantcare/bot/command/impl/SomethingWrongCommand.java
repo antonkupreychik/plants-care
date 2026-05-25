@@ -1,7 +1,7 @@
 package com.plantcare.bot.command.impl;
 
 import com.plantcare.bot.command.interfaces.BotCommand;
-import com.plantcare.bot.service.MessageService;
+import com.plantcare.core.service.MessageService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;

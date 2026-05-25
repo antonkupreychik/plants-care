@@ -2,10 +2,10 @@ package com.plantcare.bot.controller.api.v1;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.plantcare.bot.domain.User;
-import com.plantcare.bot.repository.LocationRepository;
-import com.plantcare.bot.repository.PlantRepository;
-import com.plantcare.bot.repository.UserRepository;
+import com.plantcare.core.domain.User;
+import com.plantcare.core.repository.LocationRepository;
+import com.plantcare.core.repository.PlantRepository;
+import com.plantcare.core.repository.UserRepository;
 import com.plantcare.bot.support.IntegrationTestBase;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;

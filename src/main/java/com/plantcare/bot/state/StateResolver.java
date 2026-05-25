@@ -1,9 +1,9 @@
 package com.plantcare.bot.state;
 
 import com.plantcare.bot.command.impl.SomethingWrongCommand;
-import com.plantcare.bot.domain.User;
-import com.plantcare.bot.domain.enums.ConversationState;
-import com.plantcare.bot.service.UserService;
+import com.plantcare.core.domain.User;
+import com.plantcare.core.domain.enums.ConversationState;
+import com.plantcare.core.service.UserService;
 import com.plantcare.bot.state.interfaces.StateHandler;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;

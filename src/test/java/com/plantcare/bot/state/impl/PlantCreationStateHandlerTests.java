@@ -1,12 +1,13 @@
 package com.plantcare.bot.state.impl;
 
-import com.plantcare.bot.domain.Location;
-import com.plantcare.bot.domain.Plant;
-import com.plantcare.bot.domain.Species;
-import com.plantcare.bot.domain.User;
-import com.plantcare.bot.domain.enums.ConversationState;
-import com.plantcare.bot.domain.enums.TaskType;
-import com.plantcare.bot.repository.PlantRepository;
+import com.plantcare.core.domain.Location;
+import com.plantcare.core.domain.Plant;
+import com.plantcare.core.domain.Species;
+import com.plantcare.core.domain.User;
+import com.plantcare.core.domain.enums.ConversationState;
+import com.plantcare.core.domain.enums.TaskType;
+import com.plantcare.core.repository.PlantRepository;
+import com.plantcare.core.service.*;
 import com.plantcare.bot.service.*;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;

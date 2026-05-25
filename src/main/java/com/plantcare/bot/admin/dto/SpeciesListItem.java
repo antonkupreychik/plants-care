@@ -1,8 +1,8 @@
 package com.plantcare.bot.admin.dto;
 
-import com.plantcare.bot.domain.Species;
-import com.plantcare.bot.domain.enums.CareDifficulty;
-import com.plantcare.bot.domain.enums.LightPreference;
+import com.plantcare.core.domain.Species;
+import com.plantcare.core.domain.enums.CareDifficulty;
+import com.plantcare.core.domain.enums.LightPreference;
 
 /**
  * Проекция Species + количество привязанных растений.

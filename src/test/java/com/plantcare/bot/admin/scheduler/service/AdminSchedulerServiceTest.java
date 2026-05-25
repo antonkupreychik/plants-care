@@ -36,7 +36,7 @@ class AdminSchedulerServiceTest {
     @Mock private AdminSchedulerRepository repository;
     @Mock private SchedulerHealthProvider healthProvider;
     @Mock private NotificationSchedulerService schedulerService;
-    @Mock private com.plantcare.bot.repository.CareScheduleRepository careScheduleRepository;
+    @Mock private com.plantcare.core.repository.CareScheduleRepository careScheduleRepository;
 
     private AdminSchedulerService service;
 
@@ -184,13 +184,13 @@ class AdminSchedulerServiceTest {
         @Test
         @DisplayName("buildPage() заполняет queue из careScheduleRepository.findSchedulesDueBefore")
         void shouldFillQueueFromUpcoming() {
-            var user = com.plantcare.bot.domain.User.builder()
+            var user = com.plantcare.core.domain.User.builder()
                     .telegramChatId(100L).username("alice").build();
-            var plant = com.plantcare.bot.domain.Plant.builder()
+            var plant = com.plantcare.core.domain.Plant.builder()
                     .user(user).name("Монстера").build();
-            var s = com.plantcare.bot.domain.CareSchedule.builder()
+            var s = com.plantcare.core.domain.CareSchedule.builder()
                     .plant(plant)
-                    .taskType(com.plantcare.bot.domain.enums.TaskType.WATERING)
+                    .taskType(com.plantcare.core.domain.enums.TaskType.WATERING)
                     .intervalDays(7)
                     .nextDueAt(java.time.LocalDateTime.now().plusHours(2))
                     .active(true)
@@ -219,11 +219,11 @@ class AdminSchedulerServiceTest {
         @Test
         @DisplayName("Просроченное расписание помечается overdue=true и 'X мин назад'")
         void shouldMarkOverdue() {
-            var user = com.plantcare.bot.domain.User.builder().telegramChatId(1L).build();
-            var plant = com.plantcare.bot.domain.Plant.builder().user(user).name("X").build();
-            var s = com.plantcare.bot.domain.CareSchedule.builder()
+            var user = com.plantcare.core.domain.User.builder().telegramChatId(1L).build();
+            var plant = com.plantcare.core.domain.Plant.builder().user(user).name("X").build();
+            var s = com.plantcare.core.domain.CareSchedule.builder()
                     .plant(plant)
-                    .taskType(com.plantcare.bot.domain.enums.TaskType.MISTING)
+                    .taskType(com.plantcare.core.domain.enums.TaskType.MISTING)
                     .intervalDays(3)
                     .nextDueAt(java.time.LocalDateTime.now().minusMinutes(15))
                     .active(true)
@@ -242,13 +242,13 @@ class AdminSchedulerServiceTest {
         @Test
         @DisplayName("queue усечена до QUEUE_LIMIT, флаг queueTruncated=true")
         void shouldTruncateQueueAtLimit() {
-            var bigList = new java.util.ArrayList<com.plantcare.bot.domain.CareSchedule>();
+            var bigList = new java.util.ArrayList<com.plantcare.core.domain.CareSchedule>();
             for (int i = 0; i < AdminSchedulerService.QUEUE_LIMIT + 5; i++) {
-                var user = com.plantcare.bot.domain.User.builder().telegramChatId((long) i).build();
-                var plant = com.plantcare.bot.domain.Plant.builder().user(user).name("P" + i).build();
-                var s = com.plantcare.bot.domain.CareSchedule.builder()
+                var user = com.plantcare.core.domain.User.builder().telegramChatId((long) i).build();
+                var plant = com.plantcare.core.domain.Plant.builder().user(user).name("P" + i).build();
+                var s = com.plantcare.core.domain.CareSchedule.builder()
                         .plant(plant)
-                        .taskType(com.plantcare.bot.domain.enums.TaskType.WATERING)
+                        .taskType(com.plantcare.core.domain.enums.TaskType.WATERING)
                         .intervalDays(7)
                         .nextDueAt(java.time.LocalDateTime.now())
                         .active(true)

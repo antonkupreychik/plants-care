@@ -5,9 +5,9 @@ import com.plantcare.bot.admin.dto.SpeciesListItem;
 import com.plantcare.bot.admin.exception.DuplicateSpeciesNameException;
 import com.plantcare.bot.admin.service.AdminSpeciesFactService;
 import com.plantcare.bot.admin.service.AdminSpeciesService;
-import com.plantcare.bot.domain.Species;
-import com.plantcare.bot.domain.enums.CareDifficulty;
-import com.plantcare.bot.domain.enums.LightPreference;
+import com.plantcare.core.domain.Species;
+import com.plantcare.core.domain.enums.CareDifficulty;
+import com.plantcare.core.domain.enums.LightPreference;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -28,7 +28,7 @@ public class AdminSpeciesController {
 
     /**
      * Русские подписи enum-значений. Хранятся в контроллере, а не в самих enum'ах,
-     * чтобы не модифицировать существующие модели в com.plantcare.bot.domain.enums.
+     * чтобы не модифицировать существующие модели в com.plantcare.core.domain.enums.
      */
     private static final Map<LightPreference, String> LIGHT_LABELS = Map.of(
             LightPreference.SHADE,   "Тень",

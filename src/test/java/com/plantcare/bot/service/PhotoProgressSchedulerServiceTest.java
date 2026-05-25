@@ -1,9 +1,11 @@
 package com.plantcare.bot.service;
 
-import com.plantcare.bot.domain.Plant;
-import com.plantcare.bot.domain.User;
-import com.plantcare.bot.domain.enums.PhotoProgressFrequency;
-import com.plantcare.bot.repository.PlantRepository;
+import com.plantcare.core.service.PhotoProgressService;
+
+import com.plantcare.core.domain.Plant;
+import com.plantcare.core.domain.User;
+import com.plantcare.core.domain.enums.PhotoProgressFrequency;
+import com.plantcare.core.repository.PlantRepository;
 import com.plantcare.bot.telegram.RateLimitedTelegramSender;
 import com.plantcare.bot.telegram.SendCallbacks;
 import org.junit.jupiter.api.DisplayName;

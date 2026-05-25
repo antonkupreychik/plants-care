@@ -1,15 +1,17 @@
 package com.plantcare.bot.service;
 
-import com.plantcare.bot.domain.CareSchedule;
-import com.plantcare.bot.domain.Plant;
-import com.plantcare.bot.domain.Species;
-import com.plantcare.bot.domain.User;
-import com.plantcare.bot.domain.enums.TaskType;
-import com.plantcare.bot.repository.CareHistoryRepository;
-import com.plantcare.bot.repository.CareScheduleRepository;
-import com.plantcare.bot.repository.PlantRepository;
-import com.plantcare.bot.repository.SpeciesRepository;
-import com.plantcare.bot.repository.UserRepository;
+import com.plantcare.core.service.PlantService;
+
+import com.plantcare.core.domain.CareSchedule;
+import com.plantcare.core.domain.Plant;
+import com.plantcare.core.domain.Species;
+import com.plantcare.core.domain.User;
+import com.plantcare.core.domain.enums.TaskType;
+import com.plantcare.core.repository.CareHistoryRepository;
+import com.plantcare.core.repository.CareScheduleRepository;
+import com.plantcare.core.repository.PlantRepository;
+import com.plantcare.core.repository.SpeciesRepository;
+import com.plantcare.core.repository.UserRepository;
 import com.plantcare.bot.support.IntegrationTestBase;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;

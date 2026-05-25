@@ -1,7 +1,7 @@
 package com.plantcare.bot.controller.api;
 
-import com.plantcare.bot.domain.User;
-import com.plantcare.bot.repository.UserRepository;
+import com.plantcare.core.domain.User;
+import com.plantcare.core.repository.UserRepository;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;

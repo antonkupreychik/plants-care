@@ -2,10 +2,10 @@ package com.plantcare.bot.controller.api.v1;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.plantcare.bot.controller.api.ApiExceptionHandler;
-import com.plantcare.bot.domain.Location;
-import com.plantcare.bot.domain.User;
-import com.plantcare.bot.service.LocationService;
-import com.plantcare.bot.service.UserService;
+import com.plantcare.core.domain.Location;
+import com.plantcare.core.domain.User;
+import com.plantcare.core.service.LocationService;
+import com.plantcare.core.service.UserService;
 import jakarta.persistence.EntityNotFoundException;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;

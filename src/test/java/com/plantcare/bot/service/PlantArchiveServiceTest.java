@@ -1,20 +1,22 @@
 package com.plantcare.bot.service;
 
-import com.plantcare.bot.domain.CareHistory;
-import com.plantcare.bot.domain.CareSchedule;
-import com.plantcare.bot.domain.Location;
-import com.plantcare.bot.domain.NotificationLog;
-import com.plantcare.bot.domain.Plant;
-import com.plantcare.bot.domain.User;
-import com.plantcare.bot.domain.enums.NotificationType;
-import com.plantcare.bot.domain.enums.TaskType;
-import com.plantcare.bot.repository.CareHistoryRepository;
-import com.plantcare.bot.repository.CareScheduleRepository;
-import com.plantcare.bot.repository.LocationRepository;
-import com.plantcare.bot.repository.NotificationLogRepository;
-import com.plantcare.bot.repository.PlantAnniversarySentRepository;
-import com.plantcare.bot.repository.PlantRepository;
-import com.plantcare.bot.repository.UserRepository;
+import com.plantcare.core.service.PlantArchiveService;
+
+import com.plantcare.core.domain.CareHistory;
+import com.plantcare.core.domain.CareSchedule;
+import com.plantcare.core.domain.Location;
+import com.plantcare.core.domain.NotificationLog;
+import com.plantcare.core.domain.Plant;
+import com.plantcare.core.domain.User;
+import com.plantcare.core.domain.enums.NotificationType;
+import com.plantcare.core.domain.enums.TaskType;
+import com.plantcare.core.repository.CareHistoryRepository;
+import com.plantcare.core.repository.CareScheduleRepository;
+import com.plantcare.core.repository.LocationRepository;
+import com.plantcare.core.repository.NotificationLogRepository;
+import com.plantcare.core.repository.PlantAnniversarySentRepository;
+import com.plantcare.core.repository.PlantRepository;
+import com.plantcare.core.repository.UserRepository;
 import com.plantcare.bot.support.IntegrationTestBase;
 import jakarta.persistence.EntityNotFoundException;
 import org.junit.jupiter.api.AfterEach;

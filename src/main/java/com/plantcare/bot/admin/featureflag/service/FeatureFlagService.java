@@ -1,7 +1,7 @@
 package com.plantcare.bot.admin.featureflag.service;
 
-import com.plantcare.bot.domain.User;
-import com.plantcare.bot.repository.UserRepository;
+import com.plantcare.core.domain.User;
+import com.plantcare.core.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;

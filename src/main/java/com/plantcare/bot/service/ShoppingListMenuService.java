@@ -1,7 +1,9 @@
 package com.plantcare.bot.service;
 
-import com.plantcare.bot.domain.ShoppingItem;
-import com.plantcare.bot.domain.User;
+import com.plantcare.core.service.ShoppingListService;
+
+import com.plantcare.core.domain.ShoppingItem;
+import com.plantcare.core.domain.User;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;

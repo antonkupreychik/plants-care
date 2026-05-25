@@ -1,7 +1,7 @@
 package com.plantcare.bot.admin.dto;
 
-import com.plantcare.bot.domain.SpeciesFact;
-import com.plantcare.bot.domain.enums.FactCategory;
+import com.plantcare.core.domain.SpeciesFact;
+import com.plantcare.core.domain.enums.FactCategory;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.PositiveOrZero;

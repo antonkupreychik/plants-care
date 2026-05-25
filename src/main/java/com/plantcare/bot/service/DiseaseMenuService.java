@@ -1,7 +1,12 @@
 package com.plantcare.bot.service;
 
-import com.plantcare.bot.domain.User;
-import com.plantcare.bot.domain.enums.ConversationState;
+import com.plantcare.core.service.DiseaseCard;
+import com.plantcare.core.service.DiseaseNotFoundException;
+import com.plantcare.core.service.DiseaseService;
+import com.plantcare.core.service.UserService;
+
+import com.plantcare.core.domain.User;
+import com.plantcare.core.domain.enums.ConversationState;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;

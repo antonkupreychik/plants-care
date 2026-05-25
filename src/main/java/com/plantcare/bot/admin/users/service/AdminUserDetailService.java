@@ -3,7 +3,7 @@ package com.plantcare.bot.admin.users.service;
 import com.plantcare.bot.admin.featureflag.service.FeatureFlagService;
 import com.plantcare.bot.admin.users.repository.AdminUserDetailRepository;
 import com.plantcare.bot.admin.users.dto.UserDetailDto;
-import com.plantcare.bot.repository.UserRepository;
+import com.plantcare.core.repository.UserRepository;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 

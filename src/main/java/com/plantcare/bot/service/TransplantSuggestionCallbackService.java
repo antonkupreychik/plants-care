@@ -1,7 +1,9 @@
 package com.plantcare.bot.service;
 
-import com.plantcare.bot.domain.User;
-import com.plantcare.bot.service.TransplantSuggestionService.ReactionResult;
+import com.plantcare.core.service.TransplantSuggestionService;
+
+import com.plantcare.core.domain.User;
+import com.plantcare.core.service.TransplantSuggestionService.ReactionResult;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.telegram.telegrambots.meta.api.methods.AnswerCallbackQuery;

@@ -1,9 +1,12 @@
 package com.plantcare.bot.service;
 
-import com.plantcare.bot.domain.User;
-import com.plantcare.bot.repository.CareScheduleRepository;
-import com.plantcare.bot.repository.PlantRepository;
-import com.plantcare.bot.weather.service.WeatherService;
+import com.plantcare.core.service.CareHistoryService;
+import com.plantcare.core.service.LocationService;
+
+import com.plantcare.core.domain.User;
+import com.plantcare.core.repository.CareScheduleRepository;
+import com.plantcare.core.repository.PlantRepository;
+import com.plantcare.core.weather.service.WeatherService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;

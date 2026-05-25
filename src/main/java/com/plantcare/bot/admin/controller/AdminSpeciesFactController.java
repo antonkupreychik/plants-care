@@ -2,8 +2,8 @@ package com.plantcare.bot.admin.controller;
 
 import com.plantcare.bot.admin.dto.SpeciesFactFormDto;
 import com.plantcare.bot.admin.service.AdminSpeciesFactService;
-import com.plantcare.bot.domain.SpeciesFact;
-import com.plantcare.bot.domain.enums.FactCategory;
+import com.plantcare.core.domain.SpeciesFact;
+import com.plantcare.core.domain.enums.FactCategory;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.Authentication;
@@ -37,7 +37,7 @@ public class AdminSpeciesFactController {
 
     /**
      * Русские подписи категорий. Держим в контроллере, чтобы не трогать enum
-     * в {@code com.plantcare.bot.domain.enums}.
+     * в {@code com.plantcare.core.domain.enums}.
      */
     static final Map<FactCategory, String> CATEGORY_LABELS = Map.of(
             FactCategory.ORIGIN,    "Происхождение",

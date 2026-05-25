@@ -2,10 +2,10 @@ package com.plantcare.bot.controller.api.v1;
 
 import com.plantcare.bot.controller.api.ApiExceptionHandler;
 import com.plantcare.bot.controller.api.UserApiResolver;
-import com.plantcare.bot.domain.Plant;
-import com.plantcare.bot.domain.User;
-import com.plantcare.bot.repository.PlantRepository;
-import com.plantcare.bot.service.CareHistoryService;
+import com.plantcare.core.domain.Plant;
+import com.plantcare.core.domain.User;
+import com.plantcare.core.repository.PlantRepository;
+import com.plantcare.core.service.CareHistoryService;
 import jakarta.persistence.EntityNotFoundException;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;

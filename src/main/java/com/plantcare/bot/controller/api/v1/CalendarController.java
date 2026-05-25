@@ -2,10 +2,10 @@ package com.plantcare.bot.controller.api.v1;
 
 import com.plantcare.bot.api.generated.CalendarApi;
 import com.plantcare.bot.api.generated.model.TaskDto;
-import com.plantcare.bot.domain.CareSchedule;
-import com.plantcare.bot.domain.User;
+import com.plantcare.core.domain.CareSchedule;
+import com.plantcare.core.domain.User;
 import com.plantcare.bot.controller.api.UserApiResolver;
-import com.plantcare.bot.service.CalendarApiService;
+import com.plantcare.core.service.CalendarApiService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.RestController;

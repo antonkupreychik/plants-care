@@ -5,9 +5,9 @@ import com.plantcare.bot.api.generated.model.CareEventResponse;
 import com.plantcare.bot.api.generated.model.CareEventType;
 import com.plantcare.bot.api.generated.model.CreateCareEventRequest;
 import com.plantcare.bot.controller.api.UserApiResolver;
-import com.plantcare.bot.domain.CareHistory;
-import com.plantcare.bot.domain.User;
-import com.plantcare.bot.domain.enums.TaskType;
+import com.plantcare.core.domain.CareHistory;
+import com.plantcare.core.domain.User;
+import com.plantcare.core.domain.enums.TaskType;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.RestController;
@@ -24,7 +24,7 @@ import java.time.ZoneOffset;
 @RequiredArgsConstructor
 public class CareEventController implements CareEventsApi {
 
-    private final com.plantcare.bot.service.CareEventApiService careEventApiService;
+    private final com.plantcare.core.service.CareEventApiService careEventApiService;
     private final UserApiResolver userApiResolver;
 
     @Override

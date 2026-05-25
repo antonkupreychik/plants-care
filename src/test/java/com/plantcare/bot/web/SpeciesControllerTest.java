@@ -1,12 +1,12 @@
 package com.plantcare.bot.web;
 
-import com.plantcare.bot.domain.Species;
-import com.plantcare.bot.domain.enums.CareDifficulty;
-import com.plantcare.bot.domain.enums.FactCategory;
-import com.plantcare.bot.domain.enums.LightPreference;
-import com.plantcare.bot.service.SpeciesFactDto;
-import com.plantcare.bot.service.SpeciesFactService;
-import com.plantcare.bot.service.SpeciesService;
+import com.plantcare.core.domain.Species;
+import com.plantcare.core.domain.enums.CareDifficulty;
+import com.plantcare.core.domain.enums.FactCategory;
+import com.plantcare.core.domain.enums.LightPreference;
+import com.plantcare.core.service.SpeciesFactDto;
+import com.plantcare.core.service.SpeciesFactService;
+import com.plantcare.core.service.SpeciesService;
 import com.plantcare.bot.web.exception.WebApiExceptionHandler;
 import jakarta.persistence.EntityNotFoundException;
 import org.junit.jupiter.api.Test;
@@ -175,7 +175,7 @@ class SpeciesControllerTest {
         s.setPopularity(50);
         // Set id via reflection since BaseEntity uses @GeneratedValue
         try {
-            var idField = com.plantcare.bot.domain.base.BaseEntity.class.getDeclaredField("id");
+            var idField = com.plantcare.core.domain.base.BaseEntity.class.getDeclaredField("id");
             idField.setAccessible(true);
             idField.set(s, id);
         } catch (Exception e) {

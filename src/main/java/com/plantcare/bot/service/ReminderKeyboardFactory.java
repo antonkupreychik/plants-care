@@ -1,6 +1,6 @@
 package com.plantcare.bot.service;
 
-import com.plantcare.bot.domain.enums.TaskType;
+import com.plantcare.core.domain.enums.TaskType;
 import org.springframework.stereotype.Component;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMarkup;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardButton;

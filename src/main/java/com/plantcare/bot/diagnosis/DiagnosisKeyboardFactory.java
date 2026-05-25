@@ -1,5 +1,12 @@
 package com.plantcare.bot.diagnosis;
 
+import com.plantcare.core.diagnosis.DiagnosisSymptom;
+import com.plantcare.core.diagnosis.LightCondition;
+import com.plantcare.core.diagnosis.PestPresence;
+import com.plantcare.core.diagnosis.RecentChanges;
+import com.plantcare.core.diagnosis.SoilState;
+import com.plantcare.core.diagnosis.WateringFrequency;
+
 import org.springframework.stereotype.Component;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMarkup;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardButton;

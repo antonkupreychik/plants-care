@@ -1,10 +1,23 @@
 package com.plantcare.bot.diagnosis;
 
-import com.plantcare.bot.domain.Plant;
-import com.plantcare.bot.domain.User;
-import com.plantcare.bot.service.DiseaseCard;
-import com.plantcare.bot.service.DiseaseService;
-import com.plantcare.bot.service.PlantService;
+import com.plantcare.core.diagnosis.DiagnosisAnswers;
+import com.plantcare.core.diagnosis.DiagnosisResult;
+import com.plantcare.core.diagnosis.DiagnosisRuleEngine;
+import com.plantcare.core.diagnosis.DiagnosisSessionService;
+import com.plantcare.core.diagnosis.DiagnosisStep;
+import com.plantcare.core.diagnosis.DiagnosisSymptom;
+import com.plantcare.core.diagnosis.DiagnosisTextFormatter;
+import com.plantcare.core.diagnosis.LightCondition;
+import com.plantcare.core.diagnosis.PestPresence;
+import com.plantcare.core.diagnosis.RecentChanges;
+import com.plantcare.core.diagnosis.SoilState;
+import com.plantcare.core.diagnosis.WateringFrequency;
+
+import com.plantcare.core.domain.Plant;
+import com.plantcare.core.domain.User;
+import com.plantcare.core.service.DiseaseCard;
+import com.plantcare.core.service.DiseaseService;
+import com.plantcare.core.service.PlantService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;

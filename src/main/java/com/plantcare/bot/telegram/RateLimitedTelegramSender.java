@@ -2,8 +2,8 @@ package com.plantcare.bot.telegram;
 
 import com.plantcare.bot.client.TelegramClientProvider;
 import com.plantcare.bot.config.TelegramRateLimitProperties;
-import com.plantcare.bot.metrics.MetricsService;
-import com.plantcare.bot.metrics.MetricsService.TelegramErrorCode;
+import com.plantcare.core.metrics.MetricsService;
+import com.plantcare.core.metrics.MetricsService.TelegramErrorCode;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;

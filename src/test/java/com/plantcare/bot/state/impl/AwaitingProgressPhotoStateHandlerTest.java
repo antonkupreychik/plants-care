@@ -1,13 +1,13 @@
 package com.plantcare.bot.state.impl;
 
-import com.plantcare.bot.domain.Plant;
-import com.plantcare.bot.domain.PlantProgressPhoto;
-import com.plantcare.bot.domain.User;
-import com.plantcare.bot.domain.enums.ConversationState;
-import com.plantcare.bot.domain.enums.PhotoProgressFrequency;
+import com.plantcare.core.domain.Plant;
+import com.plantcare.core.domain.PlantProgressPhoto;
+import com.plantcare.core.domain.User;
+import com.plantcare.core.domain.enums.ConversationState;
+import com.plantcare.core.domain.enums.PhotoProgressFrequency;
 import com.plantcare.bot.service.PhotoProgressCardService;
-import com.plantcare.bot.service.PhotoProgressService;
-import com.plantcare.bot.service.UserService;
+import com.plantcare.core.service.PhotoProgressService;
+import com.plantcare.core.service.UserService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;

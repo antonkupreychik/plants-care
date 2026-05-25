@@ -5,9 +5,9 @@ import com.plantcare.bot.api.generated.model.PageResponseSpeciesSummaryDto;
 import com.plantcare.bot.api.generated.model.SpeciesDetailDto;
 import com.plantcare.bot.api.generated.model.SpeciesFactDto;
 import com.plantcare.bot.api.generated.model.SpeciesSummaryDto;
-import com.plantcare.bot.domain.Species;
-import com.plantcare.bot.service.SpeciesFactService;
-import com.plantcare.bot.service.SpeciesService;
+import com.plantcare.core.domain.Species;
+import com.plantcare.core.service.SpeciesFactService;
+import com.plantcare.core.service.SpeciesService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
@@ -79,7 +79,7 @@ public class SpeciesController implements SpeciesApi {
                 .lightPreference(s.getLightPreference() != null ? s.getLightPreference().name() : null);
     }
 
-    private static SpeciesFactDto toFact(com.plantcare.bot.service.SpeciesFactDto fact) {
+    private static SpeciesFactDto toFact(com.plantcare.core.service.SpeciesFactDto fact) {
         return new SpeciesFactDto(SpeciesFactDto.CategoryEnum.fromValue(fact.category().name()), fact.body())
                 .title(fact.title())
                 .source(fact.source());
