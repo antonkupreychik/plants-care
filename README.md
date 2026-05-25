@@ -75,6 +75,7 @@ echo 'testcontainers.reuse.enable=true' >> ~/.testcontainers.properties
 - **V23** — таблица `monthly_report_sent` (PK `(user_id, year_month)`) для идемпотентности месячных отчётов: одна отправка на юзера за отчётный месяц. `year_month` хранится как `YYYYMM` по календарю в TZ юзера. FK `ON DELETE CASCADE` на `users`
 - **V24** — таблица `diseases` (справочник типичных болезней/вредителей, ADR-013): `name` (уникальное), `latin_name` (nullable), `symptoms`/`treatment`/`prevention`, `symptom_codes` (CSV кодов enum `DiagnosisSymptom` для матчинга с диагностикой #73) и `search_tags`. Expression-GIN индекс `idx_diseases_search` по `to_tsvector('simple', name || search_tags || symptoms)` для полнотекстового поиска (по образцу `species`). Сидинг — отдельной миграцией V25
 - **V25** — сидинг 20 типичных проблем в `diseases`: вредители, грибковые/бактериальные болезни, неинфекционные нарушения
+- **V26** — три nullable `BOOLEAN`-колонки `toxic_to_cats` / `toxic_to_dogs` / `toxic_to_humans` на `species`. Тройное состояние значимо: `true` — токсично, `false` — безопасно, `NULL` — нет данных. Детальная карточка растения показывает бейдж «⚠️ токсично для …» только для флагов `true`; при `false`/`NULL` блок отсутствует
 
 ## REST API
 

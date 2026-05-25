@@ -288,6 +288,12 @@ public class PlantCardService {
 
         List<CareSchedule> schedules = plantService.getActiveSchedules(plant.getId());
 
+        // issue #130: инициализируем lazy-вид, чтобы прочитать флаги токсичности
+        // в buildDetailedCardText (иначе LazyInitializationException вне транзакции).
+        if (plant.getSpecies() != null) {
+            plant.getSpecies().getName();
+        }
+
         // issue #129: показываем кнопку «О виде» только если у вида есть факты.
         // Пустой/неизвестный вид кнопку не получает.
         boolean hasSpeciesFacts = plant.getSpecies() != null
@@ -1315,6 +1321,9 @@ public class PlantCardService {
             sb.append("\n📝 _").append(escapeMd(plant.getNotes().trim())).append("_\n");
         }
 
+        // issue #130: блок токсичности вида. Показываем только флаги == true.
+        appendToxicityBlock(sb, plant.getSpecies());
+
         if (schedules.isEmpty()) {
             sb.append("\n📅 Расписание ухода не настроено.");
             return sb.toString();
@@ -1353,6 +1362,36 @@ public class PlantCardService {
         }
 
         return sb.toString();
+    }
+
+    /**
+     * Дописывает блок токсичности вида (issue #130). Бейдж выводится только для
+     * флагов со значением {@code true}; {@code false} и {@code null} (нет данных)
+     * не показываются. Если ни один флаг не {@code true} — блок отсутствует целиком.
+     */
+    private void appendToxicityBlock(StringBuilder sb, com.plantcare.bot.domain.Species species) {
+        if (species == null) {
+            return;
+        }
+
+        boolean toCats = Boolean.TRUE.equals(species.getToxicToCats());
+        boolean toDogs = Boolean.TRUE.equals(species.getToxicToDogs());
+        boolean toHumans = Boolean.TRUE.equals(species.getToxicToHumans());
+
+        if (!toCats && !toDogs && !toHumans) {
+            return;
+        }
+
+        sb.append("\n");
+        if (toCats) {
+            sb.append("⚠️ токсично для кошек\n");
+        }
+        if (toDogs) {
+            sb.append("⚠️ токсично для собак\n");
+        }
+        if (toHumans) {
+            sb.append("⚠️ токсично для детей\n");
+        }
     }
 
     private InlineKeyboardMarkup buildDetailedCardKeyboard(
