@@ -40,6 +40,7 @@ public class PlantsCareBot implements LongPollingSingleThreadUpdateConsumer, Tel
     private static final String PHOTO_PROGRESS_CALLBACK_PREFIX = "PHOTO_PROGRESS:";
     private static final String SHOPPING_CALLBACK_PREFIX = "SHOPPING:";
     private static final String DISEASE_CALLBACK_PREFIX = "DISEASE:";
+    private static final String SET_TZ_CALLBACK_PREFIX = "SET_TZ";
 
     private final TelegramClient telegramClient;
     private final CommandContainer commandContainer;
@@ -129,6 +130,18 @@ public class PlantsCareBot implements LongPollingSingleThreadUpdateConsumer, Tel
                     User user = userService.findOrCreate(chatId, userName);
 
                     menuCallbackService.handleCallback(update.getCallbackQuery(), telegramClient, user);
+                    return;
+                }
+
+                // Issue #116: SET_TZ:<zone> и SET_TZ_CUSTOM из inline-пикера ручного
+                // ввода таймзоны обслуживает не MenuCallbackService, а машина состояний
+                // (AwaitingTimezoneManualStateHandler, состояние AWAITING_TIMEZONE_MANUAL).
+                // startsWith("SET_TZ") покрывает оба варианта — маршрутизируем в stateResolver.
+                if (data != null && data.startsWith(SET_TZ_CALLBACK_PREFIX)) {
+                    String userName = getUserName(update);
+                    User user = userService.findOrCreate(chatId, userName);
+
+                    stateResolver.resolve(user, update, telegramClient);
                     return;
                 }
 

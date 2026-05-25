@@ -6,6 +6,11 @@ public enum ConversationState {
     // Онбординг
     AWAITING_TIMEZONE,
     AWAITING_TIMEZONE_MANUAL,
+    AWAITING_TIMEZONE_CUSTOM,          // issue #116: ручной ввод ZoneId текстом
+
+    // Настройки: тихие часы (issue #116)
+    AWAITING_QUIET_START,
+    AWAITING_QUIET_END,
 
     // Создание растения
     AWAITING_PLANT_SPECIES_CHOICE,
