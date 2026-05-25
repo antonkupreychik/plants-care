@@ -118,6 +118,25 @@ public class PlantAcclimationService {
     }
 
     /**
+     * Id-based вариант {@link #finish(Plant)} для вызова из колбэка очереди
+     * отправки (issue #29): растение перерезолвливается в свежей транзакции
+     * воркер-потока, detached-entity между потоками не тащим.
+     */
+    @Transactional
+    public void finishById(long plantId) {
+        plantRepository.findById(plantId).ifPresent(this::finish);
+    }
+
+    /**
+     * Id-based вариант {@link #scheduleNextCheckin(Plant)} для вызова из колбэка
+     * очереди отправки (issue #29).
+     */
+    @Transactional
+    public void scheduleNextCheckinById(long plantId) {
+        plantRepository.findById(plantId).ifPresent(this::scheduleNextCheckin);
+    }
+
+    /**
      * Прочитать растение по plantId БЕЗ привязки к user (для scheduler'а).
      */
     @Transactional(readOnly = true)

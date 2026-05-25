@@ -107,6 +107,13 @@ telegram:
     token: ${TELEGRAM_BOT_TOKEN:}
     username: ${TELEGRAM_BOT_USERNAME:}
     enabled: ${TELEGRAM_BOT_ENABLED:true}
+  # Issue #29: очередь исходящих сообщений с rate-limiting под лимит Telegram (~30/sec).
+  rate-limit:
+    permits-per-second: ${TELEGRAM_RATE_LIMIT_PERMITS_PER_SECOND:25}
+    queue-capacity: ${TELEGRAM_RATE_LIMIT_QUEUE_CAPACITY:10000}
+    max-retries: ${TELEGRAM_RATE_LIMIT_MAX_RETRIES:3}
+    default-retry-after-seconds: ${TELEGRAM_RATE_LIMIT_DEFAULT_RETRY_AFTER_SECONDS:1}
+    max-retry-after-seconds: ${TELEGRAM_RATE_LIMIT_MAX_RETRY_AFTER_SECONDS:60}
 
 logging:
   level:
