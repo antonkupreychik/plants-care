@@ -312,6 +312,29 @@ PII не уходит в Sentry: `SentryPiiFilter` (`BeforeSendCallback`) хеш
 |---|---|---|---|
 | `SENTRY_DSN` | пусто | prod | нет — пустой DSN = Sentry no-op |
 
+### Очередь исходящих сообщений (issue #29)
+
+Массовые отправки шедулеров (напоминания, дайджесты, годовщины, месячные отчёты,
+акклиматизация, отпуск, фото-прогресс) идут не напрямую в Telegram API, а через
+`RateLimitedTelegramSender`: in-memory bounded-очередь, которую дренирует один
+daemon-поток со скоростью ≤ `permits-per-second` (token bucket, запас под лимит
+Telegram ~30/sec). На 429 поток ждёт `retry_after` и повторяет до `max-retries`
+раз; при переполнении очереди сообщение дропается с warn (метрика
+`notifications.failed{reason=other}`), а не блокирует шедулер.
+
+Интерактивные хендлеры команд/колбэков и `AdminBroadcastService` (со своим
+троттлингом) через эту очередь намеренно НЕ ходят.
+
+Конфигурация — `telegram.rate-limit` в `application.yml`:
+
+| Переменная | Дефолт | Описание |
+|---|---|---|
+| `TELEGRAM_RATE_LIMIT_PERMITS_PER_SECOND` | `25` | Сколько отправок в секунду разрешает token bucket |
+| `TELEGRAM_RATE_LIMIT_QUEUE_CAPACITY` | `10000` | Глубина очереди; при переполнении сообщение дропается |
+| `TELEGRAM_RATE_LIMIT_MAX_RETRIES` | `3` | Сколько раз повторять отправку при 429 перед признанием неудачи |
+| `TELEGRAM_RATE_LIMIT_DEFAULT_RETRY_AFTER_SECONDS` | `1` | Fallback retry-after, если 429 не содержит распарсиваемого значения |
+| `TELEGRAM_RATE_LIMIT_MAX_RETRY_AFTER_SECONDS` | `60` | Потолок для `retry_after` из 429 — чтобы одно сообщение не заблокировало очередь на часы |
+
 ## Деплой на Railway
 
 ### Первичная настройка

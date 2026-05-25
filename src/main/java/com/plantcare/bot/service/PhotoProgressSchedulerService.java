@@ -1,11 +1,12 @@
 package com.plantcare.bot.service;
 
-import com.plantcare.bot.client.TelegramClientProvider;
 import com.plantcare.bot.domain.Plant;
 import com.plantcare.bot.domain.User;
 import com.plantcare.bot.observability.SentryTags;
 import com.plantcare.bot.observability.SentryTags.Layer;
 import com.plantcare.bot.repository.PlantRepository;
+import com.plantcare.bot.telegram.RateLimitedTelegramSender;
+import com.plantcare.bot.telegram.SendCallbacks;
 import io.sentry.Sentry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -16,7 +17,6 @@ import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMarkup;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardButton;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardRow;
-import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -55,7 +55,7 @@ public class PhotoProgressSchedulerService {
 
     private final PlantRepository plantRepository;
     private final PhotoProgressService photoProgressService;
-    private final TelegramClientProvider telegramClientProvider;
+    private final RateLimitedTelegramSender telegramSender;
 
     @Scheduled(fixedRate = INTERVAL_MS)
     public void checkPhotoPrompts() {
@@ -83,10 +83,7 @@ public class PhotoProgressSchedulerService {
                         continue;
                     }
 
-                    boolean sent = sendPhotoPrompt(user, plant);
-                    if (sent) {
-                        photoProgressService.markPromptSent(plant.getId(), LocalDateTime.now());
-                    }
+                    enqueuePhotoPrompt(user, plant);
                 } catch (Exception e) {
                     log.error("Failed to handle photo-progress prompt for plant {}: {}",
                             plant.getId(), e.getMessage(), e);
@@ -110,7 +107,13 @@ public class PhotoProgressSchedulerService {
         return plantRepository.findPhotoProgressDue(until, dedupBefore);
     }
 
-    private boolean sendPhotoPrompt(User user, Plant plant) {
+    /**
+     * Issue #29: отправка ушла в rate-limited очередь. Дедуп-пометка
+     * {@code markPromptSent} (идемпотентное обновление {@code last_photo_prompt_sent_at})
+     * переехала в onSuccess-колбэк на воркер-потоке. Захватываем только примитивы,
+     * чтобы не тащить detached Plant/User между потоками.
+     */
+    private void enqueuePhotoPrompt(User user, Plant plant) {
         SendMessage message = SendMessage.builder()
                 .chatId(user.getTelegramChatId().toString())
                 .text("📸 Пора обновить фото для *" + escapeMd(plant.getName()) + "*")
@@ -118,16 +121,14 @@ public class PhotoProgressSchedulerService {
                 .replyMarkup(buildPromptKeyboard(plant.getId()))
                 .build();
 
-        try {
-            telegramClientProvider.getTelegramClient().execute(message);
-            log.info("Photo-progress prompt sent: plant={} user={}",
-                    plant.getId(), user.getTelegramChatId());
-            return true;
-        } catch (TelegramApiException e) {
-            log.error("Failed to send photo-progress prompt (plant={}, user={}): {}",
-                    plant.getId(), user.getTelegramChatId(), e.getMessage());
-            return false;
-        }
+        final long plantId = plant.getId();
+        final long chatId = user.getTelegramChatId();
+        telegramSender.enqueue(message, new SendCallbacks(
+                () -> {
+                    photoProgressService.markPromptSent(plantId, LocalDateTime.now());
+                    log.info("Photo-progress prompt sent: plant={} chat={}", plantId, chatId);
+                },
+                null));
     }
 
     private InlineKeyboardMarkup buildPromptKeyboard(Long plantId) {

@@ -11,6 +11,7 @@ import com.plantcare.bot.repository.LocationRepository;
 import com.plantcare.bot.repository.PlantRepository;
 import com.plantcare.bot.repository.UserRepository;
 import com.plantcare.bot.support.IntegrationTestBase;
+import com.plantcare.bot.telegram.RateLimitedTelegramSender;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -22,10 +23,10 @@ import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMarkup;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardButton;
-import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 import org.telegram.telegrambots.meta.generics.TelegramClient;
 
 import java.time.Clock;
@@ -43,15 +44,19 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
 /**
- * Интеграционные тесты hourly-тика отпуска (issue #53):
- * tomorrow-back за ~24 часа до конца + welcome-back при окончании.
+ * Интеграционные тесты hourly-тика отпуска (issue #53) после перевода на
+ * rate-limited очередь (issue #29): tomorrow-back за ~24 часа до конца +
+ * welcome-back при окончании.
  *
  * <p>Clock зафиксирован на 2026-05-23T10:00:00Z, поэтому окно поиска
  * tomorrow-back = [11:00; 12:00) того же дня (now+23h..now+24h).
- * Telegram-вызовы перехватываем через мок {@link TelegramClientProvider}.
+ *
+ * <p>Отправка теперь идёт fire-and-forget через {@link RateLimitedTelegramSender}
+ * (без колбэков), поэтому проверяем вызовы {@code enqueue(SendMessage)} вместо
+ * прямого {@code TelegramClient.execute}.
  */
 @Import(VacationSchedulerServiceTest.FixedClockConfig.class)
-@DisplayName("VacationSchedulerService (issue #53)")
+@DisplayName("VacationSchedulerService (issue #53 / #29)")
 class VacationSchedulerServiceTest extends IntegrationTestBase {
 
     static final Instant FIXED_NOW = Instant.parse("2026-05-23T10:00:00Z");
@@ -63,11 +68,12 @@ class VacationSchedulerServiceTest extends IntegrationTestBase {
     @Autowired private LocationRepository locationRepository;
     @Autowired private CareScheduleRepository careScheduleRepository;
     @Autowired private UserService userService;
-    @Autowired private TelegramClient telegramClient;
+
+    @MockitoBean private RateLimitedTelegramSender telegramSender;
 
     @BeforeEach
-    void resetClientMock() {
-        Mockito.reset(telegramClient);
+    void resetSenderMock() {
+        Mockito.reset(telegramSender);
     }
 
     @AfterEach
@@ -80,13 +86,13 @@ class VacationSchedulerServiceTest extends IntegrationTestBase {
 
     @Test
     @DisplayName("Tomorrow-back push идёт юзеру, у кого до конца отпуска ~23.5 часа")
-    void should_send_tomorrow_back_push_when_vacation_ends_in_24h() throws TelegramApiException {
+    void should_send_tomorrow_back_push_when_vacation_ends_in_24h() {
         User user = saveUserWithVacation(1000L, NOW_LDT.plusHours(23).plusMinutes(30));
 
         scheduler.tick();
 
         ArgumentCaptor<SendMessage> cap = ArgumentCaptor.forClass(SendMessage.class);
-        verify(telegramClient, times(1)).execute(cap.capture());
+        verify(telegramSender, times(1)).enqueue(cap.capture());
 
         SendMessage sent = cap.getValue();
         assertThat(sent.getChatId()).isEqualTo(user.getTelegramChatId().toString());
@@ -105,48 +111,44 @@ class VacationSchedulerServiceTest extends IntegrationTestBase {
 
     @Test
     @DisplayName("Нет tomorrow-back, если до конца отпуска ещё > 24 часов")
-    void should_not_send_tomorrow_back_when_outside_window() throws TelegramApiException {
+    void should_not_send_tomorrow_back_when_outside_window() {
         saveUserWithVacation(1001L, NOW_LDT.plusHours(30));
 
         scheduler.tick();
 
-        // execute мог быть вызван 0 раз для tomorrow-back и 0 раз для welcome-back.
-        verify(telegramClient, never()).execute(any(SendMessage.class));
+        verify(telegramSender, never()).enqueue(any(SendMessage.class));
     }
 
     @Test
     @DisplayName("Граница окна: pausedUntil ровно в now+24h НЕ попадает (right-exclusive)")
-    void should_not_send_tomorrow_back_when_paused_until_equals_upper_bound()
-            throws TelegramApiException {
+    void should_not_send_tomorrow_back_when_paused_until_equals_upper_bound() {
         // pausedUntil == now + 24h. Окно [now+23h; now+24h) — правая граница исключена.
         saveUserWithVacation(1002L, NOW_LDT.plusHours(24));
 
         scheduler.tick();
 
-        verify(telegramClient, never()).execute(any(SendMessage.class));
+        verify(telegramSender, never()).enqueue(any(SendMessage.class));
     }
 
     @Test
     @DisplayName("Граница окна: pausedUntil ровно в now+23h попадает (left-inclusive)")
-    void should_send_tomorrow_back_when_paused_until_equals_lower_bound()
-            throws TelegramApiException {
+    void should_send_tomorrow_back_when_paused_until_equals_lower_bound() {
         // pausedUntil == now + 23h. Окно [now+23h; now+24h) — левая граница включена.
         saveUserWithVacation(1011L, NOW_LDT.plusHours(23));
 
         scheduler.tick();
 
-        verify(telegramClient, times(1)).execute(any(SendMessage.class));
+        verify(telegramSender, times(1)).enqueue(any(SendMessage.class));
     }
 
     @Test
     @DisplayName("Welcome-back: отпуск закончился → push + paused_until=null")
-    void should_send_welcome_back_and_clear_paused_until_when_vacation_ended()
-            throws TelegramApiException {
+    void should_send_welcome_back_and_clear_paused_until_when_vacation_ended() {
         User user = saveUserWithVacation(1003L, NOW_LDT.minusHours(1));
 
         scheduler.tick();
 
-        verify(telegramClient, times(1)).execute(any(SendMessage.class));
+        verify(telegramSender, times(1)).enqueue(any(SendMessage.class));
 
         User reloaded = userRepository.findById(user.getId()).orElseThrow();
         assertThat(reloaded.getPausedUntil())
@@ -156,7 +158,7 @@ class VacationSchedulerServiceTest extends IntegrationTestBase {
 
     @Test
     @DisplayName("Welcome-back с просрочкой содержит список «За время отпуска накопилось» + растение")
-    void should_include_overdue_tasks_in_welcome_back_message() throws TelegramApiException {
+    void should_include_overdue_tasks_in_welcome_back_message() {
         User user = saveUserWithVacation(1004L, NOW_LDT.minusHours(1));
         Plant plant = savePlant(user, "Монстера");
         saveSchedule(plant, TaskType.WATERING, NOW_LDT.minusDays(5));
@@ -164,7 +166,7 @@ class VacationSchedulerServiceTest extends IntegrationTestBase {
         scheduler.tick();
 
         ArgumentCaptor<SendMessage> cap = ArgumentCaptor.forClass(SendMessage.class);
-        verify(telegramClient).execute(cap.capture());
+        verify(telegramSender).enqueue(cap.capture());
 
         String text = cap.getValue().getText();
         assertThat(text).contains("С возвращением");
@@ -192,13 +194,13 @@ class VacationSchedulerServiceTest extends IntegrationTestBase {
 
     @Test
     @DisplayName("Welcome-back без просрочки — короткое сообщение без блока «накопилось»")
-    void should_send_clean_welcome_back_when_no_overdue() throws TelegramApiException {
+    void should_send_clean_welcome_back_when_no_overdue() {
         saveUserWithVacation(1006L, NOW_LDT.minusHours(1));
 
         scheduler.tick();
 
         ArgumentCaptor<SendMessage> cap = ArgumentCaptor.forClass(SendMessage.class);
-        verify(telegramClient).execute(cap.capture());
+        verify(telegramSender).enqueue(cap.capture());
 
         String text = cap.getValue().getText();
         assertThat(text).contains("С возвращением");
@@ -207,39 +209,39 @@ class VacationSchedulerServiceTest extends IntegrationTestBase {
 
     @Test
     @DisplayName("Welcome-back idempotent: второй тик после очистки paused_until не шлёт повтор")
-    void should_send_welcome_back_only_once_when_tick_runs_twice() throws TelegramApiException {
+    void should_send_welcome_back_only_once_when_tick_runs_twice() {
         saveUserWithVacation(1007L, NOW_LDT.minusHours(1));
 
         scheduler.tick();
         scheduler.tick();
 
         // После первого тика paused_until = null, во втором тике findVacationEnded
-        // его не подберёт. Итого ровно один send.
-        verify(telegramClient, times(1)).execute(any(SendMessage.class));
+        // его не подберёт. Итого ровно один enqueue.
+        verify(telegramSender, times(1)).enqueue(any(SendMessage.class));
     }
 
     @Test
     @DisplayName("Заблокированному юзеру tomorrow-back не уходит")
-    void should_skip_blocked_users_in_tomorrow_back() throws TelegramApiException {
+    void should_skip_blocked_users_in_tomorrow_back() {
         User user = saveUserWithVacation(1008L, NOW_LDT.plusHours(23).plusMinutes(30));
         user.setBlocked(true);
         userRepository.save(user);
 
         scheduler.tick();
 
-        verify(telegramClient, never()).execute(any(SendMessage.class));
+        verify(telegramSender, never()).enqueue(any(SendMessage.class));
     }
 
     @Test
     @DisplayName("Заблокированному юзеру welcome-back не уходит")
-    void should_skip_blocked_users_in_welcome_back() throws TelegramApiException {
+    void should_skip_blocked_users_in_welcome_back() {
         User user = saveUserWithVacation(1009L, NOW_LDT.minusHours(1));
         user.setBlocked(true);
         userRepository.save(user);
 
         scheduler.tick();
 
-        verify(telegramClient, never()).execute(any(SendMessage.class));
+        verify(telegramSender, never()).enqueue(any(SendMessage.class));
         // paused_until НЕ должен очищаться для заблокированных — иначе при разблокировке
         // юзер пропустит welcome-back и попадёт сразу в обычный поток уведомлений.
         User reloaded = userRepository.findById(user.getId()).orElseThrow();
@@ -315,9 +317,9 @@ class VacationSchedulerServiceTest extends IntegrationTestBase {
     /**
      * Подменяет:
      * - Clock — на фиксированный, чтобы расчёты «сейчас + N часов» были детерминированы;
-     * - TelegramClientProvider — на стаб, возвращающий мок TelegramClient. Это удобнее
-     *   чем @MockitoBean, потому что мок должен возвращать ненулевой клиент уже на
-     *   ApplicationReadyEvent (BotCommandsRegistrar дёргает execute() ещё до тестов).
+     * - TelegramClientProvider — на стаб, возвращающий мок TelegramClient. Нужен ещё на
+     *   ApplicationReadyEvent (BotCommandsRegistrar дёргает execute() до тестов), хотя
+     *   сам шедулер отправляет через RateLimitedTelegramSender (замокан отдельно).
      */
     @TestConfiguration
     static class FixedClockConfig {
