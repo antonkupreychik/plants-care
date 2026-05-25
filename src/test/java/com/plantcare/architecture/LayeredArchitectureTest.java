@@ -49,4 +49,21 @@ class LayeredArchitectureTest {
                     .resideInAPackage("org.telegram..")
                     .because("Telegram API — деталь доставки; core не должен формировать "
                             + "сообщения/клавиатуры Telegram (#127).");
+
+    /**
+     * Слои доставки между собой не связаны: REST API ({@code api}) не должен знать про
+     * Telegram-бот ({@code bot}) и веб-админку ({@code admin}). API зависит только от
+     * {@code core} (бизнес-сервисы) и собственного сгенерированного слоя
+     * {@code api.generated}. Это держит мобильный канал доставки изолированным (#127, Mobile Phase 0).
+     */
+    @ArchTest
+    static final ArchRule api_must_not_depend_on_other_delivery_layers =
+            noClasses()
+                    .that().resideInAPackage("com.plantcare.api..")
+                    .should().dependOnClassesThat()
+                    .resideInAnyPackage(
+                            "com.plantcare.bot..",
+                            "com.plantcare.admin..")
+                    .because("REST API — независимый слой доставки и не должен зависеть от "
+                            + "Telegram-бота или админки; только от core (#127).");
 }

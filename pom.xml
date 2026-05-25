@@ -233,9 +233,9 @@
                             <inputSpec>${project.basedir}/src/main/resources/openapi/openapi.yaml</inputSpec>
                             <generatorName>spring</generatorName>
                             <output>${project.build.directory}/generated-sources/openapi</output>
-                            <apiPackage>com.plantcare.bot.api.generated</apiPackage>
-                            <modelPackage>com.plantcare.bot.api.generated.model</modelPackage>
-                            <invokerPackage>com.plantcare.bot.api.generated</invokerPackage>
+                            <apiPackage>com.plantcare.api.generated</apiPackage>
+                            <modelPackage>com.plantcare.api.generated.model</modelPackage>
+                            <invokerPackage>com.plantcare.api.generated</invokerPackage>
                             <generateApiTests>false</generateApiTests>
                             <generateModelTests>false</generateModelTests>
                             <generateApiDocumentation>false</generateApiDocumentation>
@@ -292,7 +292,7 @@
                         </goals>
                         <configuration>
                             <excludes>
-                                <exclude>com/plantcare/bot/api/generated/**/*</exclude>
+                                <exclude>com/plantcare/api/generated/**/*</exclude>
                             </excludes>
                         </configuration>
                     </execution>
@@ -305,7 +305,7 @@
                         </goals>
                         <configuration>
                             <excludes>
-                                <exclude>com/plantcare/bot/api/generated/**/*</exclude>
+                                <exclude>com/plantcare/api/generated/**/*</exclude>
                             </excludes>
                         </configuration>
                     </execution>
@@ -317,7 +317,7 @@
                         </goals>
                         <configuration>
                             <excludes>
-                                <exclude>com/plantcare/bot/api/generated/**/*</exclude>
+                                <exclude>com/plantcare/api/generated/**/*</exclude>
                             </excludes>
                             <rules>
                                 <rule>
@@ -325,7 +325,7 @@
                                       0.49 (понижено с 0.50): миграция всех REST-контроллеров на spec-first
                                       OpenAPI убрала 18 record-DTO с авто-сгенерированными покрытыми методами,
                                       и общее ratio сместилось с 0.5012 на 0.4993. Сгенерированный
-                                      com.plantcare.bot.api.generated.** исключён из подсчёта. Поднять обратно
+                                      com.plantcare.api.generated.** исключён из подсчёта. Поднять обратно
                                       до 0.50 при добавлении пары новых тестов в любой контроллер.
                                     -->
                                     <element>BUNDLE</element>

@@ -18,7 +18,7 @@ import java.util.List;
 /**
  * Сервис для REST API календаря ухода (issue #86).
  *
- * <p>Вынесен из {@link com.plantcare.bot.controller.api.v1.CalendarController},
+ * <p>Вынесен из {@link com.plantcare.api.v1.CalendarController},
  * чтобы репозиторий не был виден контроллеру напрямую (CLAUDE.md: «никаких репозиториев в хендлерах»).
  */
 @Slf4j
