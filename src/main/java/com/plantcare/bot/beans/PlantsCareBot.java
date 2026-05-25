@@ -36,6 +36,7 @@ public class PlantsCareBot implements LongPollingSingleThreadUpdateConsumer, Tel
     private static final String WEATHER_CALLBACK_PREFIX = "WEATHER:";
     private static final String SEASON_CALLBACK_PREFIX = "SEASON:";
     private static final String PHOTO_PROGRESS_CALLBACK_PREFIX = "PHOTO_PROGRESS:";
+    private static final String SHOPPING_CALLBACK_PREFIX = "SHOPPING:";
 
     private final TelegramClient telegramClient;
     private final CommandContainer commandContainer;
@@ -113,7 +114,8 @@ public class PlantsCareBot implements LongPollingSingleThreadUpdateConsumer, Tel
                                 data.startsWith(WEATHER_CALLBACK_PREFIX) ||
                                 data.startsWith(SEASON_CALLBACK_PREFIX) ||
                                 data.startsWith(CALENDAR_CALLBACK_PREFIX) ||
-                                data.startsWith(PHOTO_PROGRESS_CALLBACK_PREFIX)
+                                data.startsWith(PHOTO_PROGRESS_CALLBACK_PREFIX) ||
+                                data.startsWith(SHOPPING_CALLBACK_PREFIX)
                 )) {
                     String userName = getUserName(update);
                     User user = userService.findOrCreate(chatId, userName);

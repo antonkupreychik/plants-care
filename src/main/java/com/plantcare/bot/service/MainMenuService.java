@@ -276,6 +276,12 @@ public class MainMenuService {
                                 .callbackData("MENU:SETTINGS")
                                 .build()
                 )))
+                .keyboardRow(new InlineKeyboardRow(List.of(
+                        InlineKeyboardButton.builder()
+                                .text("🛒 Список покупок")
+                                .callbackData("MENU:SHOPPING_LIST")
+                                .build()
+                )))
                 .build();
     }
 

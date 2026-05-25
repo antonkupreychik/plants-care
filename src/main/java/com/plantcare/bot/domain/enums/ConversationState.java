@@ -55,5 +55,8 @@ public enum ConversationState {
     AWAITING_PROGRESS_PHOTO,           // ждём фото для таймлайна (план «📸 Фото-прогресс»)
 
     // Ретро-отметка ухода (issue #118): юзер ввёл "Выбрать дату" → ждём DD.MM[.YYYY].
-    AWAITING_CARE_DATE
+    AWAITING_CARE_DATE,
+
+    // Список покупок (issue #136): ждём текст новой позиции чек-листа.
+    AWAITING_SHOPPING_ITEM
 }
