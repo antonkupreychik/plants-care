@@ -39,6 +39,7 @@ class PlantCardToxicityTest {
 
     @Mock private PlantService plantService;
     @Mock private PlantRepository plantRepository;
+    @Mock private com.plantcare.bot.repository.CareScheduleRepository careScheduleRepository;
     @Mock private MainMenuService mainMenuService;
     @Mock private UserService userService;
     @Mock private CareHistoryService careHistoryService;
@@ -53,7 +54,7 @@ class PlantCardToxicityTest {
     @BeforeEach
     void setUp() {
         cardService = new PlantCardService(
-                plantService, plantRepository, mainMenuService, userService,
+                plantService, plantRepository, careScheduleRepository, mainMenuService, userService,
                 careHistoryService, plantEventService, speciesFactService, seasonalIntervalService);
     }
 

@@ -33,6 +33,21 @@ public interface PlantRepository extends JpaRepository<Plant, Long> {
 
     long countByUserIdAndArchivedAtIsNull(Long userId);
 
+    // ===== Родословная (issue #139, ADR-012) =====
+
+    /**
+     * Сколько растений-потомков ссылаются на данное материнское растение.
+     * Считает по {@code parent_id} (включая архивированных потомков — каскадной
+     * архивации нет, ADR-009). Используется для строки «🌱 Потомки: N» в карточке.
+     */
+    long countByParentId(Long parentId);
+
+    /**
+     * Потомки данного растения (черенки). Не используется в UI напрямую сейчас,
+     * но нужен для логики родословной и тестов; экран «дерево» — вне scope #139.
+     */
+    List<Plant> findByParentId(Long parentId);
+
     long countByUserIdAndLocationIdAndArchivedAtIsNull(Long userId, Long locationId);
 
     // ===== Архив (issue #117) =====
