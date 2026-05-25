@@ -57,6 +57,9 @@ public enum ConversationState {
     // Ретро-отметка ухода (issue #118): юзер ввёл "Выбрать дату" → ждём DD.MM[.YYYY].
     AWAITING_CARE_DATE,
 
+    // Список покупок (issue #136): ждём текст новой позиции чек-листа.
+    AWAITING_SHOPPING_ITEM,
+
     // Поиск по справочнику болезней (issue #140): ждём текст симптома/названия.
     AWAITING_DISEASE_SEARCH
 }

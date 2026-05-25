@@ -69,6 +69,8 @@ public class MenuCallbackService {
     private final WeatherMenuService weatherMenuService;
     private final PlantArchiveService plantArchiveService;
     private final PlantArchiveMenuService plantArchiveMenuService;
+    private final ShoppingListService shoppingListService;
+    private final ShoppingListMenuService shoppingListMenuService;
     private final DiseaseMenuService diseaseMenuService;
 
     private record LocationPreset(String name, String emoji) {
@@ -130,6 +132,12 @@ public class MenuCallbackService {
 
         if (data.startsWith("WEATHER:")) {
             handleWeatherCallback(data, callbackId, messageId, client, user);
+            return;
+        }
+
+        // Список покупок (issue #136).
+        if (data.startsWith("SHOPPING:")) {
+            handleShoppingCallback(data, callbackId, client, user);
             return;
         }
 
@@ -234,6 +242,10 @@ public class MenuCallbackService {
             }
             case "SETTINGS" -> {
                 sendSettingsMenu(user, client);
+                answerCallback(client, callbackId, "");
+            }
+            case "SHOPPING_LIST" -> {
+                shoppingListMenuService.sendShoppingList(user, client);
                 answerCallback(client, callbackId, "");
             }
             case "MY_TEMPLATES" -> {
@@ -455,6 +467,70 @@ public class MenuCallbackService {
         if (data.startsWith("LOCATION:DELETE:")) {
             Long locationId = Long.parseLong(data.substring("LOCATION:DELETE:".length()));
             locationMenuService.sendDeleteLocationDialog(user, locationId, client);
+            answerCallback(client, callbackId, "");
+            return;
+        }
+
+        answerCallback(client, callbackId, "❌ Неизвестная команда");
+    }
+
+    /**
+     * Список покупок (issue #136).
+     *
+     * <p>Поддерживаемые форматы:
+     * <ul>
+     *   <li>{@code SHOPPING:ADD} — перевод в AWAITING_SHOPPING_ITEM</li>
+     *   <li>{@code SHOPPING:CLEAR} — удалить отмеченные позиции</li>
+     *   <li>{@code SHOPPING:CHECK:{id}} — пометить купленной (target=true)</li>
+     *   <li>{@code SHOPPING:UNCHECK:{id}} — снять отметку (target=false)</li>
+     * </ul>
+     * Toggle принимает явный целевой статус, поэтому двойной тап идемпотентен.
+     */
+    private void handleShoppingCallback(
+            String data,
+            String callbackId,
+            TelegramClient client,
+            User user
+    ) {
+        if ("SHOPPING:ADD".equals(data)) {
+            userService.updateState(user, ConversationState.AWAITING_SHOPPING_ITEM);
+            sendText(user, client, "🛒 Что добавить в список покупок?");
+            answerCallback(client, callbackId, "");
+            return;
+        }
+
+        if ("SHOPPING:CLEAR".equals(data)) {
+            long removed = shoppingListService.clearChecked(user.getId());
+
+            if (removed == 0) {
+                answerCallback(client, callbackId, "Нечего убирать — нет отмеченных");
+                return;
+            }
+
+            shoppingListMenuService.sendShoppingList(user, client);
+            answerCallback(client, callbackId, "🗑 Убрано: " + removed);
+            return;
+        }
+
+        if (data.startsWith("SHOPPING:CHECK:") || data.startsWith("SHOPPING:UNCHECK:")) {
+            boolean targetChecked = data.startsWith("SHOPPING:CHECK:");
+            String prefix = targetChecked ? "SHOPPING:CHECK:" : "SHOPPING:UNCHECK:";
+
+            Long itemId = parseLong(data.substring(prefix.length()));
+
+            if (itemId == null) {
+                answerCallback(client, callbackId, "❌ Неверный ID");
+                return;
+            }
+
+            try {
+                shoppingListService.toggle(user.getId(), itemId, targetChecked);
+            } catch (IllegalArgumentException e) {
+                answerCallback(client, callbackId, "❌ " + e.getMessage());
+                return;
+            }
+
+            shoppingListMenuService.sendShoppingList(user, client);
             answerCallback(client, callbackId, "");
             return;
         }

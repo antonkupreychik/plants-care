@@ -278,6 +278,12 @@ public class MainMenuService {
                 )))
                 .keyboardRow(new InlineKeyboardRow(List.of(
                         InlineKeyboardButton.builder()
+                                .text("🛒 Список покупок")
+                                .callbackData("MENU:SHOPPING_LIST")
+                                .build()
+                )))
+                .keyboardRow(new InlineKeyboardRow(List.of(
+                        InlineKeyboardButton.builder()
                                 .text("🦠 Болезни")
                                 .callbackData("MENU:DISEASES")
                                 .build()
