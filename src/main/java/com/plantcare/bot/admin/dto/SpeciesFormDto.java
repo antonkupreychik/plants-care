@@ -1,7 +1,7 @@
 package com.plantcare.bot.admin.dto;
 
-import com.plantcare.bot.domain.enums.CareDifficulty;
-import com.plantcare.bot.domain.enums.LightPreference;
+import com.plantcare.core.domain.enums.CareDifficulty;
+import com.plantcare.core.domain.enums.LightPreference;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;

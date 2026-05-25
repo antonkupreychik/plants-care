@@ -1,17 +1,20 @@
 package com.plantcare.bot.service;
 
-import com.plantcare.bot.domain.CareSchedule;
-import com.plantcare.bot.domain.DigestTaskItem;
-import com.plantcare.bot.domain.NotificationDigest;
-import com.plantcare.bot.domain.Plant;
-import com.plantcare.bot.domain.User;
-import com.plantcare.bot.domain.enums.TaskType;
-import com.plantcare.bot.metrics.MetricsService;
-import com.plantcare.bot.observability.SentryTags;
-import com.plantcare.bot.observability.SentryTags.Layer;
-import com.plantcare.bot.repository.CareScheduleRepository;
-import com.plantcare.bot.repository.NotificationDigestRepository;
-import com.plantcare.bot.repository.NotificationLogRepository;
+import com.plantcare.core.service.QuietHoursPolicy;
+import com.plantcare.core.service.SchedulerHealthTracker;
+
+import com.plantcare.core.domain.CareSchedule;
+import com.plantcare.core.domain.DigestTaskItem;
+import com.plantcare.core.domain.NotificationDigest;
+import com.plantcare.core.domain.Plant;
+import com.plantcare.core.domain.User;
+import com.plantcare.core.domain.enums.TaskType;
+import com.plantcare.core.metrics.MetricsService;
+import com.plantcare.core.observability.SentryTags;
+import com.plantcare.core.observability.SentryTags.Layer;
+import com.plantcare.core.repository.CareScheduleRepository;
+import com.plantcare.core.repository.NotificationDigestRepository;
+import com.plantcare.core.repository.NotificationLogRepository;
 import com.plantcare.bot.telegram.RateLimitedTelegramSender;
 import com.plantcare.bot.telegram.SendCallbacks;
 import io.micrometer.core.instrument.Timer;
@@ -44,8 +47,8 @@ public class NotificationSchedulerService {
     private final NotificationLogRepository notificationLogRepository;
     private final NotificationDigestRepository notificationDigestRepository;
     private final SchedulerHealthTracker schedulerHealthTracker;
-    private final com.plantcare.bot.weather.service.WeatherService weatherService;
-    private final com.plantcare.bot.seasonal.service.SeasonalIntervalService seasonalIntervalService;
+    private final com.plantcare.core.weather.service.WeatherService weatherService;
+    private final com.plantcare.core.seasonal.service.SeasonalIntervalService seasonalIntervalService;
     private final QuietHoursPolicy quietHoursPolicy;
     private final ReminderKeyboardFactory reminderKeyboardFactory;
     private final Clock clock;
@@ -457,10 +460,10 @@ public class NotificationSchedulerService {
      */
     private String appendWeatherHintIfWatering(
             String text,
-            com.plantcare.bot.domain.User user,
-            com.plantcare.bot.domain.CareSchedule schedule
+            com.plantcare.core.domain.User user,
+            com.plantcare.core.domain.CareSchedule schedule
     ) {
-        if (schedule.getTaskType() != com.plantcare.bot.domain.enums.TaskType.WATERING) {
+        if (schedule.getTaskType() != com.plantcare.core.domain.enums.TaskType.WATERING) {
             return text;
         }
         if (!user.isWeatherUsable()) {

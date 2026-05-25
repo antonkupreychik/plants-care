@@ -1,16 +1,16 @@
 package com.plantcare.bot.service;
 
-import com.plantcare.bot.domain.Location;
-import com.plantcare.bot.domain.NotificationLog;
-import com.plantcare.bot.domain.Plant;
-import com.plantcare.bot.domain.User;
-import com.plantcare.bot.domain.enums.NotificationType;
-import com.plantcare.bot.domain.enums.TaskType;
-import com.plantcare.bot.metrics.MetricsService;
-import com.plantcare.bot.repository.LocationRepository;
-import com.plantcare.bot.repository.NotificationLogRepository;
-import com.plantcare.bot.repository.PlantRepository;
-import com.plantcare.bot.repository.UserRepository;
+import com.plantcare.core.domain.Location;
+import com.plantcare.core.domain.NotificationLog;
+import com.plantcare.core.domain.Plant;
+import com.plantcare.core.domain.User;
+import com.plantcare.core.domain.enums.NotificationType;
+import com.plantcare.core.domain.enums.TaskType;
+import com.plantcare.core.metrics.MetricsService;
+import com.plantcare.core.repository.LocationRepository;
+import com.plantcare.core.repository.NotificationLogRepository;
+import com.plantcare.core.repository.PlantRepository;
+import com.plantcare.core.repository.UserRepository;
 import com.plantcare.bot.support.IntegrationTestBase;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;

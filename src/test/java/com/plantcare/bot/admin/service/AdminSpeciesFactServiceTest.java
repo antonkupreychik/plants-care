@@ -2,11 +2,11 @@ package com.plantcare.bot.admin.service;
 
 import com.plantcare.bot.admin.dto.SpeciesFactFormDto;
 import com.plantcare.bot.admin.exception.SpeciesFactNotFoundException;
-import com.plantcare.bot.domain.Species;
-import com.plantcare.bot.domain.SpeciesFact;
-import com.plantcare.bot.domain.enums.FactCategory;
-import com.plantcare.bot.repository.SpeciesFactRepository;
-import com.plantcare.bot.repository.SpeciesRepository;
+import com.plantcare.core.domain.Species;
+import com.plantcare.core.domain.SpeciesFact;
+import com.plantcare.core.domain.enums.FactCategory;
+import com.plantcare.core.repository.SpeciesFactRepository;
+import com.plantcare.core.repository.SpeciesRepository;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.EntityNotFoundException;
 import org.junit.jupiter.api.Test;

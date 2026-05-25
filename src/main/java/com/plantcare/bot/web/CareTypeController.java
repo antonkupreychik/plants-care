@@ -2,7 +2,7 @@ package com.plantcare.bot.web;
 
 import com.plantcare.bot.api.generated.CareTypesApi;
 import com.plantcare.bot.api.generated.model.CareTypeDto;
-import com.plantcare.bot.domain.enums.TaskType;
+import com.plantcare.core.domain.enums.TaskType;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.RestController;
 

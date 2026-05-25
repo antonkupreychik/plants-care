@@ -2,12 +2,12 @@ package com.plantcare.bot.beans;
 
 import com.plantcare.bot.command.CommandContainer;
 import com.plantcare.bot.command.impl.CancelCommand;
-import com.plantcare.bot.domain.User;
+import com.plantcare.core.domain.User;
 import com.plantcare.bot.service.DiseaseMenuService;
 import com.plantcare.bot.service.MenuCallbackService;
 import com.plantcare.bot.service.NotificationCallbackService;
 import com.plantcare.bot.service.NotificationDigestCallbackService;
-import com.plantcare.bot.service.UserService;
+import com.plantcare.core.service.UserService;
 import com.plantcare.bot.state.StateResolver;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;

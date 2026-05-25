@@ -1,17 +1,26 @@
 package com.plantcare.bot.service;
 
-import com.plantcare.bot.domain.CareHistory;
-import com.plantcare.bot.domain.CareSchedule;
-import com.plantcare.bot.domain.Location;
-import com.plantcare.bot.domain.Plant;
-import com.plantcare.bot.domain.PlantEvent;
-import com.plantcare.bot.domain.User;
-import com.plantcare.bot.domain.enums.ConversationState;
-import com.plantcare.bot.domain.enums.PlantEventType;
-import com.plantcare.bot.domain.enums.TaskType;
-import com.plantcare.bot.repository.CareScheduleRepository;
-import com.plantcare.bot.repository.PlantRepository;
-import com.plantcare.bot.util.TimezoneSupport;
+import com.plantcare.core.service.CareHistoryService;
+import com.plantcare.core.service.HealthScoreService;
+import com.plantcare.core.service.PlantAcclimationService;
+import com.plantcare.core.service.PlantEventService;
+import com.plantcare.core.service.PlantService;
+import com.plantcare.core.service.SpeciesFactDto;
+import com.plantcare.core.service.SpeciesFactService;
+import com.plantcare.core.service.UserService;
+
+import com.plantcare.core.domain.CareHistory;
+import com.plantcare.core.domain.CareSchedule;
+import com.plantcare.core.domain.Location;
+import com.plantcare.core.domain.Plant;
+import com.plantcare.core.domain.PlantEvent;
+import com.plantcare.core.domain.User;
+import com.plantcare.core.domain.enums.ConversationState;
+import com.plantcare.core.domain.enums.PlantEventType;
+import com.plantcare.core.domain.enums.TaskType;
+import com.plantcare.core.repository.CareScheduleRepository;
+import com.plantcare.core.repository.PlantRepository;
+import com.plantcare.core.util.TimezoneSupport;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
@@ -88,7 +97,7 @@ public class PlantCardService {
     private final HealthScoreService healthScoreService;
     private final PlantEventService plantEventService;
     private final SpeciesFactService speciesFactService;
-    private final com.plantcare.bot.seasonal.service.SeasonalIntervalService seasonalIntervalService;
+    private final com.plantcare.core.seasonal.service.SeasonalIntervalService seasonalIntervalService;
 
     // =================================================================
     // 1) Карточка "только что создано" — используется визардом создания
@@ -916,7 +925,7 @@ public class PlantCardService {
             return;
         }
 
-        java.util.Map<com.plantcare.bot.domain.enums.FactCategory, List<SpeciesFactDto>> factsByCategory =
+        java.util.Map<com.plantcare.core.domain.enums.FactCategory, List<SpeciesFactDto>> factsByCategory =
                 plant.getSpecies() == null
                         ? java.util.Map.of()
                         : speciesFactService.getFactsBySpecies(plant.getSpecies().getId(), null);
@@ -936,7 +945,7 @@ public class PlantCardService {
 
     private String buildSpeciesFactsText(
             Plant plant,
-            java.util.Map<com.plantcare.bot.domain.enums.FactCategory, List<SpeciesFactDto>> factsByCategory
+            java.util.Map<com.plantcare.core.domain.enums.FactCategory, List<SpeciesFactDto>> factsByCategory
     ) {
         StringBuilder sb = new StringBuilder();
 
@@ -949,8 +958,8 @@ public class PlantCardService {
         }
 
         // Фиксированный порядок категорий для предсказуемого вида карточки.
-        for (com.plantcare.bot.domain.enums.FactCategory category :
-                com.plantcare.bot.domain.enums.FactCategory.values()) {
+        for (com.plantcare.core.domain.enums.FactCategory category :
+                com.plantcare.core.domain.enums.FactCategory.values()) {
             List<SpeciesFactDto> facts = factsByCategory.get(category);
             if (facts == null || facts.isEmpty()) {
                 continue;
@@ -975,7 +984,7 @@ public class PlantCardService {
         return sb.toString();
     }
 
-    private String factCategoryTitle(com.plantcare.bot.domain.enums.FactCategory category) {
+    private String factCategoryTitle(com.plantcare.core.domain.enums.FactCategory category) {
         return switch (category) {
             case ORIGIN    -> "Происхождение";
             case CARE      -> "Уход";
@@ -984,7 +993,7 @@ public class PlantCardService {
         };
     }
 
-    private String factCategoryEmoji(com.plantcare.bot.domain.enums.FactCategory category) {
+    private String factCategoryEmoji(com.plantcare.core.domain.enums.FactCategory category) {
         return switch (category) {
             case ORIGIN    -> "🗺";
             case CARE      -> "🪴";
@@ -1461,7 +1470,7 @@ public class PlantCardService {
      * флагов со значением {@code true}; {@code false} и {@code null} (нет данных)
      * не показываются. Если ни один флаг не {@code true} — блок отсутствует целиком.
      */
-    private void appendToxicityBlock(StringBuilder sb, com.plantcare.bot.domain.Species species) {
+    private void appendToxicityBlock(StringBuilder sb, com.plantcare.core.domain.Species species) {
         if (species == null) {
             return;
         }
@@ -1938,8 +1947,8 @@ public class PlantCardService {
      * Подпись для кнопки «🍂 Сезонность» в edit-menu растения (issue #67).
      */
     private static String formatSeasonalOverride(Plant plant) {
-        com.plantcare.bot.domain.enums.SeasonalOverride o = plant.getSeasonalOverride();
-        if (o == null) o = com.plantcare.bot.domain.enums.SeasonalOverride.INHERIT;
+        com.plantcare.core.domain.enums.SeasonalOverride o = plant.getSeasonalOverride();
+        if (o == null) o = com.plantcare.core.domain.enums.SeasonalOverride.INHERIT;
         return switch (o) {
             case INHERIT -> "Наследовать";
             case ON      -> "Включена";
@@ -1964,12 +1973,12 @@ public class PlantCardService {
                     plantId, user.getId());
             return;
         }
-        com.plantcare.bot.domain.enums.SeasonalOverride cur = plant.getSeasonalOverride();
-        if (cur == null) cur = com.plantcare.bot.domain.enums.SeasonalOverride.INHERIT;
-        com.plantcare.bot.domain.enums.SeasonalOverride next = switch (cur) {
-            case INHERIT -> com.plantcare.bot.domain.enums.SeasonalOverride.ON;
-            case ON      -> com.plantcare.bot.domain.enums.SeasonalOverride.OFF;
-            case OFF     -> com.plantcare.bot.domain.enums.SeasonalOverride.INHERIT;
+        com.plantcare.core.domain.enums.SeasonalOverride cur = plant.getSeasonalOverride();
+        if (cur == null) cur = com.plantcare.core.domain.enums.SeasonalOverride.INHERIT;
+        com.plantcare.core.domain.enums.SeasonalOverride next = switch (cur) {
+            case INHERIT -> com.plantcare.core.domain.enums.SeasonalOverride.ON;
+            case ON      -> com.plantcare.core.domain.enums.SeasonalOverride.OFF;
+            case OFF     -> com.plantcare.core.domain.enums.SeasonalOverride.INHERIT;
         };
         plant.setSeasonalOverride(next);
         plantRepository.save(plant);

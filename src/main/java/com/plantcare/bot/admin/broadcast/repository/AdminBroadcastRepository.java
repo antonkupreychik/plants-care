@@ -1,7 +1,7 @@
 package com.plantcare.bot.admin.broadcast.repository;
 
-import com.plantcare.bot.domain.AdminBroadcast;
-import com.plantcare.bot.domain.enums.BroadcastStatus;
+import com.plantcare.core.domain.AdminBroadcast;
+import com.plantcare.core.domain.enums.BroadcastStatus;
 import org.springframework.data.domain.Limit;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;

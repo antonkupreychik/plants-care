@@ -1,9 +1,12 @@
 package com.plantcare.bot.service;
 
-import com.plantcare.bot.config.TransplantSuggestionProperties;
-import com.plantcare.bot.domain.User;
-import com.plantcare.bot.repository.UserRepository;
-import com.plantcare.bot.service.TransplantSuggestionService.DueSuggestion;
+import com.plantcare.core.service.QuietHoursPolicy;
+import com.plantcare.core.service.TransplantSuggestionService;
+
+import com.plantcare.core.config.TransplantSuggestionProperties;
+import com.plantcare.core.domain.User;
+import com.plantcare.core.repository.UserRepository;
+import com.plantcare.core.service.TransplantSuggestionService.DueSuggestion;
 import com.plantcare.bot.telegram.RateLimitedTelegramSender;
 import com.plantcare.bot.telegram.SendCallbacks;
 import org.junit.jupiter.api.DisplayName;

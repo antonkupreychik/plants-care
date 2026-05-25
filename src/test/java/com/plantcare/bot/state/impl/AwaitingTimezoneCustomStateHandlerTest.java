@@ -1,10 +1,10 @@
 package com.plantcare.bot.state.impl;
 
-import com.plantcare.bot.domain.User;
-import com.plantcare.bot.domain.enums.ConversationState;
-import com.plantcare.bot.service.UserService;
-import com.plantcare.bot.service.UserSettingsService;
-import com.plantcare.bot.service.UserSettingsService.TimezoneChangeResult;
+import com.plantcare.core.domain.User;
+import com.plantcare.core.domain.enums.ConversationState;
+import com.plantcare.core.service.UserService;
+import com.plantcare.core.service.UserSettingsService;
+import com.plantcare.core.service.UserSettingsService.TimezoneChangeResult;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;

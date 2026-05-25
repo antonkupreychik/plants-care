@@ -2,12 +2,12 @@ package com.plantcare.bot.controller.api.v1;
 
 import com.plantcare.bot.controller.api.ApiExceptionHandler;
 import com.plantcare.bot.controller.api.UserApiResolver;
-import com.plantcare.bot.domain.CareSchedule;
-import com.plantcare.bot.domain.Location;
-import com.plantcare.bot.domain.Plant;
-import com.plantcare.bot.domain.User;
-import com.plantcare.bot.domain.enums.TaskType;
-import com.plantcare.bot.service.TodayApiService;
+import com.plantcare.core.domain.CareSchedule;
+import com.plantcare.core.domain.Location;
+import com.plantcare.core.domain.Plant;
+import com.plantcare.core.domain.User;
+import com.plantcare.core.domain.enums.TaskType;
+import com.plantcare.core.service.TodayApiService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;

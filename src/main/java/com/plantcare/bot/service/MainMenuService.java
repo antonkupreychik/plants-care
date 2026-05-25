@@ -1,13 +1,16 @@
 package com.plantcare.bot.service;
 
-import com.plantcare.bot.domain.CareSchedule;
-import com.plantcare.bot.domain.Location;
-import com.plantcare.bot.domain.User;
-import com.plantcare.bot.repository.CareScheduleRepository;
-import com.plantcare.bot.repository.PlantRepository;
-import com.plantcare.bot.util.TimeUtils;
-import com.plantcare.bot.weather.service.WeatherService;
-import com.plantcare.bot.util.TimezoneSupport;
+import com.plantcare.core.service.CareHistoryService;
+import com.plantcare.core.service.LocationService;
+
+import com.plantcare.core.domain.CareSchedule;
+import com.plantcare.core.domain.Location;
+import com.plantcare.core.domain.User;
+import com.plantcare.core.repository.CareScheduleRepository;
+import com.plantcare.core.repository.PlantRepository;
+import com.plantcare.core.util.TimeUtils;
+import com.plantcare.core.weather.service.WeatherService;
+import com.plantcare.core.util.TimezoneSupport;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -97,10 +100,10 @@ public class MainMenuService {
     private String buildWeatherHintForWatering(User user, List<CareSchedule> todaySchedules) {
         if (!user.isWeatherUsable()) return "";
         boolean hasWatering = todaySchedules.stream()
-                .anyMatch(s -> s.getTaskType() == com.plantcare.bot.domain.enums.TaskType.WATERING);
+                .anyMatch(s -> s.getTaskType() == com.plantcare.core.domain.enums.TaskType.WATERING);
         if (!hasWatering) return "";
         return weatherService.getCurrentHumidity(user)
-                .map(com.plantcare.bot.weather.dto.HumidityInfo::renderLine)
+                .map(com.plantcare.core.weather.dto.HumidityInfo::renderLine)
                 .orElse("");
     }
 

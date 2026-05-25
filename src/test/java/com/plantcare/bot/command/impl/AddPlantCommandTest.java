@@ -1,11 +1,11 @@
 package com.plantcare.bot.command.impl;
 
-import com.plantcare.bot.domain.Species;
-import com.plantcare.bot.domain.User;
-import com.plantcare.bot.domain.enums.ConversationState;
-import com.plantcare.bot.service.MessageService;
-import com.plantcare.bot.service.PlantService;
-import com.plantcare.bot.service.UserService;
+import com.plantcare.core.domain.Species;
+import com.plantcare.core.domain.User;
+import com.plantcare.core.domain.enums.ConversationState;
+import com.plantcare.core.service.MessageService;
+import com.plantcare.core.service.PlantService;
+import com.plantcare.core.service.UserService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;

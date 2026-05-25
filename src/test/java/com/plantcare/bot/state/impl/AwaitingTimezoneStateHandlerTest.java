@@ -1,8 +1,8 @@
 package com.plantcare.bot.state.impl;
 
-import com.plantcare.bot.domain.User;
-import com.plantcare.bot.domain.enums.ConversationState;
-import com.plantcare.bot.service.UserService;
+import com.plantcare.core.domain.User;
+import com.plantcare.core.domain.enums.ConversationState;
+import com.plantcare.core.service.UserService;
 import com.plantcare.bot.support.IntegrationTestBase;
 import net.iakovlev.timeshape.TimeZoneEngine;
 import org.junit.jupiter.api.BeforeEach;

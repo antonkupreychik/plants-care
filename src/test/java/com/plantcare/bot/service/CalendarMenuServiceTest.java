@@ -1,11 +1,13 @@
 package com.plantcare.bot.service;
 
-import com.plantcare.bot.domain.Location;
-import com.plantcare.bot.domain.Plant;
-import com.plantcare.bot.domain.enums.TaskType;
-import com.plantcare.bot.service.CalendarService.CareTask;
-import com.plantcare.bot.service.CalendarService.DayView;
-import com.plantcare.bot.service.CalendarService.WeekView;
+import com.plantcare.core.service.CalendarService;
+
+import com.plantcare.core.domain.Location;
+import com.plantcare.core.domain.Plant;
+import com.plantcare.core.domain.enums.TaskType;
+import com.plantcare.core.service.CalendarService.CareTask;
+import com.plantcare.core.service.CalendarService.DayView;
+import com.plantcare.core.service.CalendarService.WeekView;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;

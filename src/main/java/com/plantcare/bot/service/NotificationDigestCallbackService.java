@@ -1,13 +1,13 @@
 package com.plantcare.bot.service;
 
-import com.plantcare.bot.domain.CareSchedule;
-import com.plantcare.bot.domain.DigestTaskItem;
-import com.plantcare.bot.domain.NotificationDigest;
-import com.plantcare.bot.domain.enums.TaskType;
-import com.plantcare.bot.metrics.MetricsService;
-import com.plantcare.bot.metrics.MetricsService.CallbackOutcome;
-import com.plantcare.bot.repository.CareScheduleRepository;
-import com.plantcare.bot.repository.NotificationDigestRepository;
+import com.plantcare.core.domain.CareSchedule;
+import com.plantcare.core.domain.DigestTaskItem;
+import com.plantcare.core.domain.NotificationDigest;
+import com.plantcare.core.domain.enums.TaskType;
+import com.plantcare.core.metrics.MetricsService;
+import com.plantcare.core.metrics.MetricsService.CallbackOutcome;
+import com.plantcare.core.repository.CareScheduleRepository;
+import com.plantcare.core.repository.NotificationDigestRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;

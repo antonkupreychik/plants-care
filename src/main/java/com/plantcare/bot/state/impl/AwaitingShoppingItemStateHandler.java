@@ -1,10 +1,10 @@
 package com.plantcare.bot.state.impl;
 
-import com.plantcare.bot.domain.User;
-import com.plantcare.bot.domain.enums.ConversationState;
+import com.plantcare.core.domain.User;
+import com.plantcare.core.domain.enums.ConversationState;
 import com.plantcare.bot.service.ShoppingListMenuService;
-import com.plantcare.bot.service.ShoppingListService;
-import com.plantcare.bot.service.UserService;
+import com.plantcare.core.service.ShoppingListService;
+import com.plantcare.core.service.UserService;
 import com.plantcare.bot.state.interfaces.StateHandler;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;

@@ -6,8 +6,8 @@ import com.plantcare.bot.admin.dashboard.health.SchedulerHealthProvider;
 import com.plantcare.bot.admin.scheduler.dto.QueuedNotificationDto;
 import com.plantcare.bot.admin.scheduler.dto.SchedulerPageDto;
 import com.plantcare.bot.admin.scheduler.repository.AdminSchedulerRepository;
-import com.plantcare.bot.domain.CareSchedule;
-import com.plantcare.bot.repository.CareScheduleRepository;
+import com.plantcare.core.domain.CareSchedule;
+import com.plantcare.core.repository.CareScheduleRepository;
 import com.plantcare.bot.service.NotificationSchedulerService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -154,7 +154,7 @@ public class AdminSchedulerService {
         );
     }
 
-    private static String emojiFor(com.plantcare.bot.domain.enums.TaskType t) {
+    private static String emojiFor(com.plantcare.core.domain.enums.TaskType t) {
         return switch (t) {
             case WATERING    -> "💧";
             case MISTING     -> "💨";

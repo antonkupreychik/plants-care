@@ -2,11 +2,11 @@ package com.plantcare.bot.admin.broadcast.service;
 
 import com.plantcare.bot.admin.broadcast.repository.AdminBroadcastRepository;
 import com.plantcare.bot.client.TelegramClientProvider;
-import com.plantcare.bot.domain.AdminBroadcast;
-import com.plantcare.bot.domain.User;
-import com.plantcare.bot.domain.enums.AudienceFilter;
-import com.plantcare.bot.domain.enums.BroadcastStatus;
-import com.plantcare.bot.repository.UserRepository;
+import com.plantcare.core.domain.AdminBroadcast;
+import com.plantcare.core.domain.User;
+import com.plantcare.core.domain.enums.AudienceFilter;
+import com.plantcare.core.domain.enums.BroadcastStatus;
+import com.plantcare.core.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;

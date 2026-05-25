@@ -1,8 +1,8 @@
 package com.plantcare.bot.state.impl;
 
-import com.plantcare.bot.diagnosis.PlantDiagnosisService;
-import com.plantcare.bot.domain.User;
-import com.plantcare.bot.domain.enums.ConversationState;
+import com.plantcare.core.diagnosis.PlantDiagnosisService;
+import com.plantcare.core.domain.User;
+import com.plantcare.core.domain.enums.ConversationState;
 import com.plantcare.bot.state.interfaces.StateHandler;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;

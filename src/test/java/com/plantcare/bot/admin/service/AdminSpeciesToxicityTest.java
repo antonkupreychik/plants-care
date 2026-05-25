@@ -1,8 +1,8 @@
 package com.plantcare.bot.admin.service;
 
 import com.plantcare.bot.admin.dto.SpeciesFormDto;
-import com.plantcare.bot.domain.Species;
-import com.plantcare.bot.repository.SpeciesRepository;
+import com.plantcare.core.domain.Species;
+import com.plantcare.core.repository.SpeciesRepository;
 import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;

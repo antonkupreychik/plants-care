@@ -1,9 +1,9 @@
 package com.plantcare.bot.command.impl;
 
-import com.plantcare.bot.domain.User;
-import com.plantcare.bot.domain.featureflag.FeatureFlag;
+import com.plantcare.core.domain.User;
+import com.plantcare.core.domain.featureflag.FeatureFlag;
 import com.plantcare.bot.service.CalendarMenuService;
-import com.plantcare.bot.service.UserService;
+import com.plantcare.core.service.UserService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;

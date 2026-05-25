@@ -2,7 +2,7 @@ package com.plantcare.bot.admin.users.controller;
 
 import com.plantcare.bot.admin.config.AdminSecurityConfig;
 import com.plantcare.bot.admin.users.service.AdminUserDetailService;
-import com.plantcare.bot.domain.featureflag.FeatureFlag;
+import com.plantcare.core.domain.featureflag.FeatureFlag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.http.HttpStatus;

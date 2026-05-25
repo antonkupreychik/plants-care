@@ -1,7 +1,9 @@
 package com.plantcare.bot.service;
 
-import com.plantcare.bot.service.MonthlyReportService.MonthlyReport;
-import com.plantcare.bot.service.MonthlyReportService.OldestPlant;
+import com.plantcare.core.service.MonthlyReportService;
+
+import com.plantcare.core.service.MonthlyReportService.MonthlyReport;
+import com.plantcare.core.service.MonthlyReportService.OldestPlant;
 import com.plantcare.bot.telegram.RateLimitedTelegramSender;
 import com.plantcare.bot.telegram.SendCallbacks;
 import org.junit.jupiter.api.DisplayName;

@@ -5,10 +5,10 @@ import com.plantcare.bot.api.generated.model.PageResponsePlantDto;
 import com.plantcare.bot.api.generated.model.PlantCreateRequest;
 import com.plantcare.bot.api.generated.model.PlantDto;
 import com.plantcare.bot.api.generated.model.PlantUpdateRequest;
-import com.plantcare.bot.domain.Plant;
-import com.plantcare.bot.domain.User;
-import com.plantcare.bot.service.PlantService;
-import com.plantcare.bot.service.UserService;
+import com.plantcare.core.domain.Plant;
+import com.plantcare.core.domain.User;
+import com.plantcare.core.service.PlantService;
+import com.plantcare.core.service.UserService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.RestController;
 

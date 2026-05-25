@@ -1,11 +1,11 @@
 package com.plantcare.bot.state.impl;
 
-import com.plantcare.bot.domain.User;
-import com.plantcare.bot.domain.enums.ConversationState;
-import com.plantcare.bot.service.LocationService;
-import com.plantcare.bot.service.UserService;
+import com.plantcare.core.domain.User;
+import com.plantcare.core.domain.enums.ConversationState;
+import com.plantcare.core.service.LocationService;
+import com.plantcare.core.service.UserService;
 import com.plantcare.bot.state.interfaces.StateHandler;
-import com.plantcare.bot.util.LocationEmojiKeyboard;
+import com.plantcare.core.util.LocationEmojiKeyboard;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;

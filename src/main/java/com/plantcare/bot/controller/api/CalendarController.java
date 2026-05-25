@@ -1,6 +1,6 @@
 package com.plantcare.bot.controller.api;
 
-import com.plantcare.bot.service.CalendarExportService;
+import com.plantcare.core.service.CalendarExportService;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpHeaders;

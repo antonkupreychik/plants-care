@@ -1,14 +1,14 @@
 package com.plantcare.bot.service;
 
-import com.plantcare.bot.domain.NotificationLog;
-import com.plantcare.bot.domain.Plant;
-import com.plantcare.bot.domain.User;
-import com.plantcare.bot.domain.enums.NotificationType;
-import com.plantcare.bot.domain.enums.TaskType;
-import com.plantcare.bot.metrics.MetricsService;
-import com.plantcare.bot.repository.NotificationLogRepository;
-import com.plantcare.bot.repository.PlantRepository;
-import com.plantcare.bot.repository.UserRepository;
+import com.plantcare.core.domain.NotificationLog;
+import com.plantcare.core.domain.Plant;
+import com.plantcare.core.domain.User;
+import com.plantcare.core.domain.enums.NotificationType;
+import com.plantcare.core.domain.enums.TaskType;
+import com.plantcare.core.metrics.MetricsService;
+import com.plantcare.core.repository.NotificationLogRepository;
+import com.plantcare.core.repository.PlantRepository;
+import com.plantcare.core.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;

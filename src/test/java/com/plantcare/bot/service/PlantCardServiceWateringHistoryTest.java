@@ -1,8 +1,12 @@
 package com.plantcare.bot.service;
 
-import com.plantcare.bot.domain.CareHistory;
-import com.plantcare.bot.domain.Plant;
-import com.plantcare.bot.domain.enums.TaskType;
+import com.plantcare.core.service.CareHistoryService;
+import com.plantcare.core.service.PlantService;
+import com.plantcare.core.service.UserService;
+
+import com.plantcare.core.domain.CareHistory;
+import com.plantcare.core.domain.Plant;
+import com.plantcare.core.domain.enums.TaskType;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -31,7 +35,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class PlantCardServiceWateringHistoryTest {
 
     @Mock private PlantService plantService;
-    @Mock private com.plantcare.bot.repository.PlantRepository plantRepository;
+    @Mock private com.plantcare.core.repository.PlantRepository plantRepository;
     @Mock private MainMenuService mainMenuService;
     @Mock private UserService userService;
     @Mock private CareHistoryService careHistoryService;

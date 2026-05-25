@@ -1,6 +1,6 @@
 package com.plantcare.bot.admin.scheduler.repository;
 
-import com.plantcare.bot.repository.CareScheduleRepository;
+import com.plantcare.core.repository.CareScheduleRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
