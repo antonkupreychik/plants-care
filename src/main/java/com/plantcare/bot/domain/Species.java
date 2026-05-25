@@ -58,4 +58,23 @@ public class Species extends BaseEntity {
     @Column(nullable = false)
     @Builder.Default
     private Integer popularity = 0;
+
+    /**
+     * Токсичность вида для кошек. Тройное состояние значимо:
+     * {@code true} — токсично, {@code false} — безопасно, {@code null} — нет данных.
+     */
+    @Column(name = "toxic_to_cats")
+    private Boolean toxicToCats;
+
+    /**
+     * Токсичность вида для собак. {@code null} — нет данных (см. {@link #toxicToCats}).
+     */
+    @Column(name = "toxic_to_dogs")
+    private Boolean toxicToDogs;
+
+    /**
+     * Токсичность вида для людей/детей. {@code null} — нет данных (см. {@link #toxicToCats}).
+     */
+    @Column(name = "toxic_to_humans")
+    private Boolean toxicToHumans;
 }

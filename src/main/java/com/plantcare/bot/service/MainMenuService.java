@@ -282,6 +282,12 @@ public class MainMenuService {
                                 .callbackData("MENU:SHOPPING_LIST")
                                 .build()
                 )))
+                .keyboardRow(new InlineKeyboardRow(List.of(
+                        InlineKeyboardButton.builder()
+                                .text("🦠 Болезни")
+                                .callbackData("MENU:DISEASES")
+                                .build()
+                )))
                 .build();
     }
 

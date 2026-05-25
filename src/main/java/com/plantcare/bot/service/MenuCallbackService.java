@@ -71,6 +71,7 @@ public class MenuCallbackService {
     private final PlantArchiveMenuService plantArchiveMenuService;
     private final ShoppingListService shoppingListService;
     private final ShoppingListMenuService shoppingListMenuService;
+    private final DiseaseMenuService diseaseMenuService;
 
     private record LocationPreset(String name, String emoji) {
     }
@@ -110,6 +111,12 @@ public class MenuCallbackService {
         // Фото-прогресс (issue #72). См. handlePhotoProgressCallback для полного списка.
         if (data.startsWith("PHOTO_PROGRESS:")) {
             handlePhotoProgressCallback(data, callbackId, messageId, client, user);
+            return;
+        }
+
+        // Справочник болезней (issue #140).
+        if (data.startsWith("DISEASE:")) {
+            handleDiseaseCallback(data, callbackId, client, user);
             return;
         }
 
@@ -227,6 +234,10 @@ public class MenuCallbackService {
             }
             case "CALENDAR" -> {
                 calendarMenuService.sendCalendar(user, client);
+                answerCallback(client, callbackId, "");
+            }
+            case "DISEASES" -> {
+                diseaseMenuService.sendList(user, client);
                 answerCallback(client, callbackId, "");
             }
             case "SETTINGS" -> {
@@ -1797,6 +1808,51 @@ public class MenuCallbackService {
         } catch (TelegramApiException e) {
             log.error("Failed to answer callback: {}", e.getMessage(), e);
         }
+    }
+
+    // =================================================================
+    // Справочник болезней (issue #140)
+    // =================================================================
+
+    /**
+     * Маршрутизация callback'ов префикса {@code DISEASE:}.
+     *
+     * <ul>
+     *   <li>{@code DISEASE:LIST} — список всех болезней</li>
+     *   <li>{@code DISEASE:SEARCH} — режим поиска по симптому/тексту</li>
+     *   <li>{@code DISEASE:VIEW:{id}} — карточка болезни</li>
+     * </ul>
+     */
+    private void handleDiseaseCallback(
+            String data,
+            String callbackId,
+            TelegramClient client,
+            User user
+    ) {
+        if (DiseaseMenuService.LIST_CALLBACK.equals(data)) {
+            diseaseMenuService.sendList(user, client);
+            answerCallback(client, callbackId, "");
+            return;
+        }
+
+        if (DiseaseMenuService.SEARCH_CALLBACK.equals(data)) {
+            diseaseMenuService.startSearch(user, client);
+            answerCallback(client, callbackId, "");
+            return;
+        }
+
+        if (data.startsWith(DiseaseMenuService.VIEW_PREFIX)) {
+            Long diseaseId = parseLong(data.substring(DiseaseMenuService.VIEW_PREFIX.length()));
+            if (diseaseId == null) {
+                answerCallback(client, callbackId, "❌ Неверный ID");
+                return;
+            }
+            diseaseMenuService.sendCard(user, diseaseId, client);
+            answerCallback(client, callbackId, "");
+            return;
+        }
+
+        answerCallback(client, callbackId, "❌ Неизвестная команда");
     }
 
     // =================================================================
