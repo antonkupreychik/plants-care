@@ -44,6 +44,7 @@ import java.util.List;
 public class MenuCallbackService {
 
     private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("dd.MM");
+    private static final DateTimeFormatter QUIET_TIME_FMT = DateTimeFormatter.ofPattern("HH:mm");
 
     private static final EnumSet<ConversationState> EDIT_MODE_STATES = EnumSet.of(
             ConversationState.AWAITING_PLANT_RENAME,
@@ -76,6 +77,7 @@ public class MenuCallbackService {
     private final ShoppingListMenuService shoppingListMenuService;
     private final DiseaseMenuService diseaseMenuService;
     private final SeasonalMenuService seasonalMenuService;
+    private final UserSettingsService userSettingsService;
 
     private record LocationPreset(String name, String emoji) {
     }
@@ -341,6 +343,28 @@ public class MenuCallbackService {
             case "CHANGE_TZ" -> {
                 userService.updateState(user, ConversationState.AWAITING_TIMEZONE);
                 sendTimezonePrompt(user, client);
+                answerCallback(client, callbackId, "");
+            }
+
+            // ===== Тихие часы (issue #116) =====
+            case "QUIET_HOURS" -> {
+                sendQuietHoursMenu(user, client);
+                answerCallback(client, callbackId, "");
+            }
+            case "QUIET_START" -> {
+                userService.updateState(user, ConversationState.AWAITING_QUIET_START);
+                sendText(user, client, "Введи время начала тихих часов в формате ЧЧ:ММ (например 22:00):");
+                answerCallback(client, callbackId, "");
+            }
+            case "QUIET_END" -> {
+                userService.updateState(user, ConversationState.AWAITING_QUIET_END);
+                sendText(user, client, "Введи время конца тихих часов в формате ЧЧ:ММ (например 09:00):");
+                answerCallback(client, callbackId, "");
+            }
+            case "QUIET_RESET" -> {
+                userSettingsService.resetQuietHours(user);
+                sendText(user, client, "🌙 Тихие часы сброшены: 22:00–09:00.");
+                sendQuietHoursMenu(user, client);
                 answerCallback(client, callbackId, "");
             }
 
@@ -1669,8 +1693,16 @@ public class MenuCallbackService {
                 )))
                 .keyboardRow(new InlineKeyboardRow(List.of(
                         InlineKeyboardButton.builder()
-                                .text("🌍 Изменить регион")
+                                .text("🌐 Таймзона: " + user.getTimezone())
                                 .callbackData("MENU:CHANGE_TZ")
+                                .build()
+                )))
+                .keyboardRow(new InlineKeyboardRow(List.of(
+                        InlineKeyboardButton.builder()
+                                .text("🌙 Тихие часы: "
+                                        + user.getQuietHoursStart().format(QUIET_TIME_FMT) + "–"
+                                        + user.getQuietHoursEnd().format(QUIET_TIME_FMT))
+                                .callbackData("MENU:QUIET_HOURS")
                                 .build()
                 )))
                 .keyboardRow(new InlineKeyboardRow(List.of(
@@ -1721,6 +1753,59 @@ public class MenuCallbackService {
             client.execute(message);
         } catch (TelegramApiException e) {
             log.error("Failed to send settings menu", e);
+        }
+    }
+
+    /**
+     * Экран редактирования тихих часов (issue #116).
+     */
+    private void sendQuietHoursMenu(User user, TelegramClient client) {
+        String start = user.getQuietHoursStart().format(QUIET_TIME_FMT);
+        String end = user.getQuietHoursEnd().format(QUIET_TIME_FMT);
+
+        InlineKeyboardMarkup keyboard = InlineKeyboardMarkup.builder()
+                .keyboardRow(new InlineKeyboardRow(List.of(
+                        InlineKeyboardButton.builder()
+                                .text("Изменить начало")
+                                .callbackData("MENU:QUIET_START")
+                                .build()
+                )))
+                .keyboardRow(new InlineKeyboardRow(List.of(
+                        InlineKeyboardButton.builder()
+                                .text("Изменить конец")
+                                .callbackData("MENU:QUIET_END")
+                                .build()
+                )))
+                .keyboardRow(new InlineKeyboardRow(List.of(
+                        InlineKeyboardButton.builder()
+                                .text("Сбросить (22:00–09:00)")
+                                .callbackData("MENU:QUIET_RESET")
+                                .build()
+                )))
+                .keyboardRow(new InlineKeyboardRow(List.of(
+                        InlineKeyboardButton.builder()
+                                .text("⬅️ Назад")
+                                .callbackData("MENU:SETTINGS")
+                                .build()
+                )))
+                .build();
+
+        SendMessage message = SendMessage.builder()
+                .chatId(user.getTelegramChatId().toString())
+                .text("""
+                        🌙 Тихие часы
+
+                        Сейчас: %s–%s
+
+                        В это время бот не присылает напоминания.
+                        """.formatted(start, end))
+                .replyMarkup(keyboard)
+                .build();
+
+        try {
+            client.execute(message);
+        } catch (TelegramApiException e) {
+            log.error("Failed to send quiet hours menu", e);
         }
     }
 

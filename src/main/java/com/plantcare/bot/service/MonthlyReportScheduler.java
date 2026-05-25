@@ -1,15 +1,15 @@
 package com.plantcare.bot.service;
 
-import com.plantcare.bot.client.TelegramClientProvider;
 import com.plantcare.bot.observability.SentryTags;
 import com.plantcare.bot.observability.SentryTags.Layer;
+import com.plantcare.bot.telegram.RateLimitedTelegramSender;
+import com.plantcare.bot.telegram.SendCallbacks;
 import io.sentry.Sentry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
-import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 
 import java.time.Clock;
 import java.time.Instant;
@@ -40,7 +40,7 @@ import java.util.List;
 public class MonthlyReportScheduler {
 
     private final MonthlyReportService monthlyReportService;
-    private final TelegramClientProvider telegramClientProvider;
+    private final RateLimitedTelegramSender telegramSender;
     private final Clock clock;
 
     /**
@@ -64,11 +64,7 @@ public class MonthlyReportScheduler {
 
             for (MonthlyReportService.MonthlyReport report : due) {
                 try {
-                    if (sendReport(report)) {
-                        monthlyReportService.markSent(report.userId(), report.yearMonth(), now);
-                        log.info("Monthly report sent: user={} yearMonth={} actions={}",
-                                report.userId(), report.yearMonth(), report.totalActions());
-                    }
+                    enqueueReport(report, now);
                 } catch (Exception e) {
                     log.error("Failed to handle monthly report for user {}: {}",
                             report.userId(), e.getMessage(), e);
@@ -78,18 +74,27 @@ public class MonthlyReportScheduler {
         });
     }
 
-    private boolean sendReport(MonthlyReportService.MonthlyReport report) {
+    /**
+     * Issue #29: отправка ушла в rate-limited очередь. Пометка «отправлено»
+     * ({@code markSent} — идемпотентный PK-based upsert) переехала в onSuccess-колбэк
+     * на воркер-потоке. Захватываем только примитивы из снимка report, чтобы не
+     * тащить состояние между потоками.
+     */
+    private void enqueueReport(MonthlyReportService.MonthlyReport report, Instant now) {
         SendMessage message = SendMessage.builder()
                 .chatId(report.telegramChatId().toString())
                 .text(report.buildText())
                 .build();
-        try {
-            telegramClientProvider.getTelegramClient().execute(message);
-            return true;
-        } catch (TelegramApiException e) {
-            log.error("Failed to send monthly report (user={}, chat={}): {}",
-                    report.userId(), report.telegramChatId(), e.getMessage());
-            return false;
-        }
+
+        final Long userId = report.userId();
+        final int yearMonth = report.yearMonth();
+        final long totalActions = report.totalActions();
+        telegramSender.enqueue(message, new SendCallbacks(
+                () -> {
+                    monthlyReportService.markSent(userId, yearMonth, now);
+                    log.info("Monthly report sent: user={} yearMonth={} actions={}",
+                            userId, yearMonth, totalActions);
+                },
+                null));
     }
 }

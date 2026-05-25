@@ -1,13 +1,10 @@
 package com.plantcare.bot.service;
 
-import com.plantcare.bot.client.TelegramClientProvider;
 import com.plantcare.bot.domain.CareSchedule;
 import com.plantcare.bot.domain.DigestTaskItem;
 import com.plantcare.bot.domain.NotificationDigest;
-import com.plantcare.bot.domain.NotificationLog;
 import com.plantcare.bot.domain.Plant;
 import com.plantcare.bot.domain.User;
-import com.plantcare.bot.domain.enums.NotificationType;
 import com.plantcare.bot.domain.enums.TaskType;
 import com.plantcare.bot.metrics.MetricsService;
 import com.plantcare.bot.observability.SentryTags;
@@ -15,7 +12,8 @@ import com.plantcare.bot.observability.SentryTags.Layer;
 import com.plantcare.bot.repository.CareScheduleRepository;
 import com.plantcare.bot.repository.NotificationDigestRepository;
 import com.plantcare.bot.repository.NotificationLogRepository;
-import com.plantcare.bot.repository.UserRepository;
+import com.plantcare.bot.telegram.RateLimitedTelegramSender;
+import com.plantcare.bot.telegram.SendCallbacks;
 import io.micrometer.core.instrument.Timer;
 import io.sentry.Sentry;
 import lombok.RequiredArgsConstructor;
@@ -27,10 +25,8 @@ import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMarkup;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardButton;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardRow;
-import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 
 import java.time.Clock;
-import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -47,8 +43,6 @@ public class NotificationSchedulerService {
     private final CareScheduleRepository careScheduleRepository;
     private final NotificationLogRepository notificationLogRepository;
     private final NotificationDigestRepository notificationDigestRepository;
-    private final UserRepository userRepository;
-    private final TelegramClientProvider telegramClientProvider;
     private final SchedulerHealthTracker schedulerHealthTracker;
     private final com.plantcare.bot.weather.service.WeatherService weatherService;
     private final com.plantcare.bot.seasonal.service.SeasonalIntervalService seasonalIntervalService;
@@ -56,6 +50,8 @@ public class NotificationSchedulerService {
     private final ReminderKeyboardFactory reminderKeyboardFactory;
     private final Clock clock;
     private final MetricsService metricsService;
+    private final RateLimitedTelegramSender telegramSender;
+    private final NotificationDeliveryCallbacks deliveryCallbacks;
 
     @Scheduled(fixedRate = 60_000)
     @Transactional
@@ -317,16 +313,22 @@ public class NotificationSchedulerService {
                 .replyMarkup(keyboard)
                 .build();
 
-        try {
-            telegramClientProvider.getTelegramClient().execute(message);
-            saveNotificationLog(plant, schedule.getTaskType());
-            metricsService.recordNotificationSent(MetricsService.CHANNEL_TELEGRAM, schedule.getTaskType());
-
-            log.info("Sent notification for plant '{}' id={} to user {} (acclimation={})",
-                    plant.getName(), plant.getId(), user.getTelegramChatId(), inAcclimation);
-        } catch (TelegramApiException e) {
-            handleTelegramError(user, e);
-        }
+        // Issue #29: отправка ушла в rate-limited очередь. Bookkeeping (дедуп-лог +
+        // метрики, пометка blocked на 403) выполняется в колбэках на воркер-потоке
+        // очереди вне этой транзакции. Захватываем только примитивные id, чтобы не
+        // тащить detached-entity между потоками. Дедуп-лог пишется по факту успешной
+        // отправки — как и в синхронной версии (очередь дренирует задолго до
+        // следующего 60с-тика, окно дедупа не нарушается).
+        final long plantId = plant.getId();
+        final TaskType taskType = schedule.getTaskType();
+        final long chatId = user.getTelegramChatId();
+        telegramSender.enqueue(message, new SendCallbacks(
+                () -> {
+                    deliveryCallbacks.onSent(plantId, taskType);
+                    log.info("Sent notification for plant id={} to chat {} (acclimation={})",
+                            plantId, chatId, inAcclimation);
+                },
+                e -> deliveryCallbacks.onFailed(chatId, e)));
     }
 
     private String buildAcclimationWateringText(Plant plant) {
@@ -376,37 +378,23 @@ public class NotificationSchedulerService {
                 .replyMarkup(buildDigestKeyboard(savedDigest.getId()))
                 .build();
 
-        try {
-            telegramClientProvider.getTelegramClient().execute(message);
-
-            for (CareSchedule schedule : schedules) {
-                saveNotificationLog(schedule.getPlant(), schedule.getTaskType());
-                // Каждый сгруппированный пуш считаем за отправленное уведомление —
-                // юзер получил один message, но он покрывает N задач, и срезы по
-                // task_type нужны для аналитики «сколько поливных пушей в день».
-                metricsService.recordNotificationSent(
-                        MetricsService.CHANNEL_TELEGRAM, schedule.getTaskType());
-            }
-            // Плюс отдельный счётчик именно для дайджестов — чтобы видеть, какая
-            // доля уведомлений уходит группой, а какая поштучно.
-            metricsService.recordDigestSent();
-
-            log.info("Sent digest id={} with {} tasks to user {}",
-                    savedDigest.getId(), schedules.size(), user.getTelegramChatId());
-        } catch (TelegramApiException e) {
-            handleTelegramError(user, e);
-        }
-    }
-
-    private void saveNotificationLog(Plant plant, TaskType taskType) {
-        NotificationLog logEntry = NotificationLog.builder()
-                .plant(plant)
-                .taskType(taskType)
-                .notificationType(NotificationType.DUE)
-                .sentAt(LocalDateTime.now())
-                .build();
-
-        notificationLogRepository.save(logEntry);
+        // Issue #29: см. комментарий в sendNotification. Каждый сгруппированный пуш
+        // считаем за отправленное уведомление по каждой задаче (срезы по task_type) +
+        // отдельный счётчик дайджестов. Bookkeeping — в колбэке на воркер-потоке.
+        final List<NotificationDeliveryCallbacks.DigestLogItem> logItems = schedules.stream()
+                .map(s -> new NotificationDeliveryCallbacks.DigestLogItem(
+                        s.getPlant().getId(), s.getTaskType()))
+                .toList();
+        final long chatId = user.getTelegramChatId();
+        final long digestId = savedDigest.getId();
+        final int taskCount = schedules.size();
+        telegramSender.enqueue(message, new SendCallbacks(
+                () -> {
+                    deliveryCallbacks.onDigestSent(logItems);
+                    log.info("Sent digest id={} with {} tasks to chat {}",
+                            digestId, taskCount, chatId);
+                },
+                e -> deliveryCallbacks.onFailed(chatId, e)));
     }
 
     private String buildDigestText(List<DigestTaskItem> items) {
@@ -459,29 +447,6 @@ public class NotificationSchedulerService {
             case FERTILIZING -> "удобрить";
             case SOIL_CHECK -> "проверить грунт";
         };
-    }
-
-    private void handleTelegramError(User user, TelegramApiException e) {
-        String errorMessage = e.getMessage();
-        MetricsService.TelegramErrorCode code = MetricsService.TelegramErrorCode.fromMessage(errorMessage);
-        metricsService.recordTelegramApiError(code);
-
-        if (errorMessage != null && errorMessage.contains("403")) {
-            log.warn("Bot blocked by user {}, marking as blocked", user.getTelegramChatId());
-            user.setBlocked(true);
-            userRepository.save(user);
-            metricsService.recordNotificationFailed(
-                    MetricsService.CHANNEL_TELEGRAM, MetricsService.FailureReason.BLOCKED);
-        } else {
-            log.error("Failed to send notification to user {}: {}",
-                    user.getTelegramChatId(), errorMessage, e);
-            MetricsService.FailureReason reason = switch (code) {
-                case RATE_LIMITED -> MetricsService.FailureReason.RATE_LIMIT;
-                case BAD_REQUEST, FORBIDDEN -> MetricsService.FailureReason.API_ERROR;
-                case OTHER -> MetricsService.FailureReason.OTHER;
-            };
-            metricsService.recordNotificationFailed(MetricsService.CHANNEL_TELEGRAM, reason);
-        }
     }
 
     /**

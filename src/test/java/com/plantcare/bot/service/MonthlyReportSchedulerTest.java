@@ -1,18 +1,18 @@
 package com.plantcare.bot.service;
 
-import com.plantcare.bot.client.TelegramClientProvider;
 import com.plantcare.bot.service.MonthlyReportService.MonthlyReport;
 import com.plantcare.bot.service.MonthlyReportService.OldestPlant;
+import com.plantcare.bot.telegram.RateLimitedTelegramSender;
+import com.plantcare.bot.telegram.SendCallbacks;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
-import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
-import org.telegram.telegrambots.meta.generics.TelegramClient;
 
 import java.time.Clock;
 import java.time.Instant;
@@ -20,6 +20,7 @@ import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -27,36 +28,34 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /**
- * Unit-тесты {@link MonthlyReportScheduler} (issue #137) с фиксированным {@link Clock}.
- * Внешний мир (Telegram) замокан; сервис — мок, чтобы изолировать оркестрацию
- * шедулера: отправку отобранных кандидатов и порядок «send → markSent».
+ * Unit-тесты {@link MonthlyReportScheduler} (issue #137) после перевода на
+ * rate-limited очередь (issue #29). Шедулер кладёт отчёт в
+ * {@link RateLimitedTelegramSender#enqueue}; пометка {@code markSent} переехала
+ * в onSuccess-колбэк. Тесты проверяют постановку в очередь и маршрутизацию
+ * пометки через захваченные {@link SendCallbacks}.
  *
- * <p>Окно «1-е число + утро 09:00–10:00 в TZ юзера» здесь НЕ проверяется — оно
- * переехало внутрь {@link MonthlyReportService#findDueReports} (перед агрегатами),
- * и покрывается {@code MonthlyReportServiceTest} на Testcontainers. Шедулер
- * отправляет всё, что вернул {@code findDueReports}, и сам окно не считает.
+ * <p>Окно «1-е число + утро» считается внутри {@link MonthlyReportService#findDueReports}
+ * и покрывается отдельным Testcontainers-тестом — шедулер отправляет всё, что вернул сервис.
  */
-@DisplayName("MonthlyReportScheduler — оркестрация отправки (issue #137)")
+@DisplayName("MonthlyReportScheduler — оркестрация отправки (issue #137 / #29)")
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
 class MonthlyReportSchedulerTest {
 
     @Mock private MonthlyReportService monthlyReportService;
-    @Mock private TelegramClientProvider telegramClientProvider;
-    @Mock private TelegramClient telegramClient;
+    @Mock private RateLimitedTelegramSender telegramSender;
 
     private MonthlyReportScheduler newScheduler(Clock clock) {
-        when(telegramClientProvider.getTelegramClient()).thenReturn(telegramClient);
-        return new MonthlyReportScheduler(
-                monthlyReportService, telegramClientProvider, clock);
+        return new MonthlyReportScheduler(monthlyReportService, telegramSender, clock);
     }
 
     @Test
-    @DisplayName("should_send_and_mark_when_report_is_due")
-    void should_send_and_mark_when_report_is_due() throws TelegramApiException {
+    @DisplayName("should_enqueue_and_mark_on_success_when_report_is_due")
+    void should_enqueue_and_mark_on_success_when_report_is_due() {
         // arrange: сервис уже отобрал кандидата (окно посчитано внутри сервиса).
         Instant now = Instant.parse("2026-05-01T06:30:00Z");
         MonthlyReportScheduler scheduler = newScheduler(fixed(now));
@@ -67,34 +66,42 @@ class MonthlyReportSchedulerTest {
         // act
         scheduler.tick();
 
-        // assert
-        verify(telegramClient, times(1)).execute(any(SendMessage.class));
+        // assert: сообщение поставлено в очередь, markSent ещё НЕ вызван (только в колбэке).
+        ArgumentCaptor<SendMessage> messageCaptor = ArgumentCaptor.forClass(SendMessage.class);
+        ArgumentCaptor<SendCallbacks> callbacksCaptor = ArgumentCaptor.forClass(SendCallbacks.class);
+        verify(telegramSender, times(1)).enqueue(messageCaptor.capture(), callbacksCaptor.capture());
+        assertThat(messageCaptor.getValue().getChatId()).isEqualTo("555");
+        verify(monthlyReportService, never()).markSent(anyLong(), anyInt(), any(Instant.class));
+
+        runSuccess(callbacksCaptor.getValue());
+
         verify(monthlyReportService).markSent(eq(1L), eq(202604), eq(now));
     }
 
     @Test
-    @DisplayName("should_not_mark_when_telegram_send_fails")
-    void should_not_mark_when_telegram_send_fails() throws TelegramApiException {
-        // arrange: кандидат есть, но Telegram падает → markSent НЕ зовём.
+    @DisplayName("should_not_mark_when_send_fails_callback")
+    void should_not_mark_when_send_fails_callback() {
+        // arrange: кандидат есть; отправка проваливается → markSent НЕ зовём.
         Instant now = Instant.parse("2026-05-01T06:30:00Z");
         MonthlyReportScheduler scheduler = newScheduler(fixed(now));
-
         when(monthlyReportService.findDueReports(now))
                 .thenReturn(List.of(report(1L, 555L, 202604)));
-        when(telegramClient.execute(any(SendMessage.class)))
-                .thenThrow(new TelegramApiException("boom"));
 
-        // act
         scheduler.tick();
 
-        // assert
-        verify(telegramClient, times(1)).execute(any(SendMessage.class));
+        ArgumentCaptor<SendCallbacks> callbacksCaptor = ArgumentCaptor.forClass(SendCallbacks.class);
+        verify(telegramSender).enqueue(any(SendMessage.class), callbacksCaptor.capture());
+
+        // onFailure=null для месячного отчёта — провал не должен ни ронять, ни помечать.
+        runFailure(callbacksCaptor.getValue(),
+                new org.telegram.telegrambots.meta.exceptions.TelegramApiException("boom"));
+
         verify(monthlyReportService, never()).markSent(anyLong(), anyInt(), any(Instant.class));
     }
 
     @Test
     @DisplayName("should_do_nothing_when_no_due_reports")
-    void should_do_nothing_when_no_due_reports() throws TelegramApiException {
+    void should_do_nothing_when_no_due_reports() {
         // arrange
         Instant now = Instant.parse("2026-05-01T06:30:00Z");
         MonthlyReportScheduler scheduler = newScheduler(fixed(now));
@@ -104,35 +111,51 @@ class MonthlyReportSchedulerTest {
         scheduler.tick();
 
         // assert
-        verify(telegramClient, never()).execute(any(SendMessage.class));
+        verifyNoInteractions(telegramSender);
         verify(monthlyReportService, never()).markSent(anyLong(), anyInt(), any(Instant.class));
     }
 
     @Test
-    @DisplayName("should_continue_when_telegram_fails_for_one_user")
-    void should_continue_when_telegram_fails_for_one_user() throws TelegramApiException {
-        // arrange: два кандидата, у первого Telegram падает — второй всё равно
-        // обрабатывается и помечается.
+    @DisplayName("should_enqueue_every_candidate_and_mark_each_independently")
+    void should_enqueue_every_candidate_and_mark_each_independently() {
+        // arrange: два кандидата — каждый ставится в очередь, каждый помечается своим колбэком.
         Instant now = Instant.parse("2026-05-01T06:30:00Z");
         MonthlyReportScheduler scheduler = newScheduler(fixed(now));
-
         when(monthlyReportService.findDueReports(now)).thenReturn(List.of(
                 report(1L, 555L, 202604),
                 report(2L, 666L, 202604)));
-        when(telegramClient.execute(any(SendMessage.class)))
-                .thenThrow(new TelegramApiException("boom"))
-                .thenReturn(null);
 
         // act
         scheduler.tick();
 
         // assert
-        verify(telegramClient, times(2)).execute(any(SendMessage.class));
-        verify(monthlyReportService, never()).markSent(eq(1L), anyInt(), any(Instant.class));
+        ArgumentCaptor<SendCallbacks> callbacksCaptor = ArgumentCaptor.forClass(SendCallbacks.class);
+        verify(telegramSender, times(2)).enqueue(any(SendMessage.class), callbacksCaptor.capture());
+
+        List<SendCallbacks> allCallbacks = callbacksCaptor.getAllValues();
+        runSuccess(allCallbacks.get(0));
+        runSuccess(allCallbacks.get(1));
+
+        verify(monthlyReportService).markSent(eq(1L), eq(202604), eq(now));
         verify(monthlyReportService).markSent(eq(2L), eq(202604), eq(now));
     }
 
     // ===================== helpers =====================
+
+    /** Эмулирует вызов onSuccess воркером очереди (с null-guard, как в проде). */
+    private static void runSuccess(SendCallbacks callbacks) {
+        if (callbacks.onSuccess() != null) {
+            callbacks.onSuccess().run();
+        }
+    }
+
+    /** Эмулирует вызов onFailure воркером очереди (с null-guard, как в проде). */
+    private static void runFailure(SendCallbacks callbacks,
+                                   org.telegram.telegrambots.meta.exceptions.TelegramApiException e) {
+        if (callbacks.onFailure() != null) {
+            callbacks.onFailure().accept(e);
+        }
+    }
 
     private static Clock fixed(Instant instant) {
         return Clock.fixed(instant, ZoneOffset.UTC);
