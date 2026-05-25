@@ -1,4 +1,4 @@
-package com.plantcare.core.util;
+package com.plantcare.bot.util;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;

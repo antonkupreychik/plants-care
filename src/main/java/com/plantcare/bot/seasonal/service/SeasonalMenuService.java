@@ -1,4 +1,6 @@
-package com.plantcare.core.seasonal.service;
+package com.plantcare.bot.seasonal.service;
+
+import com.plantcare.core.seasonal.service.SeasonResolver;
 
 import com.plantcare.core.domain.User;
 import com.plantcare.core.domain.enums.Season;

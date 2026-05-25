@@ -1,6 +1,6 @@
 package com.plantcare.bot.state.impl;
 
-import com.plantcare.core.diagnosis.PlantDiagnosisService;
+import com.plantcare.bot.diagnosis.PlantDiagnosisService;
 import com.plantcare.core.domain.User;
 import com.plantcare.core.domain.enums.ConversationState;
 import com.plantcare.bot.state.interfaces.StateHandler;

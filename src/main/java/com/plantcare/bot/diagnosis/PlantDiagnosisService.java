@@ -1,4 +1,17 @@
-package com.plantcare.core.diagnosis;
+package com.plantcare.bot.diagnosis;
+
+import com.plantcare.core.diagnosis.DiagnosisAnswers;
+import com.plantcare.core.diagnosis.DiagnosisResult;
+import com.plantcare.core.diagnosis.DiagnosisRuleEngine;
+import com.plantcare.core.diagnosis.DiagnosisSessionService;
+import com.plantcare.core.diagnosis.DiagnosisStep;
+import com.plantcare.core.diagnosis.DiagnosisSymptom;
+import com.plantcare.core.diagnosis.DiagnosisTextFormatter;
+import com.plantcare.core.diagnosis.LightCondition;
+import com.plantcare.core.diagnosis.PestPresence;
+import com.plantcare.core.diagnosis.RecentChanges;
+import com.plantcare.core.diagnosis.SoilState;
+import com.plantcare.core.diagnosis.WateringFrequency;
 
 import com.plantcare.core.domain.Plant;
 import com.plantcare.core.domain.User;

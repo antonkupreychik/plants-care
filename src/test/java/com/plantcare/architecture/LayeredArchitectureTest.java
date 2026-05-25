@@ -34,4 +34,19 @@ class LayeredArchitectureTest {
                             "com.plantcare.api..")
                     .because("core — ядро модульного монолита и не должно знать про слои доставки "
                             + "(bot/admin/api). Зависимости текут только внутрь, к core (#127).");
+
+    /**
+     * Telegram API ({@code org.telegram.*}) — деталь слоя доставки (бот). Если core строит
+     * клавиатуры / SendMessage, значит delivery протёк в ядро (как было с weather/seasonal/
+     * diagnosis menu-сервисами). Правило {@code core ∌ bot} такие утечки НЕ ловит, потому что
+     * telegrambots — сторонняя библиотека, а не пакет {@code com.plantcare}.
+     */
+    @ArchTest
+    static final ArchRule core_must_not_use_telegram_api =
+            noClasses()
+                    .that().resideInAPackage("com.plantcare.core..")
+                    .should().dependOnClassesThat()
+                    .resideInAPackage("org.telegram..")
+                    .because("Telegram API — деталь доставки; core не должен формировать "
+                            + "сообщения/клавиатуры Telegram (#127).");
 }

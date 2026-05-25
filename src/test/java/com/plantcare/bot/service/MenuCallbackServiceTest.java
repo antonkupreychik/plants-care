@@ -55,7 +55,7 @@ class MenuCallbackServiceTest {
     @Mock private PlantTemplateService plantTemplateService;
     @Mock private NotificationCallbackService notificationCallbackService;
     @Mock private PlantEventService plantEventService;
-    @Mock private com.plantcare.core.seasonal.service.SeasonalMenuService seasonalMenuService;
+    @Mock private com.plantcare.bot.seasonal.service.SeasonalMenuService seasonalMenuService;
     @Mock private TelegramClient telegramClient;
     @Mock private CallbackQuery callbackQuery;
     @Mock private Message message;

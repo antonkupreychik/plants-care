@@ -1,4 +1,4 @@
-package com.plantcare.core.weather.service;
+package com.plantcare.bot.weather.service;
 
 import com.plantcare.core.domain.User;
 import com.plantcare.core.domain.enums.ConversationState;
