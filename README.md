@@ -393,17 +393,54 @@ Railway увидит `railway.toml` и `Dockerfile` — соберёт и зад
 
 ## Структура проекта
 
+Это **модульный монолит** (issue #127, ADR-001): одно приложение, но с явными
+границами между ядром и слоями доставки. Зависимости текут **только внутрь, к
+`core`** — ядро не знает про Telegram-бот, REST API или веб-админку.
+
+```
+com.plantcare
+├── PlantsCareApplication        # @SpringBootApplication (корень компонент-скана)
+├── core      # Ядро: бизнес-логика без деталей доставки
+│   ├── domain / repository      # JPA-сущности и Spring Data репозитории
+│   ├── service                  # Бизнес-сервисы (delivery-agnostic)
+│   ├── diagnosis / weather / seasonal   # Доменные подсистемы
+│   ├── metrics / observability  # Метрики, Sentry
+│   └── config / beans / util    # Общие @ConfigurationProperties, Clock, TimeZoneEngine
+├── bot       # Доставка через Telegram (long polling)
+│   ├── telegram / command / state / client
+│   ├── beans (PlantsCareBot) / config (TelegramBotConfig, …)
+│   └── service                  # Telegram-сервисы: меню, callback, клавиатуры, шедулеры-отправители
+├── admin     # Веб-админка на /admin/** (Thymeleaf, form-login)
+│   └── config (AdminSecurityConfig), controller, broadcast, dashboard, …
+└── api       # REST API на /api/** (stateless, для мобильного клиента)
+    ├── v1 / web                 # Контроллеры (рукописные + spec-first)
+    ├── generated                # OpenAPI-generator: интерфейсы + модели (build-time)
+    └── config (ApiSecurityConfig, OpenApiConfig)
+```
+
+**Правило зависимостей** проверяется ArchUnit (`LayeredArchitectureTest`), падает при нарушении:
+- `core` не зависит от `bot` / `admin` / `api` и не использует Telegram API (`org.telegram.*`);
+- `api` не зависит от `bot` / `admin` (изолированный канал доставки).
+
+`admin` сознательно переиспользует Telegram-клиент `bot` для рассылок — это
+общий канал доставки, не нарушение границы ядра.
+
+**Безопасность** — три раздельных `SecurityFilterChain` (а не один с `if`-ами):
+`/api/**` stateless (`ApiSecurityConfig`), `/admin/**` session + form-login
+(`AdminSecurityConfig`), бот работает вне HTTP.
+
 ```
 src/
 ├── main/
-│   ├── java/com/plantcare/bot/
+│   ├── java/com/plantcare/        # core / bot / admin / api (см. выше)
 │   └── resources/
 │       ├── application.yml        # Базовая конфигурация
 │       ├── application-dev.yml    # Профиль dev (verbose SQL)
 │       ├── application-prod.yml   # Профиль prod
+│       ├── openapi/openapi.yaml   # Спецификация REST API (spec-first)
 │       └── db/migration/          # Flyway миграции
 └── test/
-    └── java/com/plantcare/bot/
+    └── java/com/plantcare/        # зеркалит структуру main + architecture/
 
 Dockerfile              # Multi-stage сборка production-образа
 docker-compose.yml      # Postgres + опционально приложение (профиль "full")
