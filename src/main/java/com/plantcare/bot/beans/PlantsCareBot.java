@@ -9,6 +9,7 @@ import com.plantcare.bot.service.DiseaseMenuService;
 import com.plantcare.bot.service.MenuCallbackService;
 import com.plantcare.bot.service.NotificationCallbackService;
 import com.plantcare.bot.service.NotificationDigestCallbackService;
+import com.plantcare.bot.service.TransplantSuggestionCallbackService;
 import com.plantcare.bot.observability.SentryTags;
 import com.plantcare.bot.observability.SentryTags.Layer;
 import com.plantcare.bot.service.UserService;
@@ -41,6 +42,8 @@ public class PlantsCareBot implements LongPollingSingleThreadUpdateConsumer, Tel
     private static final String SHOPPING_CALLBACK_PREFIX = "SHOPPING:";
     private static final String DISEASE_CALLBACK_PREFIX = "DISEASE:";
     private static final String SET_TZ_CALLBACK_PREFIX = "SET_TZ";
+    private static final String TRANSPLANT_SUGGEST_CALLBACK_PREFIX =
+            TransplantSuggestionCallbackService.CALLBACK_PREFIX;
 
     private final TelegramClient telegramClient;
     private final CommandContainer commandContainer;
@@ -51,6 +54,7 @@ public class PlantsCareBot implements LongPollingSingleThreadUpdateConsumer, Tel
     private final NotificationDigestCallbackService notificationDigestCallbackService;
     private final MenuCallbackService menuCallbackService;
     private final DiseaseMenuService diseaseMenuService;
+    private final TransplantSuggestionCallbackService transplantSuggestionCallbackService;
 
     public PlantsCareBot(
             @Value("${telegram.bot.token}") String botToken,
@@ -61,7 +65,8 @@ public class PlantsCareBot implements LongPollingSingleThreadUpdateConsumer, Tel
             NotificationCallbackService notificationCallbackService,
             NotificationDigestCallbackService notificationDigestCallbackService,
             MenuCallbackService menuCallbackService,
-            DiseaseMenuService diseaseMenuService
+            DiseaseMenuService diseaseMenuService,
+            TransplantSuggestionCallbackService transplantSuggestionCallbackService
     ) {
         this.telegramClient = new OkHttpTelegramClient(botToken);
         this.commandContainer = commandContainer;
@@ -72,6 +77,7 @@ public class PlantsCareBot implements LongPollingSingleThreadUpdateConsumer, Tel
         this.notificationDigestCallbackService = notificationDigestCallbackService;
         this.menuCallbackService = menuCallbackService;
         this.diseaseMenuService = diseaseMenuService;
+        this.transplantSuggestionCallbackService = transplantSuggestionCallbackService;
     }
 
     @Override
@@ -111,6 +117,15 @@ public class PlantsCareBot implements LongPollingSingleThreadUpdateConsumer, Tel
 
                 if (data != null && data.startsWith(NOTIFICATION_CALLBACK_PREFIX)) {
                     notificationCallbackService.handleCallback(update.getCallbackQuery(), telegramClient);
+                    return;
+                }
+
+                if (data != null && data.startsWith(TRANSPLANT_SUGGEST_CALLBACK_PREFIX)) {
+                    String userName = getUserName(update);
+                    User user = userService.findOrCreate(chatId, userName);
+
+                    transplantSuggestionCallbackService.handleCallback(
+                            update.getCallbackQuery(), telegramClient, user);
                     return;
                 }
 

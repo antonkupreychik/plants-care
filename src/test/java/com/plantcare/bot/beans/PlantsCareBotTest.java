@@ -60,6 +60,8 @@ class PlantsCareBotTest {
     private MenuCallbackService menuCallbackService;
     @Mock
     private DiseaseMenuService diseaseMenuService;
+    @Mock
+    private com.plantcare.bot.service.TransplantSuggestionCallbackService transplantSuggestionCallbackService;
 
     private PlantsCareBot bot;
 
@@ -76,7 +78,8 @@ class PlantsCareBotTest {
                 notificationCallbackService,
                 notificationDigestCallbackService,
                 menuCallbackService,
-                diseaseMenuService
+                diseaseMenuService,
+                transplantSuggestionCallbackService
         );
     }
 

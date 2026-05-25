@@ -79,6 +79,7 @@ echo 'testcontainers.reuse.enable=true' >> ~/.testcontainers.properties
 - **V27** — таблица `shopping_items` (issue #136): персональный список покупок пользователя, по строке на позицию. `title` (до 160 символов), `checked` (DEFAULT false). FK `ON DELETE CASCADE` на `users`, btree-индекс `(user_id, checked)` под выборку списка с разбивкой по статусу
 - **V28** — добавляет `plants.parent_id BIGINT NULL` — self-FK на `plants(id)` для родословной растений (ADR-012, issue #139). Растение-черенок ссылается на материнское; NULL = корень родословной. FK `ON DELETE SET NULL` (удаление родителя обрывает связь, потомок остаётся). btree-индекс `idx_plants_parent_id` под выборку потомков по родителю. Карточка показывает «🌱 Потомки: N» у родителя и кликабельную ссылку «⬅️ Родитель: …» у потомка
 - **V29** — сидинг энциклопедических фактов в `species_facts` (`ORIGIN`/`CARE`/`TOXICITY`/`CURIOSITY`) и простановка флагов токсичности `species.toxic_to_*` для топ-видов по популярности (issue #132). Это сидинг, обещанный в V22 (#129), и данные под флаги из V26 (#130). Чистый сид без DDL. Привязка к виду по `latin_name`, не по id. Идемпотентен: факты — `INSERT ... WHERE NOT EXISTS` по `(species_id, category, body)`, токсичность — `UPDATE`. Виды без достоверных данных ASPCA остаются с `NULL` («нет данных»)
+- **V30** — таблица `transplant_supply_suggestions` (issue #141): трекер идемпотентности подсказок расходников перед пересадкой. По строке на `(user_id, plant_id, source_event_id)`, где `source_event_id` — id записи TRANSPLANT в `plant_events`, от которой посчитана предстоящая пересадка. UNIQUE `(user_id, plant_id, source_event_id)` гарантирует один пуш на одно предстоящее событие (новая пересадка → новый `source_event_id` → можно подсказать снова). `status` (`SUGGESTED`/`ADDED`/`DISMISSED`, CHECK), `predicted_transplant_at`. FK на `users`/`plants`/`plant_events` `ON DELETE CASCADE`. Индексы `(user_id, status)` и по обоим FK
 
 ## REST API
 
@@ -336,6 +337,29 @@ Telegram ~30/sec). На 429 поток ждёт `retry_after` и повторя�
 | `TELEGRAM_RATE_LIMIT_MAX_RETRIES` | `3` | Сколько раз повторять отправку при 429 перед признанием неудачи |
 | `TELEGRAM_RATE_LIMIT_DEFAULT_RETRY_AFTER_SECONDS` | `1` | Fallback retry-after, если 429 не содержит распарсиваемого значения |
 | `TELEGRAM_RATE_LIMIT_MAX_RETRY_AFTER_SECONDS` | `60` | Потолок для `retry_after` из 429 — чтобы одно сообщение не заблокировало очередь на часы |
+
+## Подсказка расходников перед пересадкой (issue #141)
+
+Раз в день шедулер (cron `0 0 9 * * *` UTC) вычисляет «предстоящую пересадку» как
+дату последней записи `TRANSPLANT` в журнале растения (issue #76) плюс `interval-months`.
+Если эта дата попадает в окно ближайших `horizon-days` в таймзоне пользователя (и не в
+quiet hours), бот шлёт мягкую нотификацию с кнопками «➕ В список покупок» / «Не нужно».
+Подсказка появляется только для растений, у которых уже есть `TRANSPLANT` в истории.
+
+Нажатие «➕ В список покупок» добавляет позиции из `supplies` в список покупок (issue #136)
+и идемпотентно: повтор по тому же событию не дублирует ни подсказку (UNIQUE
+`(user_id, plant_id, source_event_id)`), ни товары.
+
+Конфигурация — `plants.transplant-suggestion` в `application.yml`:
+
+| Переменная | Дефолт | Описание |
+|---|---|---|
+| `PLANTS_TRANSPLANT_SUGGESTION_ENABLED` | `true` | Мастер-переключатель фичи |
+| `PLANTS_TRANSPLANT_SUGGESTION_HORIZON_DAYS` | `14` | За сколько дней до предстоящей пересадки подсказывать |
+| `PLANTS_TRANSPLANT_SUGGESTION_INTERVAL_MONTHS` | `12` | Типовой интервал между пересадками |
+
+`supplies` (по умолчанию «Грунт», «Дренаж») и `message-template` задаются списком/строкой
+в `application.yml`, env-override для них не предусмотрен.
 
 ## Деплой на Railway
 
