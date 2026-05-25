@@ -43,6 +43,16 @@ app:
     base-url: ${CALENDAR_BASE_URL:https://example.com}
     event-window-days: 90
 
+  # Issue #138: health-score растения. Формула:
+  #   score = round(onTimePct * on-time-weight) + (есть фото ? photo-bonus) + (есть заметки ? notes-bonus)
+  # затем клампится в [0, 100]. Идеальная серия (100% on-time) + фото + заметки = 100.
+  health-score:
+    on-time-weight: 0.8    # доля 100-балльной шкалы под % on-time за 30 дней (макс. 80 баллов)
+    photo-bonus: 10        # бонус за наличие фото (issue #24)
+    notes-bonus: 10        # бонус за наличие заметок (issue #25)
+    green-threshold: 80    # score >= → зелёная зона 🟢
+    yellow-threshold: 50   # score >= (но < green) → жёлтая 🟡; ниже — красная 🔴
+
 weather:
   cache-minutes: 60          # дефолт 60
   threshold-defer-ok: 80     # дефолт 80

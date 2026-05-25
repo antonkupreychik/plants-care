@@ -3,6 +3,7 @@ package com.plantcare.bot.service;
 import com.plantcare.bot.domain.Plant;
 import com.plantcare.bot.domain.Species;
 import com.plantcare.bot.domain.User;
+import com.plantcare.bot.domain.enums.HealthZone;
 import com.plantcare.bot.repository.PlantRepository;
 import com.plantcare.bot.seasonal.service.SeasonalIntervalService;
 import org.junit.jupiter.api.BeforeEach;
@@ -19,6 +20,8 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
 
 /**
@@ -43,6 +46,7 @@ class PlantCardToxicityTest {
     @Mock private MainMenuService mainMenuService;
     @Mock private UserService userService;
     @Mock private CareHistoryService careHistoryService;
+    @Mock private HealthScoreService healthScoreService;
     @Mock private PlantEventService plantEventService;
     @Mock private SpeciesFactService speciesFactService;
     @Mock private SeasonalIntervalService seasonalIntervalService;
@@ -55,7 +59,13 @@ class PlantCardToxicityTest {
     void setUp() {
         cardService = new PlantCardService(
                 plantService, plantRepository, careScheduleRepository, mainMenuService, userService,
-                careHistoryService, plantEventService, speciesFactService, seasonalIntervalService);
+                careHistoryService, healthScoreService, plantEventService, speciesFactService,
+                seasonalIntervalService);
+
+        // issue #138: карточка дёргает health-score; для токсичности он не важен —
+        // возвращаем «мало данных», чтобы строка балла не мешала ассертам.
+        lenient().when(healthScoreService.computeForPlant(any()))
+                .thenReturn(HealthScoreService.HealthScore.insufficient());
     }
 
     @Test
@@ -174,6 +184,45 @@ class PlantCardToxicityTest {
         assertThat(text).doesNotContain(DOGS_BADGE);
         assertThat(text).doesNotContain(HUMANS_BADGE);
         assertThat(text).doesNotContain("токсично");
+    }
+
+    // ------------------------------------------------------ health-score (issue #138)
+
+    @Test
+    void should_render_health_score_line_with_value_and_zone_emoji_when_score_computed()
+            throws Exception {
+        // arrange — реальный балл в зелёной зоне; здесь стаб health-score
+        // перекрывает дефолтный insufficient() из setUp
+        Species species = givenSpecies(100L);
+        givenCardFor(species);
+        when(healthScoreService.computeForPlant(any()))
+                .thenReturn(HealthScoreService.HealthScore.of(82, HealthZone.GREEN));
+
+        // act
+        cardService.showPlantCard(givenUser(1L, 555L), 10L, null, PlantCardService.BACK_TO_LIST, client);
+
+        // assert
+        String text = cardText();
+        assertThat(text).contains("❤️ Health: 82 🟢");
+        assertThat(text).doesNotContain("Пока мало данных");
+    }
+
+    @Test
+    void should_render_insufficient_data_line_when_health_score_has_not_enough_data()
+            throws Exception {
+        // arrange — мок по умолчанию из setUp возвращает insufficient()
+        Species species = givenSpecies(100L);
+        givenCardFor(species);
+
+        // act
+        cardService.showPlantCard(givenUser(1L, 555L), 10L, null, PlantCardService.BACK_TO_LIST, client);
+
+        // assert
+        String text = cardText();
+        assertThat(text).contains("❤️ Health: Пока мало данных");
+        assertThat(text).doesNotContain("🟢");
+        assertThat(text).doesNotContain("🟡");
+        assertThat(text).doesNotContain("🔴");
     }
 
     // ------------------------------------------------------------------ helpers
