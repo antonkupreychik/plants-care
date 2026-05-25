@@ -30,12 +30,22 @@ public interface SpeciesRepository extends JpaRepository<Species, Long> {
      * Запрос native, потому что Spring Data не умеет tsvector декларативно.
      * Plainto_tsquery толерантен к пользовательскому вводу — экранирует спец-символы,
      * в отличие от to_tsquery, который требует чистого формата.
+     *
+     * issue #129: вид также находится по совпадению в теле/заголовке его
+     * энциклопедических фактов (species_facts) — через EXISTS с tsvector по
+     * coalesce(title,'')||' '||body. Ранжирование по popularity сохранено.
      */
     @Query(value = """
         SELECT * FROM species
         WHERE to_tsvector('simple', coalesce(search_tags, '')) @@ plainto_tsquery('simple', :query)
            OR LOWER(name) LIKE LOWER(CONCAT('%', :query, '%'))
            OR LOWER(coalesce(latin_name, '')) LIKE LOWER(CONCAT('%', :query, '%'))
+           OR EXISTS (
+                SELECT 1 FROM species_facts f
+                WHERE f.species_id = species.id
+                  AND to_tsvector('simple', coalesce(f.title, '') || ' ' || f.body)
+                      @@ plainto_tsquery('simple', :query)
+           )
         ORDER BY popularity DESC
         LIMIT :maxResults
         """, nativeQuery = true)

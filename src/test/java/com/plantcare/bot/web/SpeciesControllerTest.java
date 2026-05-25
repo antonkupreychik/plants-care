@@ -2,7 +2,10 @@ package com.plantcare.bot.web;
 
 import com.plantcare.bot.domain.Species;
 import com.plantcare.bot.domain.enums.CareDifficulty;
+import com.plantcare.bot.domain.enums.FactCategory;
 import com.plantcare.bot.domain.enums.LightPreference;
+import com.plantcare.bot.service.SpeciesFactDto;
+import com.plantcare.bot.service.SpeciesFactService;
 import com.plantcare.bot.service.SpeciesService;
 import com.plantcare.bot.web.exception.WebApiExceptionHandler;
 import jakarta.persistence.EntityNotFoundException;
@@ -18,6 +21,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.util.List;
+import java.util.Map;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -36,6 +40,9 @@ class SpeciesControllerTest {
 
     @MockitoBean
     private SpeciesService speciesService;
+
+    @MockitoBean
+    private SpeciesFactService speciesFactService;
 
     @Test
     void should_return_page_of_species_when_no_query() throws Exception {
@@ -77,6 +84,7 @@ class SpeciesControllerTest {
         var species = buildSpecies(1L, "Монстера", "Monstera deliciosa");
         species.setDescription("Тропическое растение с большими листьями");
         when(speciesService.getById(1L)).thenReturn(species);
+        when(speciesFactService.getFactsBySpecies(eq(1L), any())).thenReturn(Map.of());
 
         // act + assert
         mockMvc.perform(get("/api/v1/species/1"))
@@ -85,6 +93,44 @@ class SpeciesControllerTest {
                 .andExpect(jsonPath("$.name").value("Монстера"))
                 .andExpect(jsonPath("$.latinName").value("Monstera deliciosa"))
                 .andExpect(jsonPath("$.description").value("Тропическое растение с большими листьями"));
+    }
+
+    @Test
+    void should_include_facts_in_detail_when_service_returns_facts() throws Exception {
+        // arrange
+        var species = buildSpecies(1L, "Монстера", "Monstera deliciosa");
+        when(speciesService.getById(1L)).thenReturn(species);
+        // Сервис группирует по категориям; контроллер разворачивает в плоский facts[].
+        when(speciesFactService.getFactsBySpecies(eq(1L), any())).thenReturn(Map.of(
+                FactCategory.ORIGIN, List.of(
+                        new SpeciesFactDto(FactCategory.ORIGIN, "Родина", "Центральная Америка", "wiki", 0)),
+                FactCategory.TOXICITY, List.of(
+                        new SpeciesFactDto(FactCategory.TOXICITY, null, "Токсична для кошек", null, 0))
+        ));
+
+        // act + assert
+        mockMvc.perform(get("/api/v1/species/1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.facts").isArray())
+                .andExpect(jsonPath("$.facts.length()").value(2))
+                .andExpect(jsonPath("$.facts[*].category",
+                        org.hamcrest.Matchers.containsInAnyOrder("ORIGIN", "TOXICITY")))
+                .andExpect(jsonPath("$.facts[*].body",
+                        org.hamcrest.Matchers.containsInAnyOrder("Центральная Америка", "Токсична для кошек")));
+    }
+
+    @Test
+    void should_return_empty_facts_when_species_has_no_facts() throws Exception {
+        // arrange
+        var species = buildSpecies(1L, "Монстера", "Monstera deliciosa");
+        when(speciesService.getById(1L)).thenReturn(species);
+        when(speciesFactService.getFactsBySpecies(eq(1L), any())).thenReturn(Map.of());
+
+        // act + assert — пустой Map → пустой массив facts (не отсутствует)
+        mockMvc.perform(get("/api/v1/species/1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.facts").isArray())
+                .andExpect(jsonPath("$.facts").isEmpty());
     }
 
     @Test

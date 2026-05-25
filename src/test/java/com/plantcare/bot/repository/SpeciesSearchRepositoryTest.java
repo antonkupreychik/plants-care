@@ -1,6 +1,9 @@
 package com.plantcare.bot.repository;
 
 import com.plantcare.bot.domain.Species;
+import com.plantcare.bot.domain.SpeciesFact;
+import com.plantcare.bot.domain.enums.FactCategory;
+import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -14,6 +17,8 @@ import org.springframework.test.context.TestPropertySource;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -41,6 +46,12 @@ class SpeciesSearchRepositoryTest {
     @Autowired
     private SpeciesRepository speciesRepository;
 
+    @Autowired
+    private SpeciesFactRepository speciesFactRepository;
+
+    @Autowired
+    private EntityManager entityManager;
+
     @BeforeEach
     void seedTestData() {
         // Seed only species used in these tests to stay isolated.
@@ -63,6 +74,55 @@ class SpeciesSearchRepositoryTest {
             lavanda.setPopularity(60);
             speciesRepository.save(lavanda);
         }
+        // issue #129: вид, у которого искомое слово есть ТОЛЬКО в теле факта,
+        // а не в name/latin_name/search_tags. Слово "мадагаскарский" нарочно
+        // отсутствует во всех остальных полях этого вида.
+        //
+        // Имя нарочно уникальное и НЕ совпадает с сидом V2 (там есть "Драцена"
+        // без такого факта) — иначе условие .isEmpty() было бы всегда false и факт
+        // не вставлялся бы вовсе, делая поиск по телу факта непроверяемым.
+        if (speciesRepository.findByName("Тестовый вид с фактом #129").isEmpty()) {
+            var dracaena = new Species();
+            dracaena.setName("Тестовый вид с фактом #129");
+            dracaena.setLatinName("Dracaena testfact");
+            dracaena.setWateringDays(10);
+            dracaena.setSearchTags("тествид, testfact");
+            dracaena.setPopularity(40);
+            speciesRepository.save(dracaena);
+
+            var fact = new SpeciesFact();
+            fact.setSpecies(dracaena);
+            fact.setCategory(FactCategory.ORIGIN);
+            fact.setBody("Это мадагаскарский эндемик, растёт в сухих лесах.");
+            fact.setDisplayOrder(0);
+            speciesFactRepository.save(fact);
+        }
+
+        // searchByQuery — native query; Hibernate не делает надёжный авто-flush
+        // перед native-запросами, поэтому факты не были бы видны. Явно флашим.
+        entityManager.flush();
+    }
+
+    @Test
+    void should_find_species_by_word_present_only_in_fact_body() {
+        // act — "мадагаскарский" есть только в species_facts.body тестового вида
+        List<Species> results = speciesRepository.searchByQuery("мадагаскарский", 5);
+
+        // assert
+        assertThat(results)
+                .extracting(Species::getName)
+                .contains("Тестовый вид с фактом #129");
+    }
+
+    @Test
+    void should_not_find_species_when_word_absent_from_facts_and_tags() {
+        // act — слова нет ни в одном поле и ни в одном факте
+        List<Species> results = speciesRepository.searchByQuery("марсианский", 5);
+
+        // assert
+        assertThat(results)
+                .extracting(Species::getName)
+                .doesNotContain("Тестовый вид с фактом #129");
     }
 
     @Test
