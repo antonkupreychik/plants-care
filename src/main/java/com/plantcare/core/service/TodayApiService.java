@@ -15,7 +15,7 @@ import java.util.List;
 /**
  * Сервис для REST API «сегодняшних» задач ухода (issue #86).
  *
- * <p>Вынесен из {@link com.plantcare.bot.controller.api.v1.TodayController},
+ * <p>Вынесен из {@link com.plantcare.api.v1.TodayController},
  * чтобы репозиторий не был виден контроллеру напрямую (CLAUDE.md: «никаких репозиториев в хендлерах»).
  */
 @Slf4j
