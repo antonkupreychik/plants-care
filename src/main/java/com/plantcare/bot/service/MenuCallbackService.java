@@ -9,7 +9,10 @@ import com.plantcare.bot.domain.User;
 import com.plantcare.bot.domain.enums.ConversationState;
 import com.plantcare.bot.domain.enums.PhotoProgressFrequency;
 import com.plantcare.bot.domain.enums.PlantEventType;
+import com.plantcare.bot.domain.enums.Season;
+import com.plantcare.bot.domain.enums.SeasonalMode;
 import com.plantcare.bot.domain.enums.TaskType;
+import com.plantcare.bot.seasonal.service.SeasonalMenuService;
 import com.plantcare.bot.state.impl.AwaitingProgressPhotoStateHandler;
 import com.plantcare.bot.util.TimezoneSupport;
 import com.plantcare.bot.weather.service.WeatherMenuService;
@@ -72,6 +75,7 @@ public class MenuCallbackService {
     private final ShoppingListService shoppingListService;
     private final ShoppingListMenuService shoppingListMenuService;
     private final DiseaseMenuService diseaseMenuService;
+    private final SeasonalMenuService seasonalMenuService;
 
     private record LocationPreset(String name, String emoji) {
     }
@@ -141,7 +145,85 @@ public class MenuCallbackService {
             return;
         }
 
+        // Сезонные интервалы (issue #67) — экран глобальных настроек сезонности.
+        if (data.startsWith("SEASON:")) {
+            handleSeasonalCallback(data, callbackId, messageId, client, user);
+            return;
+        }
+
         answerCallback(client, callbackId, "❌ Неизвестная команда");
+    }
+
+    /**
+     * Сезонные интервалы (issue #67). Разбирает callback'и экрана
+     * {@link SeasonalMenuService}: {@code SEASON:TOGGLE}, {@code SEASON:MODE:<MODE>},
+     * {@code SEASON:MUL:<SEASON>}, {@code SEASON:INT:<SEASON>} и
+     * {@code SEASON:INT:<SEASON>:CLEAR}.
+     */
+    private void handleSeasonalCallback(
+            String data,
+            String callbackId,
+            Integer messageId,
+            TelegramClient client,
+            User user
+    ) {
+        String action = data.substring("SEASON:".length());
+
+        if ("TOGGLE".equals(action)) {
+            seasonalMenuService.toggleEnabled(user, messageId, client);
+            answerCallback(client, callbackId, "");
+            return;
+        }
+
+        if (action.startsWith("MODE:")) {
+            String modeName = action.substring("MODE:".length());
+            try {
+                seasonalMenuService.setMode(user, SeasonalMode.valueOf(modeName), messageId, client);
+                answerCallback(client, callbackId, "");
+            } catch (IllegalArgumentException e) {
+                answerCallback(client, callbackId, "❌ Неизвестный режим");
+            }
+            return;
+        }
+
+        if (action.startsWith("MUL:")) {
+            Season season = parseSeasonToken(action.substring("MUL:".length()));
+            if (season == null) {
+                answerCallback(client, callbackId, "❌ Неизвестный сезон");
+                return;
+            }
+            seasonalMenuService.cycleMultiplier(user, season, messageId, client);
+            answerCallback(client, callbackId, "");
+            return;
+        }
+
+        if (action.startsWith("INT:")) {
+            String rest = action.substring("INT:".length());
+            boolean clear = rest.endsWith(":CLEAR");
+            String seasonToken = clear ? rest.substring(0, rest.length() - ":CLEAR".length()) : rest;
+            Season season = parseSeasonToken(seasonToken);
+            if (season == null) {
+                answerCallback(client, callbackId, "❌ Неизвестный сезон");
+                return;
+            }
+            if (clear) {
+                seasonalMenuService.clearInterval(user, season, messageId, client);
+            } else {
+                seasonalMenuService.cycleInterval(user, season, messageId, client);
+            }
+            answerCallback(client, callbackId, "");
+            return;
+        }
+
+        answerCallback(client, callbackId, "❌ Неизвестная команда");
+    }
+
+    private static Season parseSeasonToken(String token) {
+        return switch (token) {
+            case "SUMMER" -> Season.SUMMER;
+            case "WINTER" -> Season.WINTER;
+            default -> null;
+        };
     }
 
     private void handleWeatherCallback(
@@ -222,6 +304,10 @@ public class MenuCallbackService {
             }
             case "WEATHER" -> {
                 weatherMenuService.sendWeatherScreen(user, messageId, client);
+                answerCallback(client, callbackId, "");
+            }
+            case "SEASONAL" -> {
+                seasonalMenuService.sendScreen(user, messageId, client);
                 answerCallback(client, callbackId, "");
             }
             case "BACK" -> {
@@ -763,6 +849,26 @@ public class MenuCallbackService {
             String backTarget = parseBackTarget(parts, 1);
 
             plantCardService.showSettingsScreen(user, plantId, messageId, backTarget, client);
+            answerCallback(client, callbackId, "");
+            return;
+        }
+
+        // Per-plant сезонность (issue #67): INHERIT → ON → OFF по циклу.
+        if (data.startsWith("PLANT:SEASONAL:")) {
+            String[] parts = data.substring("PLANT:SEASONAL:".length()).split(":");
+
+            Long plantId;
+
+            try {
+                plantId = Long.parseLong(parts[0]);
+            } catch (NumberFormatException e) {
+                answerCallback(client, callbackId, "❌ Неверный ID");
+                return;
+            }
+
+            String backTarget = parseBackTarget(parts, 1);
+
+            plantCardService.cycleSeasonalOverride(user, plantId, messageId, backTarget, client);
             answerCallback(client, callbackId, "");
             return;
         }
@@ -1529,6 +1635,12 @@ public class MenuCallbackService {
                         InlineKeyboardButton.builder()
                                 .text("⛅ Учитывать погоду")
                                 .callbackData("MENU:WEATHER")
+                                .build()
+                )))
+                .keyboardRow(new InlineKeyboardRow(List.of(
+                        InlineKeyboardButton.builder()
+                                .text("🍂 Сезонные интервалы")
+                                .callbackData("MENU:SEASONAL")
                                 .build()
                 )))
                 .keyboardRow(new InlineKeyboardRow(List.of(

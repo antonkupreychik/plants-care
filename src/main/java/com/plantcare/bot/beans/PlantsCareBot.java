@@ -33,6 +33,7 @@ public class PlantsCareBot implements LongPollingSingleThreadUpdateConsumer, Tel
     private static final String MENU_CALLBACK_PREFIX = "MENU:";
     private static final String LOCATION_CALLBACK_PREFIX = "LOCATION:";
     private static final String PLANT_CALLBACK_PREFIX = "PLANT:";
+    private static final String ARCHIVE_CALLBACK_PREFIX = "ARCHIVE:";
     private static final String CALENDAR_CALLBACK_PREFIX = "cal:";
     private static final String WEATHER_CALLBACK_PREFIX = "WEATHER:";
     private static final String SEASON_CALLBACK_PREFIX = "SEASON:";
@@ -116,6 +117,7 @@ public class PlantsCareBot implements LongPollingSingleThreadUpdateConsumer, Tel
                         data.startsWith(MENU_CALLBACK_PREFIX) ||
                                 data.startsWith(LOCATION_CALLBACK_PREFIX) ||
                                 data.startsWith(PLANT_CALLBACK_PREFIX) ||
+                                data.startsWith(ARCHIVE_CALLBACK_PREFIX) ||
                                 data.startsWith(WEATHER_CALLBACK_PREFIX) ||
                                 data.startsWith(SEASON_CALLBACK_PREFIX) ||
                                 data.startsWith(CALENDAR_CALLBACK_PREFIX) ||
