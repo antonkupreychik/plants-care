@@ -184,6 +184,10 @@ public class AdminSpeciesService {
         s.setDescription(dto.getDescription());
         s.setSearchTags(dto.getSearchTags());
         s.setPopularity(dto.getPopularity() == null ? 50 : dto.getPopularity());
+        // Tri-state токсичность: null допустим (нет данных), в т.ч. сброс true→null.
+        s.setToxicToCats(dto.getToxicToCats());
+        s.setToxicToDogs(dto.getToxicToDogs());
+        s.setToxicToHumans(dto.getToxicToHumans());
     }
 
     private void validateUniqueName(Long currentId, String name) {

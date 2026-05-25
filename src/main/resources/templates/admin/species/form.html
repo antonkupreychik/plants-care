@@ -152,6 +152,43 @@
                     </label>
                 </div>
 
+                <!-- Токсичность (tri-state: токсично / не токсично / нет данных) — issue #131 -->
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div class="form-control">
+                        <label class="label" for="toxicToCats">
+                            <span class="label-text">Токсично для кошек</span>
+                        </label>
+                        <select id="toxicToCats" th:field="*{toxicToCats}"
+                                class="select select-bordered w-full">
+                            <option value="">— нет данных —</option>
+                            <option value="true">Токсично</option>
+                            <option value="false">Не токсично</option>
+                        </select>
+                    </div>
+                    <div class="form-control">
+                        <label class="label" for="toxicToDogs">
+                            <span class="label-text">Токсично для собак</span>
+                        </label>
+                        <select id="toxicToDogs" th:field="*{toxicToDogs}"
+                                class="select select-bordered w-full">
+                            <option value="">— нет данных —</option>
+                            <option value="true">Токсично</option>
+                            <option value="false">Не токсично</option>
+                        </select>
+                    </div>
+                    <div class="form-control">
+                        <label class="label" for="toxicToHumans">
+                            <span class="label-text">Токсично для людей</span>
+                        </label>
+                        <select id="toxicToHumans" th:field="*{toxicToHumans}"
+                                class="select select-bordered w-full">
+                            <option value="">— нет данных —</option>
+                            <option value="true">Токсично</option>
+                            <option value="false">Не токсично</option>
+                        </select>
+                    </div>
+                </div>
+
                 <div class="flex gap-2 pt-2">
                     <button type="submit" class="btn btn-primary">Сохранить</button>
                     <a href="/admin/species" class="btn btn-ghost">Отмена</a>
@@ -159,6 +196,10 @@
             </form>
         </div>
     </div>
+
+    <!-- Факты вида (issue #131) — только при редактировании существующего вида -->
+    <div th:if="${speciesId != null}"
+         th:insert="~{admin/species/facts/section :: factsSection}"></div>
 
 </section>
 </body>

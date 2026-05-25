@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="ru">
+<body>
+
+<!--
+  Секция управления фактами вида (issue #131).
+
+  Один фрагмент factsSection — список фактов с группировкой по категории
+  + форма создания/редактирования. HTMX-эндпоинты под /admin/species/{id}/facts
+  возвращают этот же фрагмент, swap по outerHTML #facts-section.
+
+  Модель:
+    speciesId           — id вида (владелец)
+    factsGrouped        — Map<FactCategory, List<SpeciesFact>> в порядке показа
+    factCategories      — FactCategory[] (для select)
+    factCategoryLabels  — Map<FactCategory,String> русские подписи
+    factForm            — SpeciesFactFormDto (форма создания/правки)
+    editingFactId       — id факта в режиме правки (null = создание)
+-->
+
+<div id="facts-section" th:fragment="factsSection" class="card bg-base-100 shadow max-w-3xl mt-6">
+    <div class="card-body">
+        <h2 class="card-title text-xl">Факты о виде</h2>
+
+        <!-- Список фактов по категориям -->
+        <div th:if="${factsGrouped.isEmpty()}" class="text-base-content/60 py-2">
+            Фактов пока нет.
+        </div>
+
+        <div th:each="entry : ${factsGrouped}" class="mb-4">
+            <h3 class="font-semibold text-base-content/80 mb-2"
+                th:text="${factCategoryLabels.get(entry.key)}">Категория</h3>
+
+            <ul class="space-y-2">
+                <li th:each="fact : ${entry.value}"
+                    th:id="'fact-' + ${fact.id}"
+                    class="flex items-start justify-between gap-3 border border-base-300 rounded-lg p-3">
+                    <div class="min-w-0">
+                        <div class="badge badge-ghost badge-sm mb-1"
+                             th:text="'#' + ${fact.displayOrder}">#0</div>
+                        <div th:if="${fact.title}" class="font-medium" th:text="${fact.title}">Заголовок</div>
+                        <div class="text-sm whitespace-pre-line" th:text="${fact.body}">Текст факта</div>
+                        <div th:if="${fact.source}" class="text-xs text-base-content/60 mt-1"
+                             th:text="'Источник: ' + ${fact.source}">Источник</div>
+                    </div>
+                    <div class="flex gap-1 shrink-0">
+                        <button type="button" class="btn btn-ghost btn-xs"
+                                th:attr="hx-get='/admin/species/' + ${speciesId} + '/facts/' + ${fact.id} + '/edit',
+                                         hx-target='#facts-section',
+                                         hx-swap='outerHTML'">Edit</button>
+                        <button type="button" class="btn btn-error btn-xs"
+                                th:attr="hx-delete='/admin/species/' + ${speciesId} + '/facts/' + ${fact.id},
+                                         hx-target='#facts-section',
+                                         hx-swap='outerHTML',
+                                         hx-confirm='Удалить факт?'">Delete</button>
+                    </div>
+                </li>
+            </ul>
+        </div>
+
+        <div class="divider"></div>
+
+        <!-- Форма создания / редактирования факта -->
+        <h3 class="font-semibold mb-2"
+            th:text="${editingFactId != null} ? 'Редактирование факта' : 'Новый факт'">Новый факт</h3>
+
+        <form th:object="${factForm}"
+              th:attr="hx-post=${editingFactId != null}
+                         ? '/admin/species/' + ${speciesId} + '/facts/' + ${editingFactId}
+                         : '/admin/species/' + ${speciesId} + '/facts'"
+              hx-target="#facts-section" hx-swap="outerHTML"
+              class="space-y-3">
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Категория <span class="text-error">*</span></span></label>
+                    <select th:field="*{category}" class="select select-bordered w-full"
+                            th:classappend="${#fields.hasErrors('category')} ? 'select-error'">
+                        <option value="">— выберите —</option>
+                        <option th:each="c : ${factCategories}"
+                                th:value="${c.name()}"
+                                th:text="${factCategoryLabels.get(c)}"></option>
+                    </select>
+                    <label class="label" th:if="${#fields.hasErrors('category')}">
+                        <span class="label-text-alt text-error" th:errors="*{category}"></span>
+                    </label>
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">Порядок отображения</span></label>
+                    <input type="number" th:field="*{displayOrder}" min="0"
+                           class="input input-bordered w-full"
+                           th:classappend="${#fields.hasErrors('displayOrder')} ? 'input-error'"/>
+                    <label class="label" th:if="${#fields.hasErrors('displayOrder')}">
+                        <span class="label-text-alt text-error" th:errors="*{displayOrder}"></span>
+                    </label>
+                </div>
+            </div>
+
+            <div class="form-control">
+                <label class="label"><span class="label-text">Заголовок</span></label>
+                <input type="text" th:field="*{title}" maxlength="160"
+                       class="input input-bordered w-full"
+                       th:classappend="${#fields.hasErrors('title')} ? 'input-error'"
+                       placeholder="Необязательно"/>
+                <label class="label" th:if="${#fields.hasErrors('title')}">
+                    <span class="label-text-alt text-error" th:errors="*{title}"></span>
+                </label>
+            </div>
+
+            <div class="form-control">
+                <label class="label"><span class="label-text">Текст факта <span class="text-error">*</span></span></label>
+                <textarea th:field="*{body}" rows="3"
+                          class="textarea textarea-bordered w-full"
+                          th:classappend="${#fields.hasErrors('body')} ? 'textarea-error'"
+                          placeholder="Обязательно"></textarea>
+                <label class="label" th:if="${#fields.hasErrors('body')}">
+                    <span class="label-text-alt text-error" th:errors="*{body}"></span>
+                </label>
+            </div>
+
+            <div class="form-control">
+                <label class="label"><span class="label-text">Источник</span></label>
+                <input type="text" th:field="*{source}" maxlength="300"
+                       class="input input-bordered w-full"
+                       th:classappend="${#fields.hasErrors('source')} ? 'input-error'"
+                       placeholder="Необязательно"/>
+                <label class="label" th:if="${#fields.hasErrors('source')}">
+                    <span class="label-text-alt text-error" th:errors="*{source}"></span>
+                </label>
+            </div>
+
+            <div class="flex gap-2">
+                <button type="submit" class="btn btn-primary btn-sm"
+                        th:text="${editingFactId != null} ? 'Сохранить факт' : 'Добавить факт'">Добавить факт</button>
+                <button th:if="${editingFactId != null}" type="button" class="btn btn-ghost btn-sm"
+                        th:attr="hx-get='/admin/species/' + ${speciesId} + '/facts',
+                                 hx-target='#facts-section',
+                                 hx-swap='outerHTML'">Отмена</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+</body>
+</html>
