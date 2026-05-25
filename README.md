@@ -73,6 +73,8 @@ echo 'testcontainers.reuse.enable=true' >> ~/.testcontainers.properties
 - **V21** — таблица `plant_anniversaries_sent` (PK `(plant_id, anniversary_year)`) для идемпотентности годовщин: один пуш на растение в год. FK `ON DELETE CASCADE`. Здесь же — частичный индекс `idx_plants_acquired_active` на `plants(acquired_at) WHERE acquired_at IS NOT NULL AND archived_at IS NULL` под запрос шедулера
 - **V22** — таблица `species_facts` (энциклопедия видов, ADR-011): кураторские факты по видам с категориями `ORIGIN`/`CARE`/`TOXICITY`/`CURIOSITY` (CHECK), `title`/`body`/`source`/`display_order`. FK на `species` `ON DELETE CASCADE`, btree-индекс `(species_id, category, display_order)`. GIN-индекс намеренно не создаётся (обоснование в комментарии миграции). Сидинг — отдельной задачей
 - **V23** — таблица `monthly_report_sent` (PK `(user_id, year_month)`) для идемпотентности месячных отчётов: одна отправка на юзера за отчётный месяц. `year_month` хранится как `YYYYMM` по календарю в TZ юзера. FK `ON DELETE CASCADE` на `users`
+- **V24** — таблица `diseases` (справочник типичных болезней/вредителей, ADR-013): `name` (уникальное), `latin_name` (nullable), `symptoms`/`treatment`/`prevention`, `symptom_codes` (CSV кодов enum `DiagnosisSymptom` для матчинга с диагностикой #73) и `search_tags`. Expression-GIN индекс `idx_diseases_search` по `to_tsvector('simple', name || search_tags || symptoms)` для полнотекстового поиска (по образцу `species`). Сидинг — отдельной миграцией V25
+- **V25** — сидинг 20 типичных проблем в `diseases`: вредители, грибковые/бактериальные болезни, неинфекционные нарушения
 
 ## REST API
 
