@@ -9,6 +9,7 @@ import com.plantcare.bot.domain.User;
 import com.plantcare.bot.domain.enums.ConversationState;
 import com.plantcare.bot.domain.enums.PlantEventType;
 import com.plantcare.bot.domain.enums.TaskType;
+import com.plantcare.bot.repository.CareScheduleRepository;
 import com.plantcare.bot.repository.PlantRepository;
 import com.plantcare.bot.util.TimezoneSupport;
 import lombok.RequiredArgsConstructor;
@@ -80,6 +81,7 @@ public class PlantCardService {
 
     private final PlantService plantService;
     private final PlantRepository plantRepository;
+    private final CareScheduleRepository careScheduleRepository;
     private final MainMenuService mainMenuService;
     private final UserService userService;
     private final CareHistoryService careHistoryService;
@@ -91,6 +93,75 @@ public class PlantCardService {
     // 1) Карточка "только что создано" — используется визардом создания
     // =================================================================
 
+
+    /**
+     * Создаёт растение-потомок (черенок) от материнского растения (issue #139, ADR-012).
+     *
+     * <p>Копирует как ШАБЛОН (ADR-005 — копирование значений, не ссылка на чужие
+     * расписания): вид (species), локацию (location) и интервалы активных расписаний
+     * ухода. Для каждого активного расписания родителя создаётся НОВОЕ
+     * {@link CareSchedule} с тем же {@code intervalDays}; {@code nextDueAt}
+     * отсчитывается от текущего момента + интервал (с учётом сезонной корректировки,
+     * issue #67), потому что у нового растения свой график.
+     *
+     * <p>Проставляет {@code parent_id} (ссылку на родителя) и денормализованный
+     * {@code user_id} — берётся от родителя/текущего юзера (ADR-010). Каскадной
+     * архивации/удаления потомков нет (ADR-009).
+     *
+     * @param user       владелец (он же владелец родителя — проверяется при загрузке)
+     * @param parentId   ID материнского растения
+     * @param cuttingName имя нового растения-черенка
+     * @return сохранённый потомок с расписаниями
+     * @throws IllegalArgumentException если родитель не найден / не принадлежит юзеру / в архиве
+     */
+    @Transactional
+    public Plant createCutting(User user, Long parentId, String cuttingName) {
+        String name = cuttingName == null ? "" : cuttingName.trim();
+        if (name.isBlank()) {
+            throw new IllegalArgumentException("Имя растения не может быть пустым");
+        }
+
+        Plant parent = plantRepository.findByUserIdAndIdAndArchivedAtIsNull(user.getId(), parentId)
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Материнское растение не найдено"));
+
+        // Активные расписания родителя — копируем только их интервалы (отключённые
+        // тумблером не переносим, как и при сохранении шаблона из растения).
+        List<CareSchedule> parentSchedules = careScheduleRepository
+                .findAllByPlantId(parent.getId()).stream()
+                .filter(CareSchedule::isActive)
+                .toList();
+
+        Plant cutting = Plant.builder()
+                .user(user)
+                .species(parent.getSpecies())
+                .location(parent.getLocation())
+                .parent(parent)
+                .name(name)
+                .build();
+        cutting = plantRepository.save(cutting);
+
+        // Копируем интервалы как новые расписания. nextDueAt считаем от now,
+        // потому что у черенка собственный график ухода.
+        LocalDateTime now = LocalDateTime.now();
+        for (CareSchedule parentSchedule : parentSchedules) {
+            int interval = parentSchedule.getIntervalDays();
+            int effective = seasonalIntervalService.effectiveIntervalDays(cutting, user, interval);
+            CareSchedule copy = CareSchedule.builder()
+                    .plant(cutting)
+                    .taskType(parentSchedule.getTaskType())
+                    .intervalDays(interval)
+                    .nextDueAt(now.plusDays(effective))
+                    .active(true)
+                    .build();
+            careScheduleRepository.save(copy);
+        }
+
+        log.info("Created cutting '{}' (id={}) from parent {} for user {} ({} schedules copied)",
+                name, cutting.getId(), parent.getId(), user.getId(), parentSchedules.size());
+
+        return cutting;
+    }
 
     /**
      * Финальный шаг создания растения. Теперь блокирующий: вместо немедленного
@@ -299,9 +370,19 @@ public class PlantCardService {
         boolean hasSpeciesFacts = plant.getSpecies() != null
                 && speciesFactService.hasFactsForSpecies(plant.getSpecies().getId());
 
-        String text = buildDetailedCardText(plant, schedules);
+        // issue #139: родословная. Счётчик потомков для строки «🌱 Потомки: N» и
+        // ссылка на родителя (кликабельная кнопка) для потомка. parent — lazy,
+        // инициализируем имя/архивность здесь, внутри read-only транзакции.
+        long childrenCount = plantRepository.countByParentId(plant.getId());
+        Plant parent = plant.getParent();
+        if (parent != null) {
+            parent.getName();
+            parent.getArchivedAt();
+        }
+
+        String text = buildDetailedCardText(plant, schedules, childrenCount);
         InlineKeyboardMarkup keyboard =
-                buildDetailedCardKeyboard(plant, schedules, backTarget, hasSpeciesFacts);
+                buildDetailedCardKeyboard(plant, schedules, backTarget, hasSpeciesFacts, parent);
 
         sendOrEditText(user.getTelegramChatId(), messageId, text, keyboard, client);
     }
@@ -1294,13 +1375,20 @@ public class PlantCardService {
     // Рендер карточки
     // =================================================================
 
-    private String buildDetailedCardText(Plant plant, List<CareSchedule> schedules) {
+    private String buildDetailedCardText(Plant plant, List<CareSchedule> schedules, long childrenCount) {
         StringBuilder sb = new StringBuilder();
 
         sb.append("🌿 *").append(escapeMd(plant.getName())).append("*\n");
 
         if (plant.getLocation() != null) {
             sb.append("📍 ").append(escapeMd(plant.getLocation().getDisplayName())).append("\n");
+        }
+
+        // issue #139: счётчик потомков. Показываем строку только если есть хотя бы
+        // один черенок — для растений без потомков строку не печатаем (как другие
+        // условные строки карточки).
+        if (childrenCount > 0) {
+            sb.append("🌱 Потомки: ").append(childrenCount).append("\n");
         }
 
         // issue #117: «С тобой с …» — после имени/локации, до фото/баннеров.
@@ -1398,7 +1486,8 @@ public class PlantCardService {
             Plant plant,
             List<CareSchedule> schedules,
             String backTarget,
-            boolean hasSpeciesFacts
+            boolean hasSpeciesFacts,
+            Plant parent
     ) {
         List<InlineKeyboardRow> rows = new ArrayList<>();
 
@@ -1452,11 +1541,15 @@ public class PlantCardService {
 
         rows.add(auxRow);
 
-        // 2a) Диагностика растения (issue #73).
+        // 2a) Диагностика растения (issue #73) + взять черенок (issue #139).
         InlineKeyboardRow diagnosisRow = new InlineKeyboardRow();
         diagnosisRow.add(InlineKeyboardButton.builder()
                 .text("🩺 Диагностика")
                 .callbackData("PLANT:DIAG:START:" + plant.getId())
+                .build());
+        diagnosisRow.add(InlineKeyboardButton.builder()
+                .text("🌱 Взять черенок")
+                .callbackData("PLANT:CUTTING:" + plant.getId())
                 .build());
         rows.add(diagnosisRow);
 
@@ -1503,6 +1596,24 @@ public class PlantCardService {
                     InlineKeyboardButton.builder()
                             .text("🛑 Выключить акклиматизацию")
                             .callbackData("PLANT:ACCL:DISABLE:" + plant.getId() + backSuffix(backTarget))
+                            .build()
+            )));
+        }
+
+        // 2d) Ссылка на материнское растение (issue #139), если это черенок.
+        // Кликабельная: ведёт на карточку родителя. Архивный родитель помечается
+        // «(в архиве)» и ведёт на ARCHIVE:VIEW — ссылка сохраняется (ADR-009).
+        if (parent != null) {
+            boolean parentArchived = parent.getArchivedAt() != null;
+            String label = "⬅️ Родитель: " + parent.getName()
+                    + (parentArchived ? " (в архиве)" : "");
+            String callback = parentArchived
+                    ? "ARCHIVE:VIEW:" + parent.getId()
+                    : "PLANT:VIEW:" + parent.getId();
+            rows.add(new InlineKeyboardRow(List.of(
+                    InlineKeyboardButton.builder()
+                            .text(label)
+                            .callbackData(callback)
                             .build()
             )));
         }

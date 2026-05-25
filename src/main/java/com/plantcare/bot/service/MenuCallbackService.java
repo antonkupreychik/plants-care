@@ -873,6 +873,48 @@ public class MenuCallbackService {
             return;
         }
 
+        if (data.startsWith("PLANT:CUTTING:")) {
+            Long plantId;
+
+            try {
+                plantId = Long.parseLong(data.substring("PLANT:CUTTING:".length()));
+            } catch (NumberFormatException e) {
+                answerCallback(client, callbackId, "❌ Неверный ID");
+                return;
+            }
+
+            // Проверяем, что растение существует и принадлежит юзеру, прежде чем
+            // переводить в состояние ввода имени.
+            Plant parent = plantService.getPlantForUser(user.getId(), plantId).orElse(null);
+            if (parent == null) {
+                answerCallback(client, callbackId, "❌ Растение не найдено");
+                return;
+            }
+
+            userService.setStateData(user, "parent_plant_id", String.valueOf(plantId));
+            userService.updateState(user, ConversationState.AWAITING_CUTTING_NAME);
+
+            try {
+                client.execute(SendMessage.builder()
+                        .chatId(user.getTelegramChatId().toString())
+                        .text("""
+                                🌱 *Взять черенок*
+
+                                Введи имя нового растения. Скопирую вид, комнату и \
+                                интервалы ухода от «%s» и свяжу их в родословную.
+
+                                _От 1 до 100 символов. /cancel — отменить._\
+                                """.formatted(parent.getName()))
+                        .parseMode("Markdown")
+                        .build());
+            } catch (TelegramApiException e) {
+                log.error("Failed to send cutting name prompt", e);
+            }
+
+            answerCallback(client, callbackId, "");
+            return;
+        }
+
         if (data.startsWith("PLANT:SAVE_TPL:")) {
             String[] parts = data.substring("PLANT:SAVE_TPL:".length()).split(":");
 

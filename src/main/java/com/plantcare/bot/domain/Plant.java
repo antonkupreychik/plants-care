@@ -51,6 +51,19 @@ public class Plant extends BaseEntity {
     @JoinColumn(name = "location_id", nullable = false)
     private Location location;
 
+    /**
+     * Материнское растение, от которого получен отросток (черенок) — родословная
+     * (issue #139, ADR-012). NULL = растение является корнем родословной.
+     * Self-FK на plants.parent_id (миграция V28), ON DELETE SET NULL.
+     *
+     * <p>Обратная связь {@code children} намеренно НЕ маппится: счётчик/список
+     * потомков считается через репозиторий ({@code PlantRepository.countByParentId}),
+     * чтобы не тащить ленивую коллекцию и не плодить мёртвый маппинг.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "parent_id")
+    private Plant parent;
+
     @Column(nullable = false, length = 100)
     private String name;
 

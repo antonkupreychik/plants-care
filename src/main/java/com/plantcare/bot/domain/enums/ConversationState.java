@@ -44,6 +44,10 @@ public enum ConversationState {
     AWAITING_PLANT_NAME_FROM_TEMPLATE, // ввод имени растения при создании из шаблона
     AWAITING_TEMPLATE_RENAME,          // ввод нового имени при переименовании шаблона
 
+    // Родословная (issue #139, ADR-012): ввод имени черенка при создании потомка.
+    // Контекст parent_plant_id — в stateData.
+    AWAITING_CUTTING_NAME,
+
     // Интеграция с погодой (issue #69)
     AWAITING_WEATHER_LOCATION,
     AWAITING_PLANT_DIAGNOSIS, //(issue #73)
