@@ -147,4 +147,72 @@ public interface CareHistoryRepository extends JpaRepository<CareHistory, Long> 
             @Param("limit") int limit,
             @Param("offset") int offset
     );
+
+    // ===== Месячный отчёт (issue #137) =====
+
+    /**
+     * Всего активных (не-cancelled) действий ухода по всем растениям юзера за
+     * отчётный период {@code [from; toExclusive)}. Границы передаёт вызывающий —
+     * это «начало/конец месяца в TZ юзера, сконвертированные в UTC».
+     */
+    @Query("SELECT COUNT(h) FROM CareHistory h " +
+            "WHERE h.plant.user.id = :userId AND h.cancelledBy IS NULL " +
+            "AND h.doneAt >= :from AND h.doneAt < :toExclusive")
+    long countActiveByUserIdInRange(
+            @Param("userId") Long userId,
+            @Param("from") LocalDateTime from,
+            @Param("toExclusive") LocalDateTime toExclusive
+    );
+
+    /**
+     * Разбивка активных действий юзера по типам ухода за отчётный период
+     * {@code [from; toExclusive)}. Только типы с ≥1 действием попадают в результат.
+     */
+    @Query("SELECT h.taskType AS taskType, COUNT(h) AS count FROM CareHistory h " +
+            "WHERE h.plant.user.id = :userId AND h.cancelledBy IS NULL " +
+            "AND h.doneAt >= :from AND h.doneAt < :toExclusive " +
+            "GROUP BY h.taskType")
+    List<TaskTypeCount> countActiveByUserIdGroupedByTaskType(
+            @Param("userId") Long userId,
+            @Param("from") LocalDateTime from,
+            @Param("toExclusive") LocalDateTime toExclusive
+    );
+
+    /**
+     * «Растение, которое юзер ни разу не пропустил» за отчётный период: среди
+     * активных не-архивных растений выбираются те, у которых ВСЕ активные записи
+     * за период были on-time ({@code was_on_time = true}) и записей ≥1. Из них
+     * берётся растение с наибольшим числом действий (tie-break — меньший id).
+     *
+     * <p>Условие «все on-time» выражено через
+     * {@code MIN(was_on_time) = true} в HAVING: если хоть одна запись была не
+     * on-time, минимум по группе станет false и группа отсеется.
+     */
+    @Query("SELECT h.plant.id AS plantId, h.plant.name AS plantName, COUNT(h) AS count " +
+            "FROM CareHistory h " +
+            "WHERE h.plant.user.id = :userId AND h.cancelledBy IS NULL " +
+            "AND h.plant.archivedAt IS NULL " +
+            "AND h.doneAt >= :from AND h.doneAt < :toExclusive " +
+            "GROUP BY h.plant.id, h.plant.name " +
+            "HAVING MIN(CASE WHEN h.onTime = true THEN 1 ELSE 0 END) = 1 " +
+            "ORDER BY COUNT(h) DESC, h.plant.id ASC")
+    List<PlantActionCount> findFlawlessPlantsByUserInRange(
+            @Param("userId") Long userId,
+            @Param("from") LocalDateTime from,
+            @Param("toExclusive") LocalDateTime toExclusive,
+            Limit limit
+    );
+
+    /** Проекция «тип ухода → количество» для разбивки месячного отчёта (issue #137). */
+    interface TaskTypeCount {
+        TaskType getTaskType();
+        long getCount();
+    }
+
+    /** Проекция «растение → количество действий» для месячного отчёта (issue #137). */
+    interface PlantActionCount {
+        Long getPlantId();
+        String getPlantName();
+        long getCount();
+    }
 }

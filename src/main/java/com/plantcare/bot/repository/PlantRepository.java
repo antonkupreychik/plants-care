@@ -143,4 +143,25 @@ public interface PlantRepository extends JpaRepository<Plant, Long> {
             @Param("until") java.time.LocalDateTime until,
             @Param("dedupBefore") java.time.LocalDateTime dedupBefore
     );
+
+    // ===== Месячный отчёт (issue #137) =====
+
+    /**
+     * Самые старые живые (не-архивные) растения юзера с заполненной
+     * {@code acquiredAt} — для блока «самое старое живое растение и его возраст».
+     * Сортировка по {@code acquiredAt ASC}: первым идёт растение с самой ранней
+     * датой «заведения», то есть самое старое. Вызывающий берёт первый элемент
+     * через {@link org.springframework.data.domain.Limit}.
+     */
+    @Query("""
+            SELECT p FROM Plant p
+            WHERE p.user.id = :userId
+              AND p.archivedAt IS NULL
+              AND p.acquiredAt IS NOT NULL
+            ORDER BY p.acquiredAt ASC, p.id ASC
+            """)
+    List<Plant> findOldestLivingByUser(
+            @Param("userId") Long userId,
+            org.springframework.data.domain.Limit limit
+    );
 }
