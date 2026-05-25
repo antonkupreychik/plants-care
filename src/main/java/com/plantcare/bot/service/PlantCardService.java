@@ -84,6 +84,7 @@ public class PlantCardService {
     private final UserService userService;
     private final CareHistoryService careHistoryService;
     private final PlantEventService plantEventService;
+    private final SpeciesFactService speciesFactService;
     private final com.plantcare.bot.seasonal.service.SeasonalIntervalService seasonalIntervalService;
 
     // =================================================================
@@ -287,8 +288,14 @@ public class PlantCardService {
 
         List<CareSchedule> schedules = plantService.getActiveSchedules(plant.getId());
 
+        // issue #129: показываем кнопку «О виде» только если у вида есть факты.
+        // Пустой/неизвестный вид кнопку не получает.
+        boolean hasSpeciesFacts = plant.getSpecies() != null
+                && speciesFactService.hasFactsForSpecies(plant.getSpecies().getId());
+
         String text = buildDetailedCardText(plant, schedules);
-        InlineKeyboardMarkup keyboard = buildDetailedCardKeyboard(plant, schedules, backTarget);
+        InlineKeyboardMarkup keyboard =
+                buildDetailedCardKeyboard(plant, schedules, backTarget, hasSpeciesFacts);
 
         sendOrEditText(user.getTelegramChatId(), messageId, text, keyboard, client);
     }
@@ -796,6 +803,109 @@ public class PlantCardService {
     }
 
     // =================================================================
+    // 2d) Экран «🌍 О виде» — энциклопедия фактов (issue #129)
+    // =================================================================
+
+    /**
+     * Экран энциклопедических фактов вида (issue #129). Показывает факты,
+     * сгруппированные по категориям, с человекочитаемыми заголовками.
+     * Если у вида нет фактов (или вид не задан) — сообщаем об этом и
+     * предлагаем вернуться к карточке; кнопка «О виде» в норме сюда не ведёт,
+     * если фактов нет, но проверку дублируем на случай гонки/удаления контента.
+     */
+    @Transactional(readOnly = true)
+    public void showSpeciesFactsScreen(
+            User user,
+            Long plantId,
+            Integer messageId,
+            String backTarget,
+            TelegramClient client
+    ) {
+        Plant plant = plantRepository.findByUserIdAndIdAndArchivedAtIsNull(user.getId(), plantId)
+                .orElse(null);
+        if (plant == null) {
+            sendTextMessage(user.getTelegramChatId(), "❌ Растение не найдено.", client);
+            return;
+        }
+
+        java.util.Map<com.plantcare.bot.domain.enums.FactCategory, List<SpeciesFactDto>> factsByCategory =
+                plant.getSpecies() == null
+                        ? java.util.Map.of()
+                        : speciesFactService.getFactsBySpecies(plant.getSpecies().getId(), null);
+
+        String text = buildSpeciesFactsText(plant, factsByCategory);
+        InlineKeyboardMarkup keyboard = InlineKeyboardMarkup.builder()
+                .keyboardRow(new InlineKeyboardRow(List.of(
+                        InlineKeyboardButton.builder()
+                                .text("⬅️ К карточке")
+                                .callbackData(plantCardCallback(plant.getId(), backTarget))
+                                .build()
+                )))
+                .build();
+
+        sendOrEditText(user.getTelegramChatId(), messageId, text, keyboard, client);
+    }
+
+    private String buildSpeciesFactsText(
+            Plant plant,
+            java.util.Map<com.plantcare.bot.domain.enums.FactCategory, List<SpeciesFactDto>> factsByCategory
+    ) {
+        StringBuilder sb = new StringBuilder();
+
+        String speciesName = plant.getSpecies() != null ? plant.getSpecies().getName() : plant.getName();
+        sb.append("🌍 *О виде — ").append(escapeMd(speciesName)).append("*\n");
+
+        if (factsByCategory.isEmpty()) {
+            sb.append("\nПока нет фактов об этом виде.");
+            return sb.toString();
+        }
+
+        // Фиксированный порядок категорий для предсказуемого вида карточки.
+        for (com.plantcare.bot.domain.enums.FactCategory category :
+                com.plantcare.bot.domain.enums.FactCategory.values()) {
+            List<SpeciesFactDto> facts = factsByCategory.get(category);
+            if (facts == null || facts.isEmpty()) {
+                continue;
+            }
+
+            sb.append("\n").append(factCategoryEmoji(category)).append(" *")
+                    .append(factCategoryTitle(category)).append("*\n");
+
+            for (SpeciesFactDto fact : facts) {
+                sb.append("• ");
+                if (fact.title() != null && !fact.title().isBlank()) {
+                    sb.append("*").append(escapeMd(fact.title())).append("* — ");
+                }
+                sb.append(escapeMd(fact.body()));
+                if (fact.source() != null && !fact.source().isBlank()) {
+                    sb.append("\n  _Источник: ").append(escapeMd(fact.source())).append("_");
+                }
+                sb.append("\n");
+            }
+        }
+
+        return sb.toString();
+    }
+
+    private String factCategoryTitle(com.plantcare.bot.domain.enums.FactCategory category) {
+        return switch (category) {
+            case ORIGIN    -> "Происхождение";
+            case CARE      -> "Уход";
+            case TOXICITY  -> "Токсичность";
+            case CURIOSITY -> "Интересное";
+        };
+    }
+
+    private String factCategoryEmoji(com.plantcare.bot.domain.enums.FactCategory category) {
+        return switch (category) {
+            case ORIGIN    -> "🗺";
+            case CARE      -> "🪴";
+            case TOXICITY  -> "⚠️";
+            case CURIOSITY -> "✨";
+        };
+    }
+
+    // =================================================================
     // 3) Экран «📜 История» (issue #51)
     // =================================================================
 
@@ -1248,7 +1358,8 @@ public class PlantCardService {
     private InlineKeyboardMarkup buildDetailedCardKeyboard(
             Plant plant,
             List<CareSchedule> schedules,
-            String backTarget
+            String backTarget,
+            boolean hasSpeciesFacts
     ) {
         List<InlineKeyboardRow> rows = new ArrayList<>();
 
@@ -1309,6 +1420,17 @@ public class PlantCardService {
                 .callbackData("PLANT:DIAG:START:" + plant.getId())
                 .build());
         rows.add(diagnosisRow);
+
+        // 2a') «О виде» (issue #129): энциклопедические факты вида. Кнопку
+        // показываем только если у вида реально есть факты (hasSpeciesFacts).
+        if (hasSpeciesFacts) {
+            rows.add(new InlineKeyboardRow(List.of(
+                    InlineKeyboardButton.builder()
+                            .text("🌍 О виде")
+                            .callbackData("PLANT:SPECIES_FACTS:" + plant.getId() + backSuffix(backTarget))
+                            .build()
+            )));
+        }
 
         // 2b) Журнал событий (issue #76): добавить событие + просмотр журнала.
         // Отдельный ряд, чтобы не смешивать с регулярным уходом и не перегружать auxRow.

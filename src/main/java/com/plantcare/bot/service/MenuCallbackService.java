@@ -632,6 +632,25 @@ public class MenuCallbackService {
             return;
         }
 
+        if (data.startsWith("PLANT:SPECIES_FACTS:")) {
+            String[] parts = data.substring("PLANT:SPECIES_FACTS:".length()).split(":");
+
+            Long plantId;
+
+            try {
+                plantId = Long.parseLong(parts[0]);
+            } catch (NumberFormatException e) {
+                answerCallback(client, callbackId, "❌ Неверный ID");
+                return;
+            }
+
+            String backTarget = parseBackTarget(parts, 1);
+
+            plantCardService.showSpeciesFactsScreen(user, plantId, messageId, backTarget, client);
+            answerCallback(client, callbackId, "");
+            return;
+        }
+
         if (data.startsWith("PLANT:EVENT:")) {
             handlePlantEventCallback(data, user, messageId, callbackId, client);
             return;

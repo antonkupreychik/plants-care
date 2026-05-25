@@ -71,6 +71,7 @@ echo 'testcontainers.reuse.enable=true' >> ~/.testcontainers.properties
 - **V15** — добавляет `client_id VARCHAR(64) NULL` в `care_history` с partial unique index `WHERE client_id IS NOT NULL`. Колонка nullable — записи из Telegram-бота остаются с NULL без конфликтов
 - **V20** — добавляет `plants.acquired_at DATE NULL` — дата, когда юзер завёл растение. Используется шедулером годовщин и строкой «С тобой с …» в карточке. NULL = в годовщинах не участвует
 - **V21** — таблица `plant_anniversaries_sent` (PK `(plant_id, anniversary_year)`) для идемпотентности годовщин: один пуш на растение в год. FK `ON DELETE CASCADE`. Здесь же — частичный индекс `idx_plants_acquired_active` на `plants(acquired_at) WHERE acquired_at IS NOT NULL AND archived_at IS NULL` под запрос шедулера
+- **V22** — таблица `species_facts` (энциклопедия видов, ADR-011): кураторские факты по видам с категориями `ORIGIN`/`CARE`/`TOXICITY`/`CURIOSITY` (CHECK), `title`/`body`/`source`/`display_order`. FK на `species` `ON DELETE CASCADE`, btree-индекс `(species_id, category, display_order)`. GIN-индекс намеренно не создаётся (обоснование в комментарии миграции). Сидинг — отдельной задачей
 
 ## REST API
 
@@ -175,7 +176,9 @@ echo 'testcontainers.reuse.enable=true' >> ~/.testcontainers.properties
 }
 ```
 
-Ответ `GET /api/v1/species/{id}` — те же поля плюс `description`. При отсутствии записи — `404`.
+Ответ `GET /api/v1/species/{id}` — те же поля плюс `description` и `facts[]` — энциклопедические факты вида (ADR-011), отсортированные по категории, затем по `display_order`; пустой массив, если фактов нет. Каждый факт: `category` (`ORIGIN`/`CARE`/`TOXICITY`/`CURIOSITY`), `body`, опциональные `title` и `source`. При отсутствии записи — `404`.
+
+Поиск `q` в `GET /api/v1/species` дополнительно находит вид по совпадению в тексте его фактов (title/body), не только по имени и тегам.
 
 ### Типы ухода
 

@@ -3,8 +3,10 @@ package com.plantcare.bot.web;
 import com.plantcare.bot.api.generated.SpeciesApi;
 import com.plantcare.bot.api.generated.model.PageResponseSpeciesSummaryDto;
 import com.plantcare.bot.api.generated.model.SpeciesDetailDto;
+import com.plantcare.bot.api.generated.model.SpeciesFactDto;
 import com.plantcare.bot.api.generated.model.SpeciesSummaryDto;
 import com.plantcare.bot.domain.Species;
+import com.plantcare.bot.service.SpeciesFactService;
 import com.plantcare.bot.service.SpeciesService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -30,6 +32,7 @@ public class SpeciesController implements SpeciesApi {
     private static final int MAX_LIMIT = 100;
 
     private final SpeciesService speciesService;
+    private final SpeciesFactService speciesFactService;
 
     @Override
     public PageResponseSpeciesSummaryDto listSpecies(String q, Integer offset, Integer limit) {
@@ -51,7 +54,18 @@ public class SpeciesController implements SpeciesApi {
     @Override
     public SpeciesDetailDto getSpecies(Long id) {
         log.debug("Species detail request. id={}", id);
-        return toDetail(speciesService.getById(id));
+
+        Species species = speciesService.getById(id);
+
+        // issue #129: факты вида в детальной карточке справочника. Сгруппированы
+        // по категориям сервисом; здесь разворачиваем в плоский список с уже
+        // правильным порядком (категория → displayOrder).
+        List<SpeciesFactDto> facts = speciesFactService.getFactsBySpecies(id, null).values().stream()
+                .flatMap(List::stream)
+                .map(SpeciesController::toFact)
+                .toList();
+
+        return toDetail(species).facts(facts);
     }
 
     private static SpeciesSummaryDto toSummary(Species s) {
@@ -63,6 +77,12 @@ public class SpeciesController implements SpeciesApi {
                 .soilCheckDays(s.getSoilCheckDays())
                 .careDifficulty(s.getCareDifficulty() != null ? s.getCareDifficulty().name() : null)
                 .lightPreference(s.getLightPreference() != null ? s.getLightPreference().name() : null);
+    }
+
+    private static SpeciesFactDto toFact(com.plantcare.bot.service.SpeciesFactDto fact) {
+        return new SpeciesFactDto(SpeciesFactDto.CategoryEnum.fromValue(fact.category().name()), fact.body())
+                .title(fact.title())
+                .source(fact.source());
     }
 
     private static SpeciesDetailDto toDetail(Species s) {
