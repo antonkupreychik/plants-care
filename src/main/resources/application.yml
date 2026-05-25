@@ -111,6 +111,19 @@ plants:
       # Для более агрессивного мониторинга можно поставить PT3M (3 пропуска).
       max-tick-age: ${PLANTS_SCHEDULER_MAX_TICK_AGE:PT15M}
 
+  # Issue #141: подсказка расходников перед предстоящей пересадкой.
+  # «Предстоящая пересадка» = дата последней TRANSPLANT из журнала (#76) + interval-months.
+  # Если она в окне ближайших horizon-days (в TZ юзера) — бот шлёт мягкую нотификацию
+  # с кнопками «➕ В список покупок» / «Не нужно».
+  transplant-suggestion:
+    enabled: ${PLANTS_TRANSPLANT_SUGGESTION_ENABLED:true}
+    horizon-days: ${PLANTS_TRANSPLANT_SUGGESTION_HORIZON_DAYS:14}
+    interval-months: ${PLANTS_TRANSPLANT_SUGGESTION_INTERVAL_MONTHS:12}
+    supplies:
+      - Грунт
+      - Дренаж
+    message-template: "🪴 Растению «%s» скоро пересадка — добавить расходники (%s) в список покупок?"
+
 # Telegram (placeholder, используется со следующей задачи)
 telegram:
   bot:
