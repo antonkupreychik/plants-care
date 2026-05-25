@@ -15,10 +15,9 @@ import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
  * веб-админку ({@code admin}) и REST API ({@code api}). Слои доставки зависеть от
  * {@code core} могут — это разрешённое направление.
  *
- * <p>На момент Фазы 1 код {@code admin}/{@code api} физически ещё лежит под
- * {@code com.plantcare.bot.*}, поэтому ключевой барьер — {@code core ∌ bot}. Паттерны
- * {@code admin..}/{@code api..} перечислены заранее, чтобы правило не пришлось менять,
- * когда эти слои переедут в свои пакеты (Фазы 3–4).
+ * <p>Все три слоя доставки выделены в свои top-level пакеты: {@code com.plantcare.bot},
+ * {@code com.plantcare.admin}, {@code com.plantcare.api}. {@code core} не должен зависеть
+ * ни от одного из них.
  */
 @AnalyzeClasses(packages = "com.plantcare", importOptions = ImportOption.DoNotIncludeTests.class)
 class LayeredArchitectureTest {
