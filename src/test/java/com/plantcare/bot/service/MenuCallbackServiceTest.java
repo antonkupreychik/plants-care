@@ -48,6 +48,7 @@ class MenuCallbackServiceTest {
     @Mock private PlantTemplateService plantTemplateService;
     @Mock private NotificationCallbackService notificationCallbackService;
     @Mock private PlantEventService plantEventService;
+    @Mock private com.plantcare.bot.seasonal.service.SeasonalMenuService seasonalMenuService;
     @Mock private TelegramClient telegramClient;
     @Mock private CallbackQuery callbackQuery;
     @Mock private Message message;
@@ -681,5 +682,105 @@ class MenuCallbackServiceTest {
                 eq(PlantCardService.BACK_TO_LOCATION_PREFIX + "5"),
                 eq(telegramClient)
         );
+    }
+
+    // ===== Сезонные интервалы (issue #67): wiring диспетчера =====
+
+    @Test
+    @DisplayName("MENU:SEASONAL открывает экран сезонных интервалов")
+    void shouldOpenSeasonalScreen() {
+        when(callbackQuery.getData()).thenReturn("MENU:SEASONAL");
+
+        service.handleCallback(callbackQuery, telegramClient, testUser);
+
+        verify(seasonalMenuService).sendScreen(testUser, 42, telegramClient);
+    }
+
+    @Test
+    @DisplayName("SEASON:TOGGLE переключает сезонность")
+    void shouldToggleSeasonal() {
+        when(callbackQuery.getData()).thenReturn("SEASON:TOGGLE");
+
+        service.handleCallback(callbackQuery, telegramClient, testUser);
+
+        verify(seasonalMenuService).toggleEnabled(testUser, 42, telegramClient);
+    }
+
+    @Test
+    @DisplayName("SEASON:MODE:FIXED переключает режим на FIXED")
+    void shouldSetFixedMode() {
+        when(callbackQuery.getData()).thenReturn("SEASON:MODE:FIXED");
+
+        service.handleCallback(callbackQuery, telegramClient, testUser);
+
+        verify(seasonalMenuService).setMode(
+                testUser, com.plantcare.bot.domain.enums.SeasonalMode.FIXED, 42, telegramClient);
+    }
+
+    @Test
+    @DisplayName("SEASON:MODE с мусором — alert, setMode не зовётся")
+    void shouldRejectUnknownSeasonalMode() {
+        when(callbackQuery.getData()).thenReturn("SEASON:MODE:NONSENSE");
+
+        service.handleCallback(callbackQuery, telegramClient, testUser);
+
+        verify(seasonalMenuService, never()).setMode(any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("SEASON:MUL:SUMMER листает летний коэффициент")
+    void shouldCycleSummerMultiplier() {
+        when(callbackQuery.getData()).thenReturn("SEASON:MUL:SUMMER");
+
+        service.handleCallback(callbackQuery, telegramClient, testUser);
+
+        verify(seasonalMenuService).cycleMultiplier(
+                testUser, com.plantcare.bot.domain.enums.Season.SUMMER, 42, telegramClient);
+    }
+
+    @Test
+    @DisplayName("SEASON:INT:WINTER листает зимний фиксированный интервал")
+    void shouldCycleWinterInterval() {
+        when(callbackQuery.getData()).thenReturn("SEASON:INT:WINTER");
+
+        service.handleCallback(callbackQuery, telegramClient, testUser);
+
+        verify(seasonalMenuService).cycleInterval(
+                testUser, com.plantcare.bot.domain.enums.Season.WINTER, 42, telegramClient);
+    }
+
+    @Test
+    @DisplayName("SEASON:INT:SUMMER:CLEAR сбрасывает летний фиксированный интервал")
+    void shouldClearSummerInterval() {
+        when(callbackQuery.getData()).thenReturn("SEASON:INT:SUMMER:CLEAR");
+
+        service.handleCallback(callbackQuery, telegramClient, testUser);
+
+        verify(seasonalMenuService).clearInterval(
+                testUser, com.plantcare.bot.domain.enums.Season.SUMMER, 42, telegramClient);
+        verify(seasonalMenuService, never()).cycleInterval(any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("PLANT:SEASONAL:<id> циклит per-plant override")
+    void shouldCyclePlantSeasonalOverride() {
+        when(callbackQuery.getData()).thenReturn("PLANT:SEASONAL:7");
+
+        service.handleCallback(callbackQuery, telegramClient, testUser);
+
+        verify(plantCardService).cycleSeasonalOverride(
+                testUser, 7L, 42, PlantCardService.BACK_TO_LIST, telegramClient);
+    }
+
+    @Test
+    @DisplayName("PLANT:SEASONAL:<id>:LOC:<loc> сохраняет back-target комнаты")
+    void shouldKeepLocationBackTargetInPlantSeasonal() {
+        when(callbackQuery.getData()).thenReturn("PLANT:SEASONAL:7:LOC:5");
+
+        service.handleCallback(callbackQuery, telegramClient, testUser);
+
+        verify(plantCardService).cycleSeasonalOverride(
+                testUser, 7L, 42,
+                PlantCardService.BACK_TO_LOCATION_PREFIX + "5", telegramClient);
     }
 }
