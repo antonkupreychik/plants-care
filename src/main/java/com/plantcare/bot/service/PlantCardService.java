@@ -1422,6 +1422,9 @@ public class PlantCardService {
             sb.append("\n📝 _").append(escapeMd(plant.getNotes().trim())).append("_\n");
         }
 
+        // issue #135: рекомендация по освещению вида.
+        appendLightLine(sb, plant.getSpecies());
+
         // issue #130: блок токсичности вида. Показываем только флаги == true.
         appendToxicityBlock(sb, plant.getSpecies());
 
@@ -1463,6 +1466,21 @@ public class PlantCardService {
         }
 
         return sb.toString();
+    }
+
+    /**
+     * Дописывает строку освещения вида (issue #135). Показывается только если у вида
+     * задан {@code lightPreference}; для {@code null} строка отсутствует.
+     */
+    private void appendLightLine(StringBuilder sb, com.plantcare.core.domain.Species species) {
+        if (species == null) {
+            return;
+        }
+        String lightPhrase = LightPreferenceText.phrase(species.getLightPreference());
+        if (lightPhrase.isBlank()) {
+            return;
+        }
+        sb.append("\n☀️ Освещение: ").append(lightPhrase).append("\n");
     }
 
     /**
