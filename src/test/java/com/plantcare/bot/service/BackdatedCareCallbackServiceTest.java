@@ -1,5 +1,7 @@
 package com.plantcare.bot.service;
 
+import com.plantcare.core.metrics.MetricsService;
+import com.plantcare.core.metrics.MetricsService.CallbackOutcome;
 import com.plantcare.core.service.BackdatedCareService;
 import com.plantcare.core.service.PlantService;
 import com.plantcare.core.service.UserService;
@@ -59,6 +61,7 @@ class BackdatedCareCallbackServiceTest {
     @Mock private PlantService plantService;
     @Mock private UserService userService;
     @Mock private BackdatedCareService backdatedCareService;
+    @Mock private MetricsService metricsService;
     @Mock private TelegramClient client;
 
     private static final Instant FIXED_NOW = Instant.parse("2026-05-24T10:00:00Z");
@@ -73,6 +76,7 @@ class BackdatedCareCallbackServiceTest {
                 plantService,
                 userService,
                 backdatedCareService,
+                metricsService,
                 Clock.fixed(FIXED_NOW, ZoneOffset.UTC)
         );
 
@@ -411,6 +415,124 @@ class BackdatedCareCallbackServiceTest {
             // today=2026-05-24, ввод 07.06 — ~14 дней вперёд, в пределах 30-дневного порога
             Optional<LocalDate> got = service.parseCareDate("07.06", user);
             assertThat(got).contains(LocalDate.of(2026, 6, 7));
+        }
+    }
+
+    // ====================================================================
+    // Метрики callbacks (#126) — маппинг исходов flow #118 на CallbackOutcome.
+    // back_* живут здесь (а не в NotificationCallbackServiceTest$CallbackMetrics),
+    // потому что в NCS-тесте backdatedCareCallbackService — мок, и реальную запись
+    // метрики через NCS проверить нельзя.
+    // ====================================================================
+
+    @Nested
+    @DisplayName("Метрики callbacks (#126)")
+    class CallbackMetrics {
+
+        @Test
+        @DisplayName("back_care с активным типом ухода: recordCallback(back_care, ok)")
+        void should_record_back_care_ok_when_active_care_type_present() throws TelegramApiException {
+            when(plantService.getActiveSchedules(7L)).thenReturn(List.of(scheduleFor(TaskType.WATERING)));
+
+            service.handleCallback("back_care", new String[]{"v1", "back_care", "7"},
+                    100L, 555, "cb-1", client);
+
+            verify(metricsService).recordCallback("back_care", CallbackOutcome.OK);
+        }
+
+        @Test
+        @DisplayName("back_care неизвестный пользователь: recordCallback(back_care, error)")
+        void should_record_back_care_error_when_user_unknown() throws TelegramApiException {
+            when(userService.findByChatId(100L)).thenReturn(Optional.empty());
+
+            service.handleCallback("back_care", new String[]{"v1", "back_care", "7"},
+                    100L, 555, "cb-1", client);
+
+            verify(metricsService).recordCallback("back_care", CallbackOutcome.ERROR);
+        }
+
+        @Test
+        @DisplayName("back_pick CREATED: recordCallback(back_pick, ok)")
+        void should_record_back_pick_ok_when_outcome_created() throws TelegramApiException {
+            LocalDate yesterday = LocalDate.of(2026, 5, 23);
+            when(backdatedCareService.recordBackdatedCare(any(), any(), any()))
+                    .thenReturn(new BackdatedCareService.BackdatedCareResult(
+                            BackdatedCareService.Outcome.CREATED, yesterday,
+                            java.time.LocalDateTime.of(2026, 5, 30, 12, 0)));
+
+            service.handleCallback("back_pick",
+                    new String[]{"v1", "back_pick", "7", "WATERING", "1"},
+                    100L, 555, "cb-1", client);
+
+            verify(metricsService).recordCallback("back_pick", CallbackOutcome.OK);
+        }
+
+        @Test
+        @DisplayName("back_pick ALREADY_RECORDED: recordCallback(back_pick, idempotent)")
+        void should_record_back_pick_idempotent_when_outcome_already_recorded() throws TelegramApiException {
+            LocalDate yesterday = LocalDate.of(2026, 5, 23);
+            when(backdatedCareService.recordBackdatedCare(any(), any(), any()))
+                    .thenReturn(new BackdatedCareService.BackdatedCareResult(
+                            BackdatedCareService.Outcome.ALREADY_RECORDED, yesterday, null));
+
+            service.handleCallback("back_pick",
+                    new String[]{"v1", "back_pick", "7", "WATERING", "1"},
+                    100L, 555, "cb-1", client);
+
+            verify(metricsService).recordCallback("back_pick", CallbackOutcome.IDEMPOTENT);
+        }
+
+        @Test
+        @DisplayName("back_pick TOO_OLD: recordCallback(back_pick, error)")
+        void should_record_back_pick_error_when_outcome_too_old() throws TelegramApiException {
+            LocalDate yesterday = LocalDate.of(2026, 5, 23);
+            when(backdatedCareService.recordBackdatedCare(any(), any(), any()))
+                    .thenReturn(new BackdatedCareService.BackdatedCareResult(
+                            BackdatedCareService.Outcome.TOO_OLD, yesterday, null));
+
+            service.handleCallback("back_pick",
+                    new String[]{"v1", "back_pick", "7", "WATERING", "1"},
+                    100L, 555, "cb-1", client);
+
+            verify(metricsService).recordCallback("back_pick", CallbackOutcome.ERROR);
+        }
+
+        @Test
+        @DisplayName("back_pick IN_FUTURE: recordCallback(back_pick, error)")
+        void should_record_back_pick_error_when_outcome_in_future() throws TelegramApiException {
+            LocalDate today = LocalDate.of(2026, 5, 24);
+            when(backdatedCareService.recordBackdatedCare(any(), any(), any()))
+                    .thenReturn(new BackdatedCareService.BackdatedCareResult(
+                            BackdatedCareService.Outcome.IN_FUTURE, today, null));
+
+            service.handleCallback("back_pick",
+                    new String[]{"v1", "back_pick", "7", "WATERING", "0"},
+                    100L, 555, "cb-1", client);
+
+            verify(metricsService).recordCallback("back_pick", CallbackOutcome.ERROR);
+        }
+
+        @Test
+        @DisplayName("back_pick растение не найдено (early-return): recordCallback(back_pick, error)")
+        void should_record_back_pick_error_when_plant_not_found() throws TelegramApiException {
+            when(plantService.getPlantForUser(42L, 7L)).thenReturn(Optional.empty());
+
+            service.handleCallback("back_pick",
+                    new String[]{"v1", "back_pick", "7", "WATERING", "1"},
+                    100L, 555, "cb-1", client);
+
+            verify(backdatedCareService, never()).recordBackdatedCare(any(), any(), any());
+            verify(metricsService).recordCallback("back_pick", CallbackOutcome.ERROR);
+        }
+
+        @Test
+        @DisplayName("back_custom выставляет state: recordCallback(back_custom, ok)")
+        void should_record_back_custom_ok_when_state_set() throws TelegramApiException {
+            service.handleCallback("back_custom",
+                    new String[]{"v1", "back_custom", "7", "WATERING"},
+                    100L, 555, "cb-1", client);
+
+            verify(metricsService).recordCallback("back_custom", CallbackOutcome.OK);
         }
     }
 

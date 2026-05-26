@@ -831,5 +831,83 @@ class NotificationCallbackServiceTest {
 
             verify(metricsService).recordCallback("bulk_done", CallbackOutcome.IDEMPOTENT);
         }
+
+        // ----- snooze_pick (выбор интервала, #118) ----------------------
+
+        @Test
+        @DisplayName("snooze_pick tomorrow на активном расписании: recordCallback(snooze_pick, ok)")
+        void should_record_snooze_pick_ok_when_active_schedule_and_valid_option() throws TelegramApiException {
+            // quiet-hours policy не сдвигает — возвращает переданный instant как есть.
+            when(quietHoursPolicy.shiftOutOfQuietHours(any(), any()))
+                    .thenAnswer(inv -> inv.getArgument(1));
+            when(callbackQuery.getData()).thenReturn("v1:snooze_pick:1:tomorrow");
+            when(careScheduleRepository.findById(1L)).thenReturn(Optional.of(schedule));
+
+            service.handleCallback(callbackQuery, telegramClient);
+
+            verify(metricsService).recordCallback("snooze_pick", CallbackOutcome.OK);
+        }
+
+        @Test
+        @DisplayName("snooze_pick: schedule не найден: recordCallback(snooze_pick, error)")
+        void should_record_snooze_pick_error_when_schedule_not_found() throws TelegramApiException {
+            when(callbackQuery.getData()).thenReturn("v1:snooze_pick:9999:tomorrow");
+            when(careScheduleRepository.findById(9999L)).thenReturn(Optional.empty());
+
+            service.handleCallback(callbackQuery, telegramClient);
+
+            verify(metricsService).recordCallback("snooze_pick", CallbackOutcome.ERROR);
+        }
+
+        @Test
+        @DisplayName("snooze_pick: расписание неактивно: recordCallback(snooze_pick, error)")
+        void should_record_snooze_pick_error_when_schedule_inactive() throws TelegramApiException {
+            schedule.setActive(false);
+            when(callbackQuery.getData()).thenReturn("v1:snooze_pick:1:tomorrow");
+            when(careScheduleRepository.findById(1L)).thenReturn(Optional.of(schedule));
+
+            service.handleCallback(callbackQuery, telegramClient);
+
+            verify(metricsService).recordCallback("snooze_pick", CallbackOutcome.ERROR);
+        }
+
+        // ----- snooze_back (возврат к reminder-клавиатуре, #118) --------
+
+        @Test
+        @DisplayName("snooze_back на активном расписании: recordCallback(snooze_back, ok)")
+        void should_record_snooze_back_ok_when_active_schedule() throws TelegramApiException {
+            when(reminderKeyboardFactory.buildReminderKeyboard(eq(1L), any()))
+                    .thenReturn(org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMarkup
+                            .builder().keyboard(java.util.List.of()).build());
+            when(callbackQuery.getData()).thenReturn("v1:snooze_back:1");
+            when(careScheduleRepository.findById(1L)).thenReturn(Optional.of(schedule));
+
+            service.handleCallback(callbackQuery, telegramClient);
+
+            verify(metricsService).recordCallback("snooze_back", CallbackOutcome.OK);
+        }
+
+        @Test
+        @DisplayName("snooze_back: schedule не найден: recordCallback(snooze_back, error)")
+        void should_record_snooze_back_error_when_schedule_not_found() throws TelegramApiException {
+            when(callbackQuery.getData()).thenReturn("v1:snooze_back:9999");
+            when(careScheduleRepository.findById(9999L)).thenReturn(Optional.empty());
+
+            service.handleCallback(callbackQuery, telegramClient);
+
+            verify(metricsService).recordCallback("snooze_back", CallbackOutcome.ERROR);
+        }
+
+        @Test
+        @DisplayName("snooze_back: расписание неактивно: recordCallback(snooze_back, error)")
+        void should_record_snooze_back_error_when_schedule_inactive() throws TelegramApiException {
+            schedule.setActive(false);
+            when(callbackQuery.getData()).thenReturn("v1:snooze_back:1");
+            when(careScheduleRepository.findById(1L)).thenReturn(Optional.of(schedule));
+
+            service.handleCallback(callbackQuery, telegramClient);
+
+            verify(metricsService).recordCallback("snooze_back", CallbackOutcome.ERROR);
+        }
     }
 }
