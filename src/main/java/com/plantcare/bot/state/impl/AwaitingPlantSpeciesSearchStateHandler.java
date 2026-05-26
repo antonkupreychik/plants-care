@@ -1,5 +1,6 @@
 package com.plantcare.bot.state.impl;
 
+import com.plantcare.bot.service.SpeciesPreviewText;
 import com.plantcare.core.domain.Species;
 import com.plantcare.core.domain.User;
 import com.plantcare.core.domain.enums.ConversationState;
@@ -167,22 +168,12 @@ public class AwaitingPlantSpeciesSearchStateHandler implements StateHandler {
 
         plantService.getSpeciesById(speciesId).ifPresentOrElse(
                 species -> {
-                    String wateringText = species.getWateringDays() != null
-                            ? String.format("Полив: раз в %d дней", species.getWateringDays())
-                            : "Полив: по необходимости";
-
                     int interval = species.getWateringDays() != null ? species.getWateringDays() : 7;
                     userService.setStateData(user, "interval_days", Integer.toString(interval));
 
-
                     SendMessage message = SendMessage.builder()
                             .chatId(user.getTelegramChatId().toString())
-                            .text(String.format(
-                                    "✨ *%s*\n\n" +
-                                            "%s\n\n" +
-                                            "Тебе подходит?",
-                                    species.getName(), wateringText
-                            ))
+                            .text(SpeciesPreviewText.build(species.getName(), species.getWateringDays(), species.getLightPreference()))
                             .parseMode("Markdown")
                             .replyMarkup(buildConfirmKeyboard())
                             .build();
