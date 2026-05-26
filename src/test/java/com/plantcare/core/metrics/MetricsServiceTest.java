@@ -228,6 +228,31 @@ class MetricsServiceTest {
             assertThat(unknownCounter.count()).isEqualTo(1.0);
             assertThat(garbageCounter).isNull();
         }
+
+        @Test
+        @DisplayName("flow #118 actions в whitelist'е: счётчик с собственным тэгом, не unknown")
+        void should_keep_flow_118_actions_as_own_tag_not_unknown() {
+            // Без добавления в KNOWN_CALLBACK_ACTIONS эти 5 санитайзились бы в "unknown"
+            // и метрика по веткам #118 была бы слепой.
+            for (String action : new String[]{
+                    "snooze_pick", "snooze_back", "back_care", "back_pick", "back_custom"}) {
+                metricsService.recordCallback(action, CallbackOutcome.OK);
+
+                Counter counter = registry.find(MetricsService.CALLBACKS_PROCESSED)
+                        .tag("action", action)
+                        .tag("outcome", "ok")
+                        .counter();
+
+                assertThat(counter)
+                        .as("action '%s' должен иметь собственный counter, а не unknown", action)
+                        .isNotNull();
+                assertThat(counter.count()).isEqualTo(1.0);
+            }
+
+            // и в "unknown" ничего не утекло
+            assertThat(registry.find(MetricsService.CALLBACKS_PROCESSED)
+                    .tag("action", "unknown").counter()).isNull();
+        }
     }
 
     @Nested

@@ -767,6 +767,7 @@ public class NotificationCallbackService {
     ) {
         if (parts.length != 4) {
             answerCallback(client, callbackId, "❌ Неверный формат");
+            metricsService.recordCallback("snooze_pick", CallbackOutcome.ERROR);
             return;
         }
         Long scheduleId;
@@ -774,6 +775,7 @@ public class NotificationCallbackService {
             scheduleId = Long.parseLong(parts[2]);
         } catch (NumberFormatException e) {
             answerCallback(client, callbackId, "❌ Неверный ID");
+            metricsService.recordCallback("snooze_pick", CallbackOutcome.ERROR);
             return;
         }
         String option = parts[3];
@@ -781,6 +783,7 @@ public class NotificationCallbackService {
         Optional<CareSchedule> opt = careScheduleRepository.findById(scheduleId);
         if (opt.isEmpty()) {
             answerCallback(client, callbackId, "❌ Расписание не найдено");
+            metricsService.recordCallback("snooze_pick", CallbackOutcome.ERROR);
             return;
         }
         CareSchedule schedule = opt.get();
@@ -790,12 +793,16 @@ public class NotificationCallbackService {
         if (!schedule.isActive()) {
             editMessage(client, chatId, messageId, "Это расписание отключено");
             answerCallback(client, callbackId, "Расписание отключено");
+            metricsService.recordCallback("snooze_pick", CallbackOutcome.ERROR);
             return;
         }
         Plant plant = schedule.getPlant();
         if (plant.isArchived()) {
             editMessage(client, chatId, messageId, "Растение уже удалено");
             answerCallback(client, callbackId, "Растение удалено");
+            // Архив трактуем как «уже не актуально», не ошибка — зеркалит
+            // обработку архива в основном switch (см. case "done").
+            metricsService.recordCallback("snooze_pick", CallbackOutcome.IDEMPOTENT);
             return;
         }
 
@@ -811,6 +818,7 @@ public class NotificationCallbackService {
         };
         if (target == null) {
             answerCallback(client, callbackId, "❌ Неизвестный вариант");
+            metricsService.recordCallback("snooze_pick", CallbackOutcome.ERROR);
             return;
         }
 
@@ -826,6 +834,7 @@ public class NotificationCallbackService {
                 + (wasShifted ? " (сдвинуто из тихих часов)" : ".");
         editMessage(client, chatId, messageId, confirm);
         answerCallback(client, callbackId, "Отложено");
+        metricsService.recordCallback("snooze_pick", CallbackOutcome.OK);
 
         log.info("Snooze picked: schedule={} option={} target={} shifted={} wasShifted={}",
                 scheduleId, option, target, shifted, wasShifted);
@@ -857,6 +866,7 @@ public class NotificationCallbackService {
     ) {
         if (parts.length != 3) {
             answerCallback(client, callbackId, "❌ Неверный формат");
+            metricsService.recordCallback("snooze_back", CallbackOutcome.ERROR);
             return;
         }
         Long scheduleId;
@@ -864,12 +874,14 @@ public class NotificationCallbackService {
             scheduleId = Long.parseLong(parts[2]);
         } catch (NumberFormatException e) {
             answerCallback(client, callbackId, "❌ Неверный ID");
+            metricsService.recordCallback("snooze_back", CallbackOutcome.ERROR);
             return;
         }
 
         Optional<CareSchedule> opt = careScheduleRepository.findById(scheduleId);
         if (opt.isEmpty()) {
             answerCallback(client, callbackId, "❌ Расписание не найдено");
+            metricsService.recordCallback("snooze_back", CallbackOutcome.ERROR);
             return;
         }
         CareSchedule schedule = opt.get();
@@ -880,6 +892,7 @@ public class NotificationCallbackService {
         if (!schedule.isActive()) {
             editMessage(client, chatId, messageId, "Расписание уже отключено");
             answerCallback(client, callbackId, "Расписание отключено");
+            metricsService.recordCallback("snooze_back", CallbackOutcome.ERROR);
             return;
         }
 
@@ -897,6 +910,7 @@ public class NotificationCallbackService {
             log.error("Failed to restore reminder keyboard: {}", e.getMessage(), e);
         }
         answerCallback(client, callbackId, "");
+        metricsService.recordCallback("snooze_back", CallbackOutcome.OK);
     }
 
     // ====================================================================

@@ -77,7 +77,11 @@ public class MetricsService {
             // акклиматизация (#75)
             "accl_soil", "accl_snooze", "accl_checkin",
             // дайджест (#50)
-            "digest_done_all", "digest_expand", "digest_unknown"
+            "digest_done_all", "digest_expand", "digest_unknown",
+            // отложить напоминание: выбор варианта и возврат (#118)
+            "snooze_pick", "snooze_back",
+            // ретро-отметка ухода «Я уже ухаживал» (#118)
+            "back_care", "back_pick", "back_custom"
     );
 
     /** Значение тэга {@code action}, если переданная строка не в whitelist'е. */
