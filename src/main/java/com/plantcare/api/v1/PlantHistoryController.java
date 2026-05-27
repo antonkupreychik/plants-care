@@ -48,9 +48,12 @@ public class PlantHistoryController implements PlantHistoryApi {
                 plant.getId(), safeOffset, limit);
         long total = careHistoryService.countHistory(plant.getId());
 
+        // Все записи принадлежат одному загруженному выше растению; мапим из него,
+        // а не из ленивого history.getPlant() — нативный листинг истории plant не
+        // фетчит, и обращение к прокси вне транзакции дало бы no-session (issue #86).
         List<CareEventResponse> responseItems = items.stream()
                 .filter(h -> h.getTaskType() != TaskType.SOIL_CHECK)
-                .map(CareEventController::toResponse)
+                .map(h -> CareEventController.toResponse(h, plant))
                 .toList();
 
         return new PlantHistoryResponse(responseItems, total, limit, safeOffset);

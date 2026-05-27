@@ -6,6 +6,7 @@ import com.plantcare.api.generated.model.CareEventType;
 import com.plantcare.api.generated.model.CreateCareEventRequest;
 import com.plantcare.api.UserApiResolver;
 import com.plantcare.core.domain.CareHistory;
+import com.plantcare.core.domain.Plant;
 import com.plantcare.core.domain.User;
 import com.plantcare.core.domain.enums.TaskType;
 import lombok.RequiredArgsConstructor;
@@ -54,10 +55,23 @@ public class CareEventController implements CareEventsApi {
     }
 
     static CareEventResponse toResponse(CareHistory history) {
+        return toResponse(history, history.getPlant());
+    }
+
+    /**
+     * Вариант для вызывающих, у которых растение уже загружено отдельно.
+     *
+     * <p>Нужен там, где {@code history} приходит из запроса, который не тянет
+     * {@code plant} (например нативный листинг истории с реальным offset), —
+     * тогда {@code history.getPlant().getName()} вне транзакции дал бы
+     * {@code LazyInitializationException: no session}. Здесь имя/id берутся из
+     * переданного {@code plant}, а не из ленивого прокси.
+     */
+    static CareEventResponse toResponse(CareHistory history, Plant plant) {
         return new CareEventResponse(
                 history.getId(),
-                history.getPlant().getId(),
-                history.getPlant().getName(),
+                plant.getId(),
+                plant.getName(),
                 fromTaskType(history.getTaskType()),
                 history.getDoneAt().atOffset(ZoneOffset.UTC),
                 history.isOnTime()
