@@ -78,6 +78,13 @@ weather:
 # Issue #88 (ADR-011): мобильная аутентификация. Секреты — только из env.
 plantcare:
   auth:
+    # Глобальный выключатель мобильной авторизации. На prod ВСЕГДА true.
+    # AUTH_ENABLED=false — только для локальной разработки: /api/v1/** открываются
+    # без токена, JWT-секрет не нужен, текущий пользователь = dev-user-id.
+    enabled: ${AUTH_ENABLED:false}
+    # users.id, от имени которого работают /api/v1/** при enabled=false.
+    # Пользователь с этим id должен существовать в локальной БД.
+    dev-user-id: ${AUTH_DEV_USER_ID:1}
     jwt:
       # HMAC-секрет для подписи наших access/refresh JWT. На prod ОБЯЗАТЕЛЬНО
       # задать длинный случайный AUTH_JWT_SECRET (>= 32 байт). Пустой дефолт.

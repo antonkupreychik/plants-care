@@ -34,8 +34,25 @@ public class AuthJwtConfig {
 
     private final AuthProperties authProperties;
 
+    /**
+     * Плейсхолдер-секрет на случай {@code plantcare.auth.enabled=false} (локальная
+     * разработка): бины-подписанты всё равно создаются, но не используются —
+     * {@code ApiSecurityConfig} открывает {@code /api/v1/**} без токена. В prod
+     * сюда не попадаем: при {@code enabled=true} пустой секрет = ошибка старта.
+     */
+    private static final String AUTH_DISABLED_PLACEHOLDER_SECRET =
+            "local-dev-auth-disabled-placeholder-secret-0000000000000000";
+
     private SecretKey hmacKey() {
-        byte[] keyBytes = authProperties.getJwt().getSecret().getBytes(StandardCharsets.UTF_8);
+        String secret = authProperties.getJwt().getSecret();
+        if (secret == null || secret.isBlank()) {
+            if (authProperties.isEnabled()) {
+                throw new IllegalStateException(
+                        "AUTH_JWT_SECRET must be set (>= 32 bytes) when plantcare.auth.enabled=true");
+            }
+            secret = AUTH_DISABLED_PLACEHOLDER_SECRET;
+        }
+        byte[] keyBytes = secret.getBytes(StandardCharsets.UTF_8);
         return new SecretKeySpec(keyBytes, "HmacSHA256");
     }
 

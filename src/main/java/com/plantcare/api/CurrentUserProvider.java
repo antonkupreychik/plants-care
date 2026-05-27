@@ -1,6 +1,7 @@
 package com.plantcare.api;
 
 import com.plantcare.api.auth.exception.AuthTokenException;
+import com.plantcare.api.config.AuthProperties;
 import com.plantcare.core.domain.User;
 import com.plantcare.core.repository.UserRepository;
 import jakarta.persistence.EntityNotFoundException;
@@ -23,11 +24,17 @@ import org.springframework.stereotype.Component;
 public class CurrentUserProvider {
 
     private final UserRepository userRepository;
+    private final AuthProperties authProperties;
 
     /** {@code users.id} текущего аутентифицированного пользователя из claim {@code sub}. */
     public Long currentUserId() {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         if (authentication == null || !(authentication.getPrincipal() instanceof Jwt jwt)) {
+            // Локальная разработка: авторизация выключена (plantcare.auth.enabled=false),
+            // /api/v1/** открыты без токена — работаем от имени фиксированного dev-юзера.
+            if (!authProperties.isEnabled()) {
+                return authProperties.getDevUserId();
+            }
             throw AuthTokenException.invalid("No authenticated user in security context");
         }
         String subject = jwt.getSubject();

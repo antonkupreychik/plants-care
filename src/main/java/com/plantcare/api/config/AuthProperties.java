@@ -17,6 +17,20 @@ import java.util.List;
 @ConfigurationProperties(prefix = "plantcare.auth")
 public class AuthProperties {
 
+    /**
+     * Глобальный выключатель мобильной аутентификации. {@code true} (prod, default):
+     * {@code /api/v1/**} защищены нашим access-JWT. {@code false} — ТОЛЬКО для локальной
+     * разработки: {@code /api/v1/**} открыты без токена, JWT-секрет не требуется,
+     * текущий пользователь = {@link #devUserId}.
+     */
+    private final boolean enabled;
+
+    /**
+     * {@code users.id}, от имени которого работают {@code /api/v1/**} при
+     * {@code enabled=false}. Пользователь с этим id должен существовать в локальной БД.
+     */
+    private final Long devUserId;
+
     /** Настройки наших JWT (access/refresh), подписанных нашим секретом. */
     private final Jwt jwt;
 

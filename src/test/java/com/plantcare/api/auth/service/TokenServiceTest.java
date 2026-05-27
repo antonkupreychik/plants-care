@@ -71,13 +71,13 @@ class TokenServiceTest {
 
     private static AuthProperties propsWithIssuer(String issuer) {
         AuthProperties.Jwt jwt = new AuthProperties.Jwt(SECRET, issuer, ACCESS_TTL, REFRESH_TTL);
-        return new AuthProperties(jwt, null, null, null);
+        return new AuthProperties(true, 1L, jwt, null, null, null);
     }
 
     private static AuthProperties props() {
         AuthProperties.Jwt jwt = new AuthProperties.Jwt(
                 SECRET, "https://plants-care.test", ACCESS_TTL, REFRESH_TTL);
-        return new AuthProperties(jwt, null, null, null);
+        return new AuthProperties(true, 1L, jwt, null, null, null);
     }
 
     private TokenService tokenServiceAt(Clock clock) {
