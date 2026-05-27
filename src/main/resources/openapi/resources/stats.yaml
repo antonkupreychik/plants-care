@@ -12,8 +12,9 @@ paths:
 
         Проверяется владение растением: если растение принадлежит другому
         пользователю или не существует — 404.
+      security:
+        - bearerAuth: []
       parameters:
-        - $ref: '../_common/parameters.yaml#/XChatId'
         - name: plantId
           in: query
           required: true

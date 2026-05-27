@@ -3,7 +3,7 @@ package com.plantcare.api.v1;
 import com.plantcare.api.generated.PlantHistoryApi;
 import com.plantcare.api.generated.model.CareEventResponse;
 import com.plantcare.api.generated.model.PlantHistoryResponse;
-import com.plantcare.api.UserApiResolver;
+import com.plantcare.api.CurrentUserProvider;
 import com.plantcare.core.domain.CareHistory;
 import com.plantcare.core.domain.Plant;
 import com.plantcare.core.domain.User;
@@ -29,11 +29,11 @@ public class PlantHistoryController implements PlantHistoryApi {
 
     private final CareHistoryService careHistoryService;
     private final PlantRepository plantRepository;
-    private final UserApiResolver userApiResolver;
+    private final CurrentUserProvider currentUserProvider;
 
     @Override
-    public PlantHistoryResponse getPlantHistory(Long chatId, Long id, Integer limit, Integer offset) {
-        User user = userApiResolver.resolve(chatId);
+    public PlantHistoryResponse getPlantHistory(Long id, Integer limit, Integer offset) {
+        User user = currentUserProvider.currentUser();
 
         Plant plant = plantRepository.findByUserIdAndIdAndArchivedAtIsNull(user.getId(), id)
                 .orElseThrow(() -> new EntityNotFoundException(

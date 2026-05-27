@@ -1,7 +1,8 @@
 package com.plantcare.api.v1;
 
+import com.plantcare.api.auth.exception.AuthTokenException;
 import com.plantcare.api.ApiExceptionHandler;
-import com.plantcare.api.UserApiResolver;
+import com.plantcare.api.CurrentUserProvider;
 import com.plantcare.core.domain.Plant;
 import com.plantcare.core.domain.User;
 import com.plantcare.core.repository.PlantRepository;
@@ -45,7 +46,7 @@ class StatsControllerTest {
     private PlantRepository plantRepository;
 
     @MockBean
-    private UserApiResolver userApiResolver;
+    private CurrentUserProvider currentUserProvider;
 
     // ===================== GET /api/v1/stats/streak =====================
 
@@ -53,7 +54,7 @@ class StatsControllerTest {
     void should_return_200_with_streak_when_plant_belongs_to_user() throws Exception {
         // arrange
         User user = mockUserWithId(1L, 1L);
-        when(userApiResolver.resolve(1L)).thenReturn(user);
+        when(currentUserProvider.currentUser()).thenReturn(user);
 
         Plant plant = mock(Plant.class);
         when(plant.getId()).thenReturn(10L);
@@ -63,7 +64,6 @@ class StatsControllerTest {
 
         // act + assert
         mockMvc.perform(get("/api/v1/stats/streak")
-                        .header("X-Chat-Id", 1L)
                         .param("plantId", "10"))
                 .andExpect(status().isOk())
                 .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
@@ -75,7 +75,7 @@ class StatsControllerTest {
     void should_return_200_with_streak_zero_when_no_history() throws Exception {
         // arrange
         User user = mockUserWithId(2L, 2L);
-        when(userApiResolver.resolve(2L)).thenReturn(user);
+        when(currentUserProvider.currentUser()).thenReturn(user);
 
         Plant plant = mock(Plant.class);
         when(plant.getId()).thenReturn(20L);
@@ -85,7 +85,6 @@ class StatsControllerTest {
 
         // act + assert
         mockMvc.perform(get("/api/v1/stats/streak")
-                        .header("X-Chat-Id", 2L)
                         .param("plantId", "20"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.streak").value(0));
@@ -95,13 +94,12 @@ class StatsControllerTest {
     void should_return_404_when_plant_does_not_belong_to_user() throws Exception {
         // arrange
         User user = mockUserWithId(3L, 3L);
-        when(userApiResolver.resolve(3L)).thenReturn(user);
+        when(currentUserProvider.currentUser()).thenReturn(user);
         when(plantRepository.findByUserIdAndIdAndArchivedAtIsNull(3L, 99L))
                 .thenReturn(Optional.empty());
 
         // act + assert
         mockMvc.perform(get("/api/v1/stats/streak")
-                        .header("X-Chat-Id", 3L)
                         .param("plantId", "99"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.error.code").value("NOT_FOUND"));
@@ -111,20 +109,24 @@ class StatsControllerTest {
     void should_return_400_when_plant_id_param_missing() throws Exception {
         // arrange
         User user = mockUserWithId(4L, 4L);
-        when(userApiResolver.resolve(4L)).thenReturn(user);
+        when(currentUserProvider.currentUser()).thenReturn(user);
 
         // act + assert — параметр plantId отсутствует
-        mockMvc.perform(get("/api/v1/stats/streak")
-                        .header("X-Chat-Id", 4L))
+        mockMvc.perform(get("/api/v1/stats/streak"))
                 .andExpect(status().isBadRequest());
     }
 
     @Test
-    void should_return_400_when_x_chat_id_header_missing() throws Exception {
+    void should_return_401_when_no_authenticated_user() throws Exception {
+        // arrange — нет JWT в SecurityContext
+        when(currentUserProvider.currentUser())
+                .thenThrow(AuthTokenException.invalid("No authenticated user in security context"));
+
         // act + assert
         mockMvc.perform(get("/api/v1/stats/streak")
                         .param("plantId", "10"))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error.code").value("TOKEN_INVALID"));
     }
 
     // ===================== helpers =====================

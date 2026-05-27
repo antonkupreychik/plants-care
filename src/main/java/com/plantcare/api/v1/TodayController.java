@@ -3,7 +3,7 @@ package com.plantcare.api.v1;
 import com.plantcare.api.generated.TodayApi;
 import com.plantcare.api.generated.model.TaskDto;
 import com.plantcare.api.generated.model.TodayResponse;
-import com.plantcare.api.UserApiResolver;
+import com.plantcare.api.CurrentUserProvider;
 import com.plantcare.core.domain.CareSchedule;
 import com.plantcare.core.domain.User;
 import com.plantcare.core.service.TodayApiService;
@@ -25,11 +25,11 @@ import java.util.List;
 public class TodayController implements TodayApi {
 
     private final TodayApiService todayApiService;
-    private final UserApiResolver userApiResolver;
+    private final CurrentUserProvider currentUserProvider;
 
     @Override
-    public TodayResponse getToday(Long chatId) {
-        User user = userApiResolver.resolve(chatId);
+    public TodayResponse getToday() {
+        User user = currentUserProvider.currentUser();
         log.info("GET /api/v1/today: userId={}, timezone={}", user.getId(), user.getTimezone());
 
         List<CareSchedule> schedules = todayApiService.getTodaySchedules(user.getId(), user.getTimezone());

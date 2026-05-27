@@ -16,6 +16,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -78,7 +79,7 @@ class PlantLocationHappyPathIT extends IntegrationTestBase {
                 """;
 
         MvcResult locationResult = mockMvc.perform(post("/api/v1/locations")
-                        .header("X-User-Id", userId)
+                        .with(jwt().jwt(j -> j.claim("sub", String.valueOf(userId))))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(locationBody))
                 .andExpect(status().isCreated())
@@ -95,7 +96,7 @@ class PlantLocationHappyPathIT extends IntegrationTestBase {
                 """, locationId);
 
         MvcResult plantResult = mockMvc.perform(post("/api/v1/plants")
-                        .header("X-User-Id", userId)
+                        .with(jwt().jwt(j -> j.claim("sub", String.valueOf(userId))))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(plantBody))
                 .andExpect(status().isCreated())
@@ -109,7 +110,7 @@ class PlantLocationHappyPathIT extends IntegrationTestBase {
 
         // act 3 — GET /api/v1/plants/{plantId}
         mockMvc.perform(get("/api/v1/plants/" + plantId)
-                        .header("X-User-Id", userId))
+                        .with(jwt().jwt(j -> j.claim("sub", String.valueOf(userId)))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id").value(plantId))
                 .andExpect(jsonPath("$.name").value("Cactus"))
@@ -117,12 +118,12 @@ class PlantLocationHappyPathIT extends IntegrationTestBase {
 
         // act 4 — DELETE /api/v1/plants/{plantId} (soft-delete)
         mockMvc.perform(delete("/api/v1/plants/" + plantId)
-                        .header("X-User-Id", userId))
+                        .with(jwt().jwt(j -> j.claim("sub", String.valueOf(userId)))))
                 .andExpect(status().isNoContent());
 
         // assert — GET after soft-delete must return 404
         mockMvc.perform(get("/api/v1/plants/" + plantId)
-                        .header("X-User-Id", userId))
+                        .with(jwt().jwt(j -> j.claim("sub", String.valueOf(userId)))))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.error.code").value("NOT_FOUND"));
 

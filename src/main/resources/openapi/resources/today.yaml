@@ -12,8 +12,8 @@ paths:
 
         Учитываются только активные расписания; завершённые или приостановленные
         не попадают в выдачу.
-      parameters:
-        - $ref: '../_common/parameters.yaml#/XChatId'
+      security:
+        - bearerAuth: []
       responses:
         '200':
           description: Список задач на сегодня.

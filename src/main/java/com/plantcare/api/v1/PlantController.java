@@ -5,6 +5,7 @@ import com.plantcare.api.generated.model.PageResponsePlantDto;
 import com.plantcare.api.generated.model.PlantCreateRequest;
 import com.plantcare.api.generated.model.PlantDto;
 import com.plantcare.api.generated.model.PlantUpdateRequest;
+import com.plantcare.api.CurrentUserProvider;
 import com.plantcare.core.domain.Plant;
 import com.plantcare.core.domain.User;
 import com.plantcare.core.service.PlantService;
@@ -26,9 +27,11 @@ public class PlantController implements PlantsApi {
 
     private final PlantService plantService;
     private final UserService userService;
+    private final CurrentUserProvider currentUserProvider;
 
     @Override
-    public PageResponsePlantDto listPlants(Long userId, Long locationId, Integer offset, Integer limit) {
+    public PageResponsePlantDto listPlants(Long locationId, Integer offset, Integer limit) {
+        Long userId = currentUserProvider.currentUserId();
         int safeLimit = Math.min(Math.max(limit, 1), 100);
         int safeOffset = Math.max(offset, 0);
 
@@ -40,26 +43,28 @@ public class PlantController implements PlantsApi {
     }
 
     @Override
-    public PlantDto getPlant(Long userId, Long id) {
+    public PlantDto getPlant(Long id) {
+        Long userId = currentUserProvider.currentUserId();
         return toDto(plantService.getPlantOrThrow(userId, id));
     }
 
     @Override
-    public PlantDto createPlant(Long userId, PlantCreateRequest request) {
-        User user = userService.getByIdOrThrow(userId);
+    public PlantDto createPlant(PlantCreateRequest request) {
+        User user = userService.getByIdOrThrow(currentUserProvider.currentUserId());
         Plant plant = plantService.createPlant(user, request.getName(), request.getNotes(), request.getLocationId());
         return toDto(plant);
     }
 
     @Override
-    public PlantDto updatePlant(Long userId, Long id, PlantUpdateRequest request) {
+    public PlantDto updatePlant(Long id, PlantUpdateRequest request) {
+        Long userId = currentUserProvider.currentUserId();
         Plant updated = plantService.updatePlant(userId, id, request.getName(), request.getNotes(), request.getLocationId());
         return toDto(updated);
     }
 
     @Override
-    public void deletePlant(Long userId, Long id) {
-        plantService.archivePlant(userId, id);
+    public void deletePlant(Long id) {
+        plantService.archivePlant(currentUserProvider.currentUserId(), id);
     }
 
     private static PlantDto toDto(Plant plant) {

@@ -2,6 +2,7 @@ package com.plantcare.api.v1;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.plantcare.api.ApiExceptionHandler;
+import com.plantcare.api.CurrentUserProvider;
 import com.plantcare.core.domain.Location;
 import com.plantcare.core.domain.User;
 import com.plantcare.core.service.LocationService;
@@ -54,6 +55,14 @@ class LocationControllerTest {
     @MockitoBean
     private UserService userService;
 
+    @MockitoBean
+    private CurrentUserProvider currentUserProvider;
+
+    @org.junit.jupiter.api.BeforeEach
+    void stubCurrentUser() {
+        when(currentUserProvider.currentUserId()).thenReturn(1L);
+    }
+
     // ------------------------------------------------------------------ helpers
 
     private Location mockLocation(long id, long userId, String name, String emoji) {
@@ -81,8 +90,7 @@ class LocationControllerTest {
         when(locationService.getUserLocations(1L)).thenReturn(List.of(loc1, loc2));
 
         // act + assert
-        mockMvc.perform(get("/api/v1/locations")
-                        .header("X-User-Id", "1"))
+        mockMvc.perform(get("/api/v1/locations"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$").isArray())
                 .andExpect(jsonPath("$.length()").value(2))
@@ -98,8 +106,7 @@ class LocationControllerTest {
         when(locationService.getUserLocationOrThrow(1L, 1L)).thenReturn(loc);
 
         // act + assert
-        mockMvc.perform(get("/api/v1/locations/1")
-                        .header("X-User-Id", "1"))
+        mockMvc.perform(get("/api/v1/locations/1"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id").value(1))
                 .andExpect(jsonPath("$.name").value("Living Room"))
@@ -113,8 +120,7 @@ class LocationControllerTest {
                 .thenThrow(new IllegalArgumentException("Комната не найдена"));
 
         // act + assert
-        mockMvc.perform(get("/api/v1/locations/99")
-                        .header("X-User-Id", "1"))
+        mockMvc.perform(get("/api/v1/locations/99"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.error.code").value("NOT_FOUND"));
     }
@@ -135,7 +141,6 @@ class LocationControllerTest {
 
         // act + assert
         mockMvc.perform(post("/api/v1/locations")
-                        .header("X-User-Id", "1")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(body))
                 .andExpect(status().isCreated())
@@ -152,7 +157,6 @@ class LocationControllerTest {
 
         // act + assert
         mockMvc.perform(post("/api/v1/locations")
-                        .header("X-User-Id", "1")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(body))
                 .andExpect(status().isBadRequest())
@@ -167,7 +171,6 @@ class LocationControllerTest {
 
         // act + assert
         mockMvc.perform(post("/api/v1/locations")
-                        .header("X-User-Id", "1")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(body))
                 .andExpect(status().isBadRequest())
@@ -188,7 +191,6 @@ class LocationControllerTest {
 
         // act + assert
         mockMvc.perform(put("/api/v1/locations/1")
-                        .header("X-User-Id", "1")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(body))
                 .andExpect(status().isOk())
@@ -205,8 +207,7 @@ class LocationControllerTest {
         doNothing().when(locationService).deleteEmptyLocation(1L, 1L);
 
         // act + assert
-        mockMvc.perform(delete("/api/v1/locations/1")
-                        .header("X-User-Id", "1"))
+        mockMvc.perform(delete("/api/v1/locations/1"))
                 .andExpect(status().isNoContent());
     }
 
@@ -220,8 +221,7 @@ class LocationControllerTest {
         doNothing().when(locationService).deleteLocation(1L, 1L, 2L);
 
         // act + assert
-        mockMvc.perform(delete("/api/v1/locations/1?targetLocationId=2")
-                        .header("X-User-Id", "1"))
+        mockMvc.perform(delete("/api/v1/locations/1?targetLocationId=2"))
                 .andExpect(status().isNoContent());
     }
 
@@ -234,8 +234,7 @@ class LocationControllerTest {
         when(locationService.countPlantsInLocation(1L, 1L)).thenReturn(2L);
 
         // act — DELETE without targetLocationId while location has plants
-        mockMvc.perform(delete("/api/v1/locations/1")
-                        .header("X-User-Id", "1"))
+        mockMvc.perform(delete("/api/v1/locations/1"))
                 .andExpect(status().isBadRequest())
                 // controller returns code "LOCATION_NOT_EMPTY" for this path
                 .andExpect(jsonPath("$.error.code").value("LOCATION_NOT_EMPTY"));
@@ -252,8 +251,7 @@ class LocationControllerTest {
                 .thenThrow(new IllegalArgumentException("Комната не найдена"));
 
         // act + assert
-        mockMvc.perform(get("/api/v1/locations/7")
-                        .header("X-User-Id", "1"))
+        mockMvc.perform(get("/api/v1/locations/7"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.error.code").value("NOT_FOUND"));
     }

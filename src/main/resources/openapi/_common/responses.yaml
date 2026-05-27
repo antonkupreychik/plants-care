@@ -26,6 +26,31 @@ BadRequest:
               code: BAD_REQUEST
               message: limit must be between 1 and 100
 
+Unauthorized:
+  description: |
+    Аутентификация не пройдена. Возвращается при отсутствии/невалидности
+    bearer-токена или при проблеме с auth-токеном (Apple/Google/magic-link/
+    refresh). Коды: `TOKEN_EXPIRED`, `TOKEN_INVALID`, `TOKEN_REVOKED`.
+  content:
+    application/json:
+      schema:
+        $ref: './errors.yaml#/schemas/ApiErrorResponse'
+      example:
+        error:
+          code: TOKEN_INVALID
+          message: Token is invalid
+
+TooManyRequests:
+  description: Превышен лимит запросов (rate limit).
+  content:
+    application/json:
+      schema:
+        $ref: './errors.yaml#/schemas/ApiErrorResponse'
+      example:
+        error:
+          code: RATE_LIMITED
+          message: Too many requests
+
 Forbidden:
   description: Ресурс существует, но принадлежит другому пользователю.
   content:

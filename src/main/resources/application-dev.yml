@@ -5,6 +5,13 @@ spring:
       hibernate:
         format_sql: true
 
+# Issue #88: dummy-секрет для локального запуска. НЕ использовать на prod —
+# там AUTH_JWT_SECRET задаётся через env. Длина >= 32 байт для HS256.
+plantcare:
+  auth:
+    jwt:
+      secret: ${AUTH_JWT_SECRET:dev-only-insecure-jwt-secret-change-me-1234567890}
+
 logging:
   level:
     org.hibernate.SQL: DEBUG

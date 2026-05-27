@@ -2,7 +2,7 @@ package com.plantcare.api.v1;
 
 import com.plantcare.api.generated.StatsApi;
 import com.plantcare.api.generated.model.StreakResponse;
-import com.plantcare.api.UserApiResolver;
+import com.plantcare.api.CurrentUserProvider;
 import com.plantcare.core.domain.User;
 import com.plantcare.core.repository.PlantRepository;
 import com.plantcare.core.service.CareHistoryService;
@@ -23,11 +23,11 @@ public class StatsController implements StatsApi {
 
     private final CareHistoryService careHistoryService;
     private final PlantRepository plantRepository;
-    private final UserApiResolver userApiResolver;
+    private final CurrentUserProvider currentUserProvider;
 
     @Override
-    public StreakResponse getPlantStreak(Long chatId, Long plantId) {
-        User user = userApiResolver.resolve(chatId);
+    public StreakResponse getPlantStreak(Long plantId) {
+        User user = currentUserProvider.currentUser();
         log.info("GET /api/v1/stats/streak: userId={}, plantId={}", user.getId(), plantId);
 
         plantRepository.findByUserIdAndIdAndArchivedAtIsNull(user.getId(), plantId)

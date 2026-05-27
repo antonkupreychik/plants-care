@@ -7,10 +7,11 @@ paths:
       operationId: listLocations
       summary: Список локаций пользователя
       description: |
-        Возвращает все локации, принадлежащие пользователю из `X-User-Id`.
-        Без пагинации — у пользователя обычно меньше десятка локаций.
-      parameters:
-        - $ref: '../_common/parameters.yaml#/XUserId'
+        Возвращает все локации, принадлежащие текущему пользователю
+        (`sub` из bearer-токена). Без пагинации — у пользователя обычно
+        меньше десятка локаций.
+      security:
+        - bearerAuth: []
       responses:
         '200':
           description: Список локаций.
@@ -27,8 +28,8 @@ paths:
       description: |
         Создаёт локацию от имени пользователя. Имя уникально в рамках
         пользователя — при коллизии возвращается 400 с `code=BAD_REQUEST`.
-      parameters:
-        - $ref: '../_common/parameters.yaml#/XUserId'
+      security:
+        - bearerAuth: []
       requestBody:
         required: true
         content:
@@ -57,8 +58,9 @@ paths:
         Возвращает локацию, если она принадлежит пользователю. Чужие или
         несуществующие локации — 404 (различения не делаем, чтобы не
         раскрывать существование чужих ID).
+      security:
+        - bearerAuth: []
       parameters:
-        - $ref: '../_common/parameters.yaml#/XUserId'
         - $ref: '../_common/parameters.yaml#/LocationIdPath'
       responses:
         '200':
@@ -74,8 +76,9 @@ paths:
       operationId: updateLocation
       summary: Обновить локацию
       description: PATCH-семантика — обновляются только переданные поля.
+      security:
+        - bearerAuth: []
       parameters:
-        - $ref: '../_common/parameters.yaml#/XUserId'
         - $ref: '../_common/parameters.yaml#/LocationIdPath'
       requestBody:
         required: true
@@ -107,8 +110,9 @@ paths:
 
         Особый код ошибки `LOCATION_NOT_EMPTY` возвращается, когда в локации
         есть растения, а `targetLocationId` не задан.
+      security:
+        - bearerAuth: []
       parameters:
-        - $ref: '../_common/parameters.yaml#/XUserId'
         - $ref: '../_common/parameters.yaml#/LocationIdPath'
         - name: targetLocationId
           in: query

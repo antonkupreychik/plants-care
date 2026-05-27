@@ -1,0 +1,215 @@
+# Мобильная аутентификация (issue #88, ADR-011).
+#
+# Все эндпоинты публичны (security не требуется) — это и есть точки получения
+# токенов. Apple/Google принимают внешний id-token провайдера, email — magic link,
+# refresh — ротацию пары. Ответ всех успешных операций (кроме email/request) —
+# единая схема TokenPairResponse.
+
+paths:
+  Apple:
+    post:
+      tags: [Auth]
+      operationId: authApple
+      summary: Вход через Sign in with Apple
+      description: |
+        Принимает `identityToken` (JWT, выданный Apple). Сервер верифицирует
+        его подпись по Apple JWKS, проверяет `iss`/`aud`/`exp`, извлекает
+        стабильный `sub` (apple_subject) и email. Линковка с существующим
+        пользователем — по email; если пользователя нет — создаётся новый.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/schemas/AppleAuthRequest'
+      responses:
+        '200':
+          description: Пара токенов выдана.
+          content:
+            application/json:
+              schema:
+                $ref: '#/schemas/TokenPairResponse'
+        '400':
+          $ref: '../_common/responses.yaml#/BadRequest'
+        '401':
+          $ref: '../_common/responses.yaml#/Unauthorized'
+
+  Google:
+    post:
+      tags: [Auth]
+      operationId: authGoogle
+      summary: Вход через Google
+      description: |
+        Принимает Google `idToken`. Сервер верифицирует подпись по Google JWKS,
+        проверяет `iss`/`aud`/`exp` и требует `email_verified = true`. Линковка
+        по email.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/schemas/GoogleAuthRequest'
+      responses:
+        '200':
+          description: Пара токенов выдана.
+          content:
+            application/json:
+              schema:
+                $ref: '#/schemas/TokenPairResponse'
+        '400':
+          $ref: '../_common/responses.yaml#/BadRequest'
+        '401':
+          $ref: '../_common/responses.yaml#/Unauthorized'
+
+  EmailRequest:
+    post:
+      tags: [Auth]
+      operationId: requestMagicLink
+      summary: Запросить magic link на email
+      description: |
+        Отправляет на указанный email одноразовую ссылку для входа. Ради защиты
+        от перебора (enumeration) эндпоинт **всегда** отвечает `202`, независимо
+        от того, существует ли пользователь. Ограничен rate-limit'ом по IP и по
+        email.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/schemas/EmailRequest'
+      responses:
+        '202':
+          description: Запрос принят. Если email валиден, письмо будет отправлено.
+        '400':
+          $ref: '../_common/responses.yaml#/BadRequest'
+        '429':
+          $ref: '../_common/responses.yaml#/TooManyRequests'
+
+  EmailVerify:
+    post:
+      tags: [Auth]
+      operationId: verifyMagicLink
+      summary: Обменять magic-link токен на пару токенов
+      description: |
+        Принимает opaque-токен из письма. Токен одноразовый: после успешного
+        обмена помечается использованным и повторно не принимается. Линковка по
+        email, при необходимости создаётся новый пользователь.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/schemas/MagicLinkVerifyRequest'
+      responses:
+        '200':
+          description: Пара токенов выдана.
+          content:
+            application/json:
+              schema:
+                $ref: '#/schemas/TokenPairResponse'
+        '400':
+          $ref: '../_common/responses.yaml#/BadRequest'
+        '401':
+          $ref: '../_common/responses.yaml#/Unauthorized'
+
+  Refresh:
+    post:
+      tags: [Auth]
+      operationId: refreshTokens
+      summary: Ротация пары токенов по refresh-токену
+      description: |
+        Принимает refresh-токен, проверяет подпись/срок/тип и что его `jti` не
+        отозван. Старый refresh атомарно отзывается (защита от повторного
+        использования), выдаётся новая пара. Если токен уже отозван — `401`
+        с кодом `TOKEN_REVOKED`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/schemas/RefreshRequest'
+      responses:
+        '200':
+          description: Новая пара токенов выдана.
+          content:
+            application/json:
+              schema:
+                $ref: '#/schemas/TokenPairResponse'
+        '400':
+          $ref: '../_common/responses.yaml#/BadRequest'
+        '401':
+          $ref: '../_common/responses.yaml#/Unauthorized'
+
+schemas:
+  AppleAuthRequest:
+    type: object
+    description: Тело POST /api/v1/auth/apple.
+    required: [identityToken]
+    properties:
+      identityToken:
+        type: string
+        minLength: 1
+        description: JWT identity token, выданный Sign in with Apple.
+
+  GoogleAuthRequest:
+    type: object
+    description: Тело POST /api/v1/auth/google.
+    required: [idToken]
+    properties:
+      idToken:
+        type: string
+        minLength: 1
+        description: Google OIDC id_token.
+
+  EmailRequest:
+    type: object
+    description: Тело POST /api/v1/auth/email/request.
+    required: [email]
+    properties:
+      email:
+        type: string
+        format: email
+        maxLength: 320
+        description: Email, на который отправить magic link.
+        example: user@example.com
+
+  MagicLinkVerifyRequest:
+    type: object
+    description: Тело POST /api/v1/auth/email/verify.
+    required: [token]
+    properties:
+      token:
+        type: string
+        minLength: 1
+        description: Opaque-токен из ссылки в письме.
+
+  RefreshRequest:
+    type: object
+    description: Тело POST /api/v1/auth/refresh.
+    required: [refreshToken]
+    properties:
+      refreshToken:
+        type: string
+        minLength: 1
+        description: Refresh-токен, полученный при предыдущем входе/ротации.
+
+  TokenPairResponse:
+    type: object
+    description: Пара токенов доступа (issue #88).
+    required: [accessToken, refreshToken, expiresIn, tokenType]
+    properties:
+      accessToken:
+        type: string
+        description: Короткоживущий access-JWT для авторизации запросов к API.
+      refreshToken:
+        type: string
+        description: Долгоживущий refresh-JWT для получения новой пары.
+      expiresIn:
+        type: integer
+        format: int64
+        description: Время жизни access-токена в секундах.
+        example: 3600
+      tokenType:
+        type: string
+        description: Тип токена для заголовка Authorization.
+        example: Bearer

@@ -17,17 +17,14 @@ info:
 
     ## Аутентификация
 
-    В текущей версии (PoC, issue #85/#86) большинство пользовательских
-    эндпоинтов идентифицируют вызывающего по числовому заголовку:
+    Пользовательские эндпоинты защищены JWT bearer-токеном (issue #88, ADR-011).
+    Клиент получает пару токенов через `/api/v1/auth/*` (Apple / Google / email
+    magic link), затем передаёт access-токен в заголовке
+    `Authorization: Bearer <token>`. Идентификатор пользователя (`users.id`)
+    берётся из claim `sub`.
 
-    * **`X-User-Id`** — внутренний идентификатор пользователя в БД. Используется
-      эндпоинтами `/api/v1/plants`, `/api/v1/locations`.
-    * **`X-Chat-Id`** — Telegram `chat_id`. Используется эндпоинтами
-      `/api/v1/care-events`, `/api/v1/today`, `/api/v1/calendar`,
-      `/api/v1/stats/streak` и историей растения.
-
-    Публичные справочники (`/api/v1/species`, `/api/v1/care-types`) аутентификацию
-    не требуют.
+    Эндпоинты `/api/v1/auth/**` и публичные справочники (`/api/v1/species`,
+    `/api/v1/care-types`) аутентификацию не требуют.
 
     ## Таймзоны и время
 
@@ -53,6 +50,10 @@ servers:
     description: Production (Railway)
 
 tags:
+  - name: Auth
+    description: |
+      Мобильная аутентификация (issue #88): Sign in with Apple, Google,
+      email magic link и ротация токенов. Все эндпоинты публичны.
   - name: Health
     description: Liveness probe — простой пинг для оркестратора (Railway, Docker), не проверяет состояние БД и внешних API.
   - name: Plants
@@ -83,6 +84,17 @@ tags:
     description: Публичный справочник типов ухода (полив, опрыскивание, и т.п.). Без авторизации.
 
 paths:
+  /api/v1/auth/apple:
+    $ref: './resources/auth.yaml#/paths/Apple'
+  /api/v1/auth/google:
+    $ref: './resources/auth.yaml#/paths/Google'
+  /api/v1/auth/email/request:
+    $ref: './resources/auth.yaml#/paths/EmailRequest'
+  /api/v1/auth/email/verify:
+    $ref: './resources/auth.yaml#/paths/EmailVerify'
+  /api/v1/auth/refresh:
+    $ref: './resources/auth.yaml#/paths/Refresh'
+
   /api/v1/health:
     $ref: './resources/health.yaml#/paths/Health'
 
@@ -121,13 +133,19 @@ paths:
     $ref: './resources/care-types.yaml#/paths/Collection'
 
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Наш access-JWT, выданный `/api/v1/auth/*`. Передаётся в заголовке
+        `Authorization: Bearer <token>`. Идентификатор пользователя — в claim
+        `sub` (= `users.id`).
+
   # Параметры дублируются через $ref в каждом ресурсе (для удобства локального чтения),
   # здесь регистрируем только для верхнеуровневого свагер-баннера.
   parameters:
-    XUserId:
-      $ref: './_common/parameters.yaml#/XUserId'
-    XChatId:
-      $ref: './_common/parameters.yaml#/XChatId'
     PlantIdPath:
       $ref: './_common/parameters.yaml#/PlantIdPath'
     LocationIdPath:
@@ -136,6 +154,10 @@ components:
   responses:
     BadRequest:
       $ref: './_common/responses.yaml#/BadRequest'
+    Unauthorized:
+      $ref: './_common/responses.yaml#/Unauthorized'
+    TooManyRequests:
+      $ref: './_common/responses.yaml#/TooManyRequests'
     Forbidden:
       $ref: './_common/responses.yaml#/Forbidden'
     NotFound:
@@ -148,6 +170,19 @@ components:
   # с одинаковыми именами вне зависимости от того, в каком ресурсе живёт
   # их определение.
   schemas:
+    AppleAuthRequest:
+      $ref: './resources/auth.yaml#/schemas/AppleAuthRequest'
+    GoogleAuthRequest:
+      $ref: './resources/auth.yaml#/schemas/GoogleAuthRequest'
+    EmailRequest:
+      $ref: './resources/auth.yaml#/schemas/EmailRequest'
+    MagicLinkVerifyRequest:
+      $ref: './resources/auth.yaml#/schemas/MagicLinkVerifyRequest'
+    RefreshRequest:
+      $ref: './resources/auth.yaml#/schemas/RefreshRequest'
+    TokenPairResponse:
+      $ref: './resources/auth.yaml#/schemas/TokenPairResponse'
+
     HealthResponse:
       $ref: './resources/health.yaml#/schemas/HealthResponse'
 

@@ -21,6 +21,14 @@ public interface UserRepository extends JpaRepository<User, Long> {
     /** Issue #79: lookup for public {@code GET /calendar/{token}.ics}. */
     Optional<User> findByCalendarToken(String calendarToken);
 
+    // ===== Mobile auth (issue #88) =====
+
+    Optional<User> findByEmail(String email);
+
+    Optional<User> findByAppleSubject(String appleSubject);
+
+    Optional<User> findByGoogleSubject(String googleSubject);
+
     /**
      * Issue #79: pessimistic SELECT FOR UPDATE used during lazy calendar-token
      * generation, чтобы два параллельных нажатия на кнопку «Экспорт» не

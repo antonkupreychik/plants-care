@@ -4,38 +4,51 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.annotation.Order;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.web.SecurityFilterChain;
 
 /**
- * Issue #127 (фаза api): отдельная {@link SecurityFilterChain} для REST-слоя.
+ * SecurityFilterChain для публичного REST API ({@code /api/v1/**}).
  *
- * <p>Доставка через REST изолирована от веб-админки: {@code /api/**} — это
- * stateless-канал (никаких сессий, никакого form-login и CSRF-токенов из форм).
- * Цепочка отделена {@code securityMatcher("/api/**")} и стоит раньше дефолтной
- * (она в {@link com.plantcare.admin.config.AdminSecurityConfig}); матчеры
- * {@code /admin/**} и {@code /actuator/prometheus} с ней не пересекаются.
+ * <p>Issue #127 завёл каркас этой цепочки (stateless, отделена от веб-админки),
+ * issue #88 наполнил её реальной аутентификацией: наш access-JWT
+ * ({@code appJwtDecoder}, HS256), не Apple/Google JWKS (у тех отдельные
+ * верификаторы в сервисах). STATELESS, без CSRF (мобильный клиент, bearer-токены).
  *
- * <p><b>Scope #127 — только каркас.</b> Реальная аутентификация (JWT / Apple /
- * Google) приедет в #88; до тех пор эндпоинты остаются открытыми
- * ({@code permitAll}), как и сейчас в дефолтной цепочке. Здесь фиксируется
- * именно граница и stateless-политика, чтобы #88 наращивал аутентификацию
- * в одном понятном месте, а не правил общий конфиг с if-ами.
+ * <p>Публичны только {@code /api/v1/auth/**}, справочники ({@code species},
+ * {@code care-types}) и {@code /api/v1/health}; остальное требует аутентификации.
+ *
+ * <p>{@code @Order(0)} — выше дефолтной цепочки ({@code AdminSecurityConfig},
+ * @Order 3), чтобы перехватывать {@code /api/v1/**} раньше permitAll-цепочки.
+ * Admin form-login (@Order 1) и prometheus (@Order 2) не затрагиваются: у них
+ * свой {@code securityMatcher}. Маршрут {@code /calendar/{token}.ics} не под
+ * {@code /api/}, поэтому остаётся в дефолтной permitAll-цепочке.
  */
 @Configuration
+@EnableWebSecurity
 public class ApiSecurityConfig {
 
     @Bean
     @Order(0)
-    public SecurityFilterChain apiSecurityFilterChain(HttpSecurity http) throws Exception {
+    public SecurityFilterChain apiSecurityFilterChain(HttpSecurity http, JwtDecoder appJwtDecoder)
+            throws Exception {
         return http
-                .securityMatcher("/api/**")
-                .authorizeHttpRequests(auth -> auth.anyRequest().permitAll())
+                .securityMatcher("/api/v1/**")
+                .authorizeHttpRequests(auth -> auth
+                        .requestMatchers("/api/v1/auth/**").permitAll()
+                        .requestMatchers("/api/v1/species/**", "/api/v1/care-types/**").permitAll()
+                        .requestMatchers("/api/v1/health").permitAll()
+                        .anyRequest().authenticated()
+                )
                 .csrf(csrf -> csrf.disable())
                 .sessionManagement(session -> session
                         .sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .httpBasic(basic -> basic.disable())
                 .formLogin(form -> form.disable())
+                .oauth2ResourceServer(oauth2 -> oauth2
+                        .jwt(jwt -> jwt.decoder(appJwtDecoder)))
                 .build();
     }
 }

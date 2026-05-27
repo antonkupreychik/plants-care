@@ -1,7 +1,8 @@
 package com.plantcare.api.v1;
 
+import com.plantcare.api.auth.exception.AuthTokenException;
 import com.plantcare.api.ApiExceptionHandler;
-import com.plantcare.api.UserApiResolver;
+import com.plantcare.api.CurrentUserProvider;
 import com.plantcare.core.domain.CareSchedule;
 import com.plantcare.core.domain.Location;
 import com.plantcare.core.domain.Plant;
@@ -41,7 +42,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * <p>Ключевые сценарии:
  * <ul>
  *   <li>200 с задачами для корректного пользователя.</li>
- *   <li>400 при отсутствии заголовка X-Chat-Id.</li>
+ *   <li>401 при отсутствии аутентифицированного пользователя в SecurityContext.</li>
  *   <li>Проверка расчёта конца дня для не-UTC таймзоны (Asia/Almaty, UTC+5).</li>
  * </ul>
  */
@@ -57,7 +58,7 @@ class TodayControllerTest {
     private TodayApiService todayApiService;
 
     @MockBean
-    private UserApiResolver userApiResolver;
+    private CurrentUserProvider currentUserProvider;
 
     // ===================== GET /api/v1/today =====================
 
@@ -65,7 +66,7 @@ class TodayControllerTest {
     void should_return_200_with_tasks_when_schedules_are_due() throws Exception {
         // arrange
         User user = mockUserWithTimezone(1L, 1L, "UTC");
-        when(userApiResolver.resolve(1L)).thenReturn(user);
+        when(currentUserProvider.currentUser()).thenReturn(user);
 
         CareSchedule schedule = mockSchedule(10L, 100L, "Монстера", TaskType.WATERING,
                 LocalDateTime.now().plusHours(1));
@@ -73,8 +74,7 @@ class TodayControllerTest {
                 .thenReturn(List.of(schedule));
 
         // act + assert
-        mockMvc.perform(get("/api/v1/today")
-                        .header("X-Chat-Id", 1L))
+        mockMvc.perform(get("/api/v1/today"))
                 .andExpect(status().isOk())
                 .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
                 .andExpect(jsonPath("$.tasks").isArray())
@@ -88,13 +88,12 @@ class TodayControllerTest {
     void should_return_200_with_empty_tasks_when_no_schedules_due() throws Exception {
         // arrange
         User user = mockUserWithTimezone(2L, 2L, "UTC");
-        when(userApiResolver.resolve(2L)).thenReturn(user);
+        when(currentUserProvider.currentUser()).thenReturn(user);
         when(todayApiService.getTodaySchedules(anyLong(), anyString()))
                 .thenReturn(List.of());
 
         // act + assert
-        mockMvc.perform(get("/api/v1/today")
-                        .header("X-Chat-Id", 2L))
+        mockMvc.perform(get("/api/v1/today"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.tasks").isArray())
                 .andExpect(jsonPath("$.tasks.length()").value(0))
@@ -102,10 +101,15 @@ class TodayControllerTest {
     }
 
     @Test
-    void should_return_400_when_x_chat_id_header_missing() throws Exception {
+    void should_return_401_when_no_authenticated_user() throws Exception {
+        // arrange — нет JWT в SecurityContext
+        when(currentUserProvider.currentUser())
+                .thenThrow(AuthTokenException.invalid("No authenticated user in security context"));
+
         // act + assert
         mockMvc.perform(get("/api/v1/today"))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error.code").value("TOKEN_INVALID"));
     }
 
     @Test
@@ -148,7 +152,7 @@ class TodayControllerTest {
     void should_return_multiple_tasks_for_user_with_several_plants() throws Exception {
         // arrange
         User user = mockUserWithTimezone(3L, 3L, "Europe/Moscow");
-        when(userApiResolver.resolve(3L)).thenReturn(user);
+        when(currentUserProvider.currentUser()).thenReturn(user);
 
         CareSchedule watering = mockSchedule(11L, 101L, "Фикус", TaskType.WATERING,
                 LocalDateTime.now().plusHours(2));
@@ -158,8 +162,7 @@ class TodayControllerTest {
                 .thenReturn(List.of(watering, misting));
 
         // act + assert
-        mockMvc.perform(get("/api/v1/today")
-                        .header("X-Chat-Id", 3L))
+        mockMvc.perform(get("/api/v1/today"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.tasks.length()").value(2))
                 .andExpect(jsonPath("$.count").value(2));
