@@ -34,6 +34,20 @@ spring:
           time_zone: UTC
         format_sql: false
 
+  # Issue #88: SMTP для magic-link писем. Реальные креды только из env.
+  mail:
+    host: ${MAIL_HOST:localhost}
+    port: ${MAIL_PORT:1025}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    from: ${MAIL_FROM:no-reply@plantcare.local}
+    properties:
+      mail:
+        smtp:
+          auth: ${MAIL_SMTP_AUTH:false}
+          starttls:
+            enable: ${MAIL_SMTP_STARTTLS:false}
+
 app:
   species:
     search-limit: 5
@@ -60,6 +74,31 @@ weather:
   open-meteo:
     base-url: https://api.open-meteo.com/v1
     timeout-seconds: 5
+
+# Issue #88 (ADR-011): мобильная аутентификация. Секреты — только из env.
+plantcare:
+  auth:
+    jwt:
+      # HMAC-секрет для подписи наших access/refresh JWT. На prod ОБЯЗАТЕЛЬНО
+      # задать длинный случайный AUTH_JWT_SECRET (>= 32 байт). Пустой дефолт.
+      secret: ${AUTH_JWT_SECRET:}
+      issuer: ${AUTH_JWT_ISSUER:https://plants-care.up.railway.app}
+      access-ttl: ${AUTH_JWT_ACCESS_TTL:PT1H}
+      refresh-ttl: ${AUTH_JWT_REFRESH_TTL:P30D}
+    apple:
+      bundle-id: ${AUTH_APPLE_BUNDLE_ID:}
+      issuer: ${AUTH_APPLE_ISSUER:https://appleid.apple.com}
+      jwks-uri: ${AUTH_APPLE_JWKS_URI:https://appleid.apple.com/auth/keys}
+    google:
+      client-id: ${AUTH_GOOGLE_CLIENT_ID:}
+      issuers: ${AUTH_GOOGLE_ISSUERS:accounts.google.com,https://accounts.google.com}
+      jwks-uri: ${AUTH_GOOGLE_JWKS_URI:https://www.googleapis.com/oauth2/v3/certs}
+    magic-link:
+      base-url: ${AUTH_MAGIC_LINK_BASE_URL:https://plants-care.up.railway.app/auth/verify}
+      ttl: ${AUTH_MAGIC_LINK_TTL:PT15M}
+      rate-limit:
+        max-attempts: 5
+        window-seconds: 300
 
 admin:
   username: ${ADMIN_USERNAME:}
@@ -96,6 +135,11 @@ management:
   endpoint:
     health:
       show-details: when-authorized
+  health:
+    # Issue #88: starter-mail добавляет MailHealthIndicator, который пингует SMTP.
+    # Отправка magic-link писем не должна влиять на liveness/health приложения.
+    mail:
+      enabled: false
   prometheus:
     metrics:
       export:

@@ -31,11 +31,35 @@ import java.util.Map;
 @Builder
 public class User extends BaseEntity {
 
-    @Column(name = "telegram_chat_id", nullable = false, unique = true)
+    /**
+     * Telegram chat id. Стал nullable в V31 (issue #88): пользователь может
+     * зарегистрироваться через мобильное приложение (email/Apple/Google) без
+     * Telegram. Уникальность среди не-NULL значений — через inline UNIQUE-индекс.
+     */
+    @Column(name = "telegram_chat_id", unique = true)
     private Long telegramChatId;
 
     @Column(length = 255)
     private String username;
+
+    // ===== Mobile auth (issue #88, ADR-011) =====
+
+    /** Email для входа по magic link / связки с OAuth. NULL для чисто Telegram-юзеров. */
+    @Column(name = "email", length = 320)
+    private String email;
+
+    /** TRUE после подтверждения email (magic link / verified OAuth-провайдером). */
+    @Column(name = "email_verified", nullable = false)
+    @Builder.Default
+    private boolean emailVerified = false;
+
+    /** Стабильный subject (sub) из Sign in with Apple. NULL если Apple не привязан. */
+    @Column(name = "apple_subject", length = 255)
+    private String appleSubject;
+
+    /** Стабильный subject (sub) из Google ID token. NULL если Google не привязан. */
+    @Column(name = "google_subject", length = 255)
+    private String googleSubject;
 
     @Column(nullable = false, length = 64)
     @Builder.Default

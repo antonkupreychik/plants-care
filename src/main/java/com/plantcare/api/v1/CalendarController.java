@@ -4,7 +4,7 @@ import com.plantcare.api.generated.CalendarApi;
 import com.plantcare.api.generated.model.TaskDto;
 import com.plantcare.core.domain.CareSchedule;
 import com.plantcare.core.domain.User;
-import com.plantcare.api.UserApiResolver;
+import com.plantcare.api.CurrentUserProvider;
 import com.plantcare.core.service.CalendarApiService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -34,16 +34,16 @@ public class CalendarController implements CalendarApi {
     private static final int MAX_RANGE_DAYS = 60;
 
     private final CalendarApiService calendarApiService;
-    private final UserApiResolver userApiResolver;
+    private final CurrentUserProvider currentUserProvider;
 
     @Override
-    public Map<String, List<TaskDto>> getCalendar(Long chatId, LocalDate from, LocalDate to) {
+    public Map<String, List<TaskDto>> getCalendar(LocalDate from, LocalDate to) {
         if (ChronoUnit.DAYS.between(from, to) > MAX_RANGE_DAYS) {
             throw new IllegalArgumentException(
                     "Date range exceeds maximum of " + MAX_RANGE_DAYS + " days");
         }
 
-        User user = userApiResolver.resolve(chatId);
+        User user = currentUserProvider.currentUser();
         log.info("GET /api/v1/calendar: userId={}, from={}, to={}", user.getId(), from, to);
 
         List<CareSchedule> schedules = calendarApiService.getActiveSchedules(user.getId());

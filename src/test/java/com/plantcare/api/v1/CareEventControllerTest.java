@@ -1,8 +1,9 @@
 package com.plantcare.api.v1;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.plantcare.api.auth.exception.AuthTokenException;
 import com.plantcare.api.ApiExceptionHandler;
-import com.plantcare.api.UserApiResolver;
+import com.plantcare.api.CurrentUserProvider;
 import com.plantcare.api.generated.model.CareEventType;
 import com.plantcare.api.generated.model.CreateCareEventRequest;
 import com.plantcare.core.domain.CareHistory;
@@ -58,7 +59,7 @@ class CareEventControllerTest {
     private CareEventApiService careEventApiService;
 
     @MockBean
-    private UserApiResolver userApiResolver;
+    private CurrentUserProvider currentUserProvider;
 
     // ===================== POST /api/v1/care-events =====================
 
@@ -66,7 +67,7 @@ class CareEventControllerTest {
     void should_return_201_with_response_body_when_valid_request() throws Exception {
         // arrange
         User user = mockUserWithId(42L, 42L);
-        when(userApiResolver.resolve(42L)).thenReturn(user);
+        when(currentUserProvider.currentUser()).thenReturn(user);
 
         CareHistory stubbedHistory = mockCareHistory(1L, 10L, "Монстера");
         when(careEventApiService.registerEvent(
@@ -78,7 +79,6 @@ class CareEventControllerTest {
 
         // act + assert
         mockMvc.perform(post("/api/v1/care-events")
-                        .header("X-Chat-Id", 42L)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isCreated())
@@ -90,23 +90,27 @@ class CareEventControllerTest {
     }
 
     @Test
-    void should_return_400_when_x_chat_id_header_missing() throws Exception {
-        // arrange
+    void should_return_401_when_no_authenticated_user() throws Exception {
+        // arrange — нет JWT в SecurityContext → провайдер бросает AuthTokenException
+        when(currentUserProvider.currentUser())
+                .thenThrow(AuthTokenException.invalid("No authenticated user in security context"));
+
         CreateCareEventRequest request = new CreateCareEventRequest(
                 10L, CareEventType.WATER, OffsetDateTime.now(ZoneOffset.UTC));
 
-        // act + assert — X-Chat-Id header отсутствует
+        // act + assert
         mockMvc.perform(post("/api/v1/care-events")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error.code").value("TOKEN_INVALID"));
     }
 
     @Test
     void should_return_400_with_validation_error_when_plant_id_is_null() throws Exception {
         // arrange — создаём мок заранее, иначе Mockito запутается в вложенных when()
         User user = mockUserWithId(42L, 42L);
-        when(userApiResolver.resolve(anyLong())).thenReturn(user);
+        when(currentUserProvider.currentUser()).thenReturn(user);
 
         // plantId = null → @NotNull нарушен
         String body = """
@@ -115,7 +119,6 @@ class CareEventControllerTest {
 
         // act + assert
         mockMvc.perform(post("/api/v1/care-events")
-                        .header("X-Chat-Id", 42L)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(body))
                 .andExpect(status().isBadRequest())
@@ -127,7 +130,7 @@ class CareEventControllerTest {
     void should_return_400_with_validation_error_when_performed_at_is_null() throws Exception {
         // arrange
         User user = mockUserWithId(42L, 42L);
-        when(userApiResolver.resolve(anyLong())).thenReturn(user);
+        when(currentUserProvider.currentUser()).thenReturn(user);
 
         // performedAt = null → @NotNull нарушен
         String body = """
@@ -136,7 +139,6 @@ class CareEventControllerTest {
 
         // act + assert
         mockMvc.perform(post("/api/v1/care-events")
-                        .header("X-Chat-Id", 42L)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(body))
                 .andExpect(status().isBadRequest())
@@ -147,7 +149,7 @@ class CareEventControllerTest {
     void should_return_404_when_plant_not_found_for_user() throws Exception {
         // arrange
         User user = mockUserWithId(42L, 42L);
-        when(userApiResolver.resolve(42L)).thenReturn(user);
+        when(currentUserProvider.currentUser()).thenReturn(user);
         when(careEventApiService.registerEvent(any(), any(), any(), any(), any(), any()))
                 .thenThrow(new EntityNotFoundException("Plant not found: id=99 for userId=42"));
 
@@ -156,7 +158,6 @@ class CareEventControllerTest {
 
         // act + assert
         mockMvc.perform(post("/api/v1/care-events")
-                        .header("X-Chat-Id", 42L)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isNotFound())
@@ -169,11 +170,10 @@ class CareEventControllerTest {
     void should_return_204_when_cancel_care_event_succeeds() throws Exception {
         // arrange
         User user = mockUserWithId(42L, 42L);
-        when(userApiResolver.resolve(42L)).thenReturn(user);
+        when(currentUserProvider.currentUser()).thenReturn(user);
 
         // act + assert
-        mockMvc.perform(delete("/api/v1/care-events/7")
-                        .header("X-Chat-Id", 42L))
+        mockMvc.perform(delete("/api/v1/care-events/7"))
                 .andExpect(status().isNoContent());
 
         verify(careEventApiService).cancelEvent(42L, 7L);
@@ -183,13 +183,12 @@ class CareEventControllerTest {
     void should_return_404_when_cancel_nonexistent_care_event() throws Exception {
         // arrange
         User user = mockUserWithId(42L, 42L);
-        when(userApiResolver.resolve(42L)).thenReturn(user);
+        when(currentUserProvider.currentUser()).thenReturn(user);
         doThrow(new EntityNotFoundException("CareHistory not found: id=999"))
                 .when(careEventApiService).cancelEvent(42L, 999L);
 
         // act + assert
-        mockMvc.perform(delete("/api/v1/care-events/999")
-                        .header("X-Chat-Id", 42L))
+        mockMvc.perform(delete("/api/v1/care-events/999"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.error.code").value("NOT_FOUND"));
     }
@@ -198,13 +197,12 @@ class CareEventControllerTest {
     void should_return_409_when_cancel_already_cancelled_care_event() throws Exception {
         // arrange
         User user = mockUserWithId(42L, 42L);
-        when(userApiResolver.resolve(42L)).thenReturn(user);
+        when(currentUserProvider.currentUser()).thenReturn(user);
         doThrow(new IllegalStateException("CareHistory id=5 is already cancelled"))
                 .when(careEventApiService).cancelEvent(42L, 5L);
 
         // act + assert
-        mockMvc.perform(delete("/api/v1/care-events/5")
-                        .header("X-Chat-Id", 42L))
+        mockMvc.perform(delete("/api/v1/care-events/5"))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.error.code").value("CONFLICT"))
                 .andExpect(jsonPath("$.error.message").value("CareHistory id=5 is already cancelled"));

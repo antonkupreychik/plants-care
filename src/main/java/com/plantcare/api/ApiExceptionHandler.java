@@ -1,5 +1,7 @@
 package com.plantcare.api;
 
+import com.plantcare.api.auth.exception.AuthTokenException;
+import com.plantcare.api.auth.exception.RateLimitExceededException;
 import com.plantcare.api.dto.ApiErrorResponse;
 import com.plantcare.api.dto.FieldError;
 import jakarta.persistence.EntityNotFoundException;
@@ -39,6 +41,19 @@ public class ApiExceptionHandler {
     public ResponseEntity<ApiErrorResponse> handleAccessDenied(AccessDeniedException e) {
         return ResponseEntity.status(HttpStatus.FORBIDDEN)
                 .body(ApiErrorResponse.of("ACCESS_DENIED", "Access denied"));
+    }
+
+    @ExceptionHandler(AuthTokenException.class)
+    public ResponseEntity<ApiErrorResponse> handleAuthToken(AuthTokenException e) {
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                .body(ApiErrorResponse.of(e.getCode().name(), e.getMessage()));
+    }
+
+    @ExceptionHandler(RateLimitExceededException.class)
+    public ResponseEntity<ApiErrorResponse> handleRateLimit(RateLimitExceededException e) {
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .header("Retry-After", String.valueOf(e.getRetryAfterSeconds()))
+                .body(ApiErrorResponse.of("RATE_LIMITED", e.getMessage()));
     }
 
     @ExceptionHandler(IllegalArgumentException.class)

@@ -7,9 +7,9 @@ paths:
       operationId: listPlants
       summary: Список растений пользователя
       description: |
-        Возвращает страницу растений, принадлежащих пользователю из заголовка
-        `X-User-Id`. Архивированные (soft-deleted) растения в выдачу не
-        попадают.
+        Возвращает страницу растений, принадлежащих текущему пользователю
+        (`sub` из bearer-токена). Архивированные (soft-deleted) растения в
+        выдачу не попадают.
 
         Можно фильтровать по локации параметром `locationId`. Пагинация —
         классическая `offset/limit`.
@@ -18,8 +18,9 @@ paths:
         * `limit` обрезается до диапазона **[1, 100]** (всё, что больше 100,
           становится 100; всё, что меньше 1 — становится 1);
         * `offset` ниже нуля становится 0.
+      security:
+        - bearerAuth: []
       parameters:
-        - $ref: '../_common/parameters.yaml#/XUserId'
         - name: locationId
           in: query
           required: false
@@ -63,11 +64,11 @@ paths:
       operationId: createPlant
       summary: Создать растение
       description: |
-        Создаёт растение от имени пользователя из `X-User-Id`. Если
-        `locationId` не указан, растение попадает в дефолтную локацию
-        пользователя.
-      parameters:
-        - $ref: '../_common/parameters.yaml#/XUserId'
+        Создаёт растение от имени текущего пользователя (`sub` из
+        bearer-токена). Если `locationId` не указан, растение попадает в
+        дефолтную локацию пользователя.
+      security:
+        - bearerAuth: []
       requestBody:
         required: true
         content:
@@ -94,12 +95,13 @@ paths:
       operationId: getPlant
       summary: Получить растение по ID
       description: |
-        Возвращает растение, если оно принадлежит пользователю из `X-User-Id`
-        и не архивировано. Чужие или несуществующие растения отдаются как 404,
-        чужие активные — как 403 (когда сервис уже знает, что запись есть, но
-        принадлежит другому пользователю).
+        Возвращает растение, если оно принадлежит текущему пользователю
+        (`sub` из bearer-токена) и не архивировано. Чужие или несуществующие
+        растения отдаются как 404, чужие активные — как 403 (когда сервис уже
+        знает, что запись есть, но принадлежит другому пользователю).
+      security:
+        - bearerAuth: []
       parameters:
-        - $ref: '../_common/parameters.yaml#/XUserId'
         - $ref: '../_common/parameters.yaml#/PlantIdPath'
       responses:
         '200':
@@ -123,8 +125,9 @@ paths:
 
         Пример: чтобы переместить растение в другую локацию, достаточно
         отправить `{ "locationId": 5 }`.
+      security:
+        - bearerAuth: []
       parameters:
-        - $ref: '../_common/parameters.yaml#/XUserId'
         - $ref: '../_common/parameters.yaml#/PlantIdPath'
       requestBody:
         required: true
@@ -156,8 +159,9 @@ paths:
         Помечает растение как удалённое (`archived_at = now()` в UTC). Запись
         в БД остаётся, но перестаёт появляться во всех `/api/v1/plants/*`
         выборках. Восстановления через API в этой версии нет.
+      security:
+        - bearerAuth: []
       parameters:
-        - $ref: '../_common/parameters.yaml#/XUserId'
         - $ref: '../_common/parameters.yaml#/PlantIdPath'
       responses:
         '204':

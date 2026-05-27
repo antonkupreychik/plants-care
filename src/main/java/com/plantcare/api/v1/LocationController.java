@@ -5,6 +5,7 @@ import com.plantcare.api.generated.model.LocationCreateRequest;
 import com.plantcare.api.generated.model.LocationDto;
 import com.plantcare.api.generated.model.LocationUpdateRequest;
 import com.plantcare.api.LocationNotEmptyException;
+import com.plantcare.api.CurrentUserProvider;
 import com.plantcare.core.domain.Location;
 import com.plantcare.core.domain.User;
 import com.plantcare.core.service.LocationService;
@@ -27,28 +28,32 @@ public class LocationController implements LocationsApi {
 
     private final LocationService locationService;
     private final UserService userService;
+    private final CurrentUserProvider currentUserProvider;
 
     @Override
-    public List<LocationDto> listLocations(Long userId) {
+    public List<LocationDto> listLocations() {
+        Long userId = currentUserProvider.currentUserId();
         return locationService.getUserLocations(userId).stream()
                 .map(LocationController::toDto)
                 .toList();
     }
 
     @Override
-    public LocationDto getLocation(Long userId, Long id) {
+    public LocationDto getLocation(Long id) {
+        Long userId = currentUserProvider.currentUserId();
         return toDto(getLocationOrThrow(userId, id));
     }
 
     @Override
-    public LocationDto createLocation(Long userId, LocationCreateRequest request) {
-        User user = userService.getByIdOrThrow(userId);
+    public LocationDto createLocation(LocationCreateRequest request) {
+        User user = userService.getByIdOrThrow(currentUserProvider.currentUserId());
         Location location = locationService.createLocation(user, request.getName(), request.getEmoji());
         return toDto(location);
     }
 
     @Override
-    public LocationDto updateLocation(Long userId, Long id, LocationUpdateRequest request) {
+    public LocationDto updateLocation(Long id, LocationUpdateRequest request) {
+        Long userId = currentUserProvider.currentUserId();
         try {
             Location updated = locationService.updateLocation(userId, id, request.getName(), request.getEmoji());
             return toDto(updated);
@@ -58,7 +63,8 @@ public class LocationController implements LocationsApi {
     }
 
     @Override
-    public void deleteLocation(Long userId, Long id, Long targetLocationId) {
+    public void deleteLocation(Long id, Long targetLocationId) {
+        Long userId = currentUserProvider.currentUserId();
         getLocationOrThrow(userId, id);
         long plantCount = locationService.countPlantsInLocation(userId, id);
 

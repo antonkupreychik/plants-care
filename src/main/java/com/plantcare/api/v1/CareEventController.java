@@ -4,7 +4,7 @@ import com.plantcare.api.generated.CareEventsApi;
 import com.plantcare.api.generated.model.CareEventResponse;
 import com.plantcare.api.generated.model.CareEventType;
 import com.plantcare.api.generated.model.CreateCareEventRequest;
-import com.plantcare.api.UserApiResolver;
+import com.plantcare.api.CurrentUserProvider;
 import com.plantcare.core.domain.CareHistory;
 import com.plantcare.core.domain.Plant;
 import com.plantcare.core.domain.User;
@@ -26,11 +26,11 @@ import java.time.ZoneOffset;
 public class CareEventController implements CareEventsApi {
 
     private final com.plantcare.core.service.CareEventApiService careEventApiService;
-    private final UserApiResolver userApiResolver;
+    private final CurrentUserProvider currentUserProvider;
 
     @Override
-    public CareEventResponse createCareEvent(Long chatId, CreateCareEventRequest req) {
-        User user = userApiResolver.resolve(chatId);
+    public CareEventResponse createCareEvent(CreateCareEventRequest req) {
+        User user = currentUserProvider.currentUser();
         log.info("POST /api/v1/care-events: userId={}, plantId={}, type={}, clientId={}",
                 user.getId(), req.getPlantId(), req.getType(), req.getClientId());
 
@@ -47,8 +47,8 @@ public class CareEventController implements CareEventsApi {
     }
 
     @Override
-    public void cancelCareEvent(Long chatId, Long id) {
-        User user = userApiResolver.resolve(chatId);
+    public void cancelCareEvent(Long id) {
+        User user = currentUserProvider.currentUser();
         log.info("DELETE /api/v1/care-events/{}: userId={}", id, user.getId());
 
         careEventApiService.cancelEvent(user.getId(), id);

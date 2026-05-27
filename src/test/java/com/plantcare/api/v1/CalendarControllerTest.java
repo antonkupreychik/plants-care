@@ -1,7 +1,8 @@
 package com.plantcare.api.v1;
 
+import com.plantcare.api.auth.exception.AuthTokenException;
 import com.plantcare.api.ApiExceptionHandler;
-import com.plantcare.api.UserApiResolver;
+import com.plantcare.api.CurrentUserProvider;
 import com.plantcare.core.domain.CareSchedule;
 import com.plantcare.core.domain.Location;
 import com.plantcare.core.domain.Plant;
@@ -40,7 +41,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * <ul>
  *   <li>200 с корректно сгруппированной по датам структурой.</li>
  *   <li>400 при диапазоне > 60 дней.</li>
- *   <li>400 при отсутствии заголовка X-Chat-Id.</li>
+ *   <li>401 при отсутствии аутентифицированного пользователя в SecurityContext.</li>
  *   <li>Сортировка по дате (TreeMap гарантирует восходящий порядок).</li>
  * </ul>
  */
@@ -56,7 +57,7 @@ class CalendarControllerTest {
     private CalendarApiService calendarApiService;
 
     @MockBean
-    private UserApiResolver userApiResolver;
+    private CurrentUserProvider currentUserProvider;
 
     // ===================== GET /api/v1/calendar =====================
 
@@ -65,7 +66,7 @@ class CalendarControllerTest {
         // arrange — расписание с nextDueAt = 2026-01-03, interval = 7 дней
         // В окне 2026-01-01..2026-01-07 попадает ровно 2026-01-03
         User user = mockUserWithTimezone(1L, 1L, "UTC");
-        when(userApiResolver.resolve(1L)).thenReturn(user);
+        when(currentUserProvider.currentUser()).thenReturn(user);
 
         CareSchedule schedule = mockSchedule(
                 10L, 100L, "Монстера", TaskType.WATERING,
@@ -77,7 +78,6 @@ class CalendarControllerTest {
 
         // act + assert
         mockMvc.perform(get("/api/v1/calendar")
-                        .header("X-Chat-Id", 1L)
                         .param("from", "2026-01-01")
                         .param("to", "2026-01-07"))
                 .andExpect(status().isOk())
@@ -92,13 +92,12 @@ class CalendarControllerTest {
     void should_return_400_when_range_exceeds_60_days() throws Exception {
         // arrange
         User user = mockUserWithTimezone(2L, 2L, "UTC");
-        when(userApiResolver.resolve(2L)).thenReturn(user);
+        when(currentUserProvider.currentUser()).thenReturn(user);
         when(calendarApiService.getActiveSchedules(anyLong()))
                 .thenReturn(List.of());
 
         // act + assert — диапазон 61 день → ошибка
         mockMvc.perform(get("/api/v1/calendar")
-                        .header("X-Chat-Id", 2L)
                         .param("from", "2026-01-01")
                         .param("to", "2026-03-03"))  // 61 день
                 .andExpect(status().isBadRequest())
@@ -108,25 +107,29 @@ class CalendarControllerTest {
     }
 
     @Test
-    void should_return_400_when_x_chat_id_header_missing() throws Exception {
+    void should_return_401_when_no_authenticated_user() throws Exception {
+        // arrange — нет аутентифицированного пользователя в SecurityContext
+        when(currentUserProvider.currentUser())
+                .thenThrow(AuthTokenException.invalid("No authenticated user in security context"));
+
         // act + assert
         mockMvc.perform(get("/api/v1/calendar")
                         .param("from", "2026-01-01")
                         .param("to", "2026-01-07"))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error.code").value("TOKEN_INVALID"));
     }
 
     @Test
     void should_return_empty_map_when_no_schedules_in_range() throws Exception {
         // arrange — расписания есть, но все nextDueAt за пределами окна
         User user = mockUserWithTimezone(3L, 3L, "UTC");
-        when(userApiResolver.resolve(3L)).thenReturn(user);
+        when(currentUserProvider.currentUser()).thenReturn(user);
         when(calendarApiService.getActiveSchedules(anyLong()))
                 .thenReturn(List.of());
 
         // act + assert
         mockMvc.perform(get("/api/v1/calendar")
-                        .header("X-Chat-Id", 3L)
                         .param("from", "2026-01-01")
                         .param("to", "2026-01-07"))
                 .andExpect(status().isOk())
@@ -140,7 +143,7 @@ class CalendarControllerTest {
     void should_return_dates_in_ascending_order_when_multiple_dates_in_range() throws Exception {
         // arrange — два расписания: одно на 2026-01-05, другое на 2026-01-02
         User user = mockUserWithTimezone(4L, 4L, "UTC");
-        when(userApiResolver.resolve(4L)).thenReturn(user);
+        when(currentUserProvider.currentUser()).thenReturn(user);
 
         CareSchedule scheduleA = mockSchedule(
                 11L, 101L, "Фикус", TaskType.WATERING,
@@ -160,7 +163,6 @@ class CalendarControllerTest {
 
         // act
         MvcResult result = mockMvc.perform(get("/api/v1/calendar")
-                        .header("X-Chat-Id", 4L)
                         .param("from", "2026-01-01")
                         .param("to", "2026-01-07"))
                 .andExpect(status().isOk())
@@ -177,7 +179,7 @@ class CalendarControllerTest {
     void should_group_multiple_tasks_on_same_day_when_multiple_schedules_due() throws Exception {
         // arrange — два расписания с одной датой
         User user = mockUserWithTimezone(5L, 5L, "UTC");
-        when(userApiResolver.resolve(5L)).thenReturn(user);
+        when(currentUserProvider.currentUser()).thenReturn(user);
 
         CareSchedule watering = mockSchedule(
                 13L, 103L, "Монстера", TaskType.WATERING,
@@ -192,7 +194,6 @@ class CalendarControllerTest {
 
         // act + assert — оба задания на один день
         mockMvc.perform(get("/api/v1/calendar")
-                        .header("X-Chat-Id", 5L)
                         .param("from", "2026-01-01")
                         .param("to", "2026-01-07"))
                 .andExpect(status().isOk())
@@ -203,13 +204,12 @@ class CalendarControllerTest {
     void should_return_200_when_range_is_exactly_60_days() throws Exception {
         // arrange — граничное значение: ровно 60 дней
         User user = mockUserWithTimezone(6L, 6L, "UTC");
-        when(userApiResolver.resolve(6L)).thenReturn(user);
+        when(currentUserProvider.currentUser()).thenReturn(user);
         when(calendarApiService.getActiveSchedules(anyLong()))
                 .thenReturn(List.of());
 
         // act + assert — 60 дней — допустимо
         mockMvc.perform(get("/api/v1/calendar")
-                        .header("X-Chat-Id", 6L)
                         .param("from", "2026-01-01")
                         .param("to", "2026-03-02"))  // 60 дней
                 .andExpect(status().isOk());

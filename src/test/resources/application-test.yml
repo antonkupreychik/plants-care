@@ -15,6 +15,30 @@ telegram:
   bot:
     enabled: false
 
+# Issue #88: фиксированные значения auth для тестов (секрет — не настоящий,
+# только для подписи/проверки HS256 в тестовом контексте).
+plantcare:
+  auth:
+    jwt:
+      secret: test-secret-please-change-this-is-32-bytes-minimum-for-hs256
+      issuer: https://plants-care.test
+      access-ttl: PT1H
+      refresh-ttl: P30D
+    apple:
+      bundle-id: com.plantcare.test
+      issuer: https://appleid.apple.com
+      jwks-uri: https://appleid.apple.com/auth/keys
+    google:
+      client-id: test-google-client-id
+      issuers: accounts.google.com,https://accounts.google.com
+      jwks-uri: https://www.googleapis.com/oauth2/v3/certs
+    magic-link:
+      base-url: https://plants-care.test/auth/verify
+      ttl: PT15M
+      rate-limit:
+        max-attempts: 5
+        window-seconds: 300
+
 logging:
   level:
     org.hibernate.SQL: WARN

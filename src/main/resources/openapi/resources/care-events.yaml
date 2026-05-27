@@ -18,8 +18,8 @@ paths:
         запись с таким `clientId` от того же пользователя/растения, возвращается
         существующая запись без повторной вставки. Это позволяет мобильным
         клиентам безопасно ретраить запрос при потере соединения.
-      parameters:
-        - $ref: '../_common/parameters.yaml#/XChatId'
+      security:
+        - bearerAuth: []
       requestBody:
         required: true
         content:
@@ -55,8 +55,9 @@ paths:
         и позволяет восстанавливать состояние.
 
         Повторная отмена уже отменённой записи возвращает 409.
+      security:
+        - bearerAuth: []
       parameters:
-        - $ref: '../_common/parameters.yaml#/XChatId'
         - name: id
           in: path
           required: true

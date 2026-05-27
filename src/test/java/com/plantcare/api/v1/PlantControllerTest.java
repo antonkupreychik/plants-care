@@ -2,6 +2,7 @@ package com.plantcare.api.v1;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.plantcare.api.ApiExceptionHandler;
+import com.plantcare.api.CurrentUserProvider;
 import com.plantcare.core.domain.Location;
 import com.plantcare.core.domain.Plant;
 import com.plantcare.core.domain.User;
@@ -61,6 +62,15 @@ class PlantControllerTest {
     @MockitoBean
     private LocationService locationService;
 
+    @MockitoBean
+    private CurrentUserProvider currentUserProvider;
+
+    @org.junit.jupiter.api.BeforeEach
+    void stubCurrentUser() {
+        // По умолчанию аутентифицированный пользователь — userId=1 (как в прежних X-User-Id=1).
+        when(currentUserProvider.currentUserId()).thenReturn(1L);
+    }
+
     // ------------------------------------------------------------------ helpers
 
     /**
@@ -103,8 +113,7 @@ class PlantControllerTest {
         when(plantService.countPlants(1L, null)).thenReturn(2L);
 
         // act + assert
-        mockMvc.perform(get("/api/v1/plants")
-                        .header("X-User-Id", "1"))
+        mockMvc.perform(get("/api/v1/plants"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.items").isArray())
                 .andExpect(jsonPath("$.items.length()").value(2))
@@ -123,8 +132,7 @@ class PlantControllerTest {
         when(plantService.countPlants(1L, 5L)).thenReturn(1L);
 
         // act + assert
-        mockMvc.perform(get("/api/v1/plants?locationId=5")
-                        .header("X-User-Id", "1"))
+        mockMvc.perform(get("/api/v1/plants?locationId=5"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.items.length()").value(1))
                 .andExpect(jsonPath("$.items[0].name").value("Ficus"));
@@ -138,8 +146,7 @@ class PlantControllerTest {
         when(plantService.getPlantOrThrow(1L, 1L)).thenReturn(plant);
 
         // act + assert
-        mockMvc.perform(get("/api/v1/plants/1")
-                        .header("X-User-Id", "1"))
+        mockMvc.perform(get("/api/v1/plants/1"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id").value(1))
                 .andExpect(jsonPath("$.name").value("Ficus"));
@@ -152,8 +159,7 @@ class PlantControllerTest {
                 .thenThrow(new EntityNotFoundException("Plant not found: 999"));
 
         // act + assert
-        mockMvc.perform(get("/api/v1/plants/999")
-                        .header("X-User-Id", "1"))
+        mockMvc.perform(get("/api/v1/plants/999"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.error.code").value("NOT_FOUND"));
     }
@@ -174,7 +180,6 @@ class PlantControllerTest {
 
         // act + assert
         mockMvc.perform(post("/api/v1/plants")
-                        .header("X-User-Id", "1")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(body))
                 .andExpect(status().isCreated())
@@ -191,7 +196,6 @@ class PlantControllerTest {
 
         // act + assert
         mockMvc.perform(post("/api/v1/plants")
-                        .header("X-User-Id", "1")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(body))
                 .andExpect(status().isBadRequest())
@@ -206,7 +210,6 @@ class PlantControllerTest {
 
         // act + assert
         mockMvc.perform(post("/api/v1/plants")
-                        .header("X-User-Id", "1")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(body))
                 .andExpect(status().isBadRequest())
@@ -221,7 +224,6 @@ class PlantControllerTest {
 
         // act + assert
         mockMvc.perform(post("/api/v1/plants")
-                        .header("X-User-Id", "1")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(body))
                 .andExpect(status().isBadRequest())
@@ -242,7 +244,6 @@ class PlantControllerTest {
 
         // act + assert
         mockMvc.perform(put("/api/v1/plants/1")
-                        .header("X-User-Id", "1")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(body))
                 .andExpect(status().isOk())
@@ -255,8 +256,7 @@ class PlantControllerTest {
         doNothing().when(plantService).archivePlant(1L, 1L);
 
         // act + assert
-        mockMvc.perform(delete("/api/v1/plants/1")
-                        .header("X-User-Id", "1"))
+        mockMvc.perform(delete("/api/v1/plants/1"))
                 .andExpect(status().isNoContent());
     }
 
@@ -267,8 +267,7 @@ class PlantControllerTest {
                 .thenThrow(new AccessDeniedException("Access denied"));
 
         // act + assert
-        mockMvc.perform(get("/api/v1/plants/1")
-                        .header("X-User-Id", "1"))
+        mockMvc.perform(get("/api/v1/plants/1"))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.error.code").value("ACCESS_DENIED"));
     }

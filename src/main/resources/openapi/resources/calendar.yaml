@@ -15,8 +15,9 @@ paths:
         строки-даты в формате `YYYY-MM-DD`, упорядоченные по возрастанию.
 
         Максимальная длина диапазона — 60 дней; больше → 400.
+      security:
+        - bearerAuth: []
       parameters:
-        - $ref: '../_common/parameters.yaml#/XChatId'
         - name: from
           in: query
           required: true
