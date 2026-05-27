@@ -61,7 +61,7 @@ public class PlantService {
 
     @Transactional(readOnly = true)
     public Plant getPlantOrThrow(Long userId, Long plantId) {
-        Plant plant = plantRepository.findById(plantId)
+        Plant plant = plantRepository.findByIdWithLocationAndSpecies(plantId)
                 .orElseThrow(() -> new EntityNotFoundException("Plant not found: " + plantId));
         if (!plant.getUser().getId().equals(userId)) {
             throw new AccessDeniedException("Access denied");

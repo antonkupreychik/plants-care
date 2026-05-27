@@ -4,6 +4,7 @@ import com.plantcare.core.domain.CareHistory;
 import com.plantcare.core.domain.enums.TaskType;
 import org.springframework.data.domain.Limit;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -92,7 +93,12 @@ public interface CareHistoryRepository extends JpaRepository<CareHistory, Long> 
      * Поиск по client_id для идемпотентности REST API (issue #86).
      * client_id генерирует мобильный клиент при POST /api/v1/care-events;
      * повторный запрос с тем же client_id вернёт уже существующую запись.
+     *
+     * <p>{@code plant} подтягивается через {@link EntityGraph}: запись из этой
+     * ветки сразу мапится в {@code CareEventResponse} вне транзакции (OSIV=false),
+     * а маппинг читает {@code plant.getName()} — без графа был бы {@code no Session}.
      */
+    @EntityGraph(attributePaths = "plant")
     Optional<CareHistory> findByClientId(String clientId);
 
     /**

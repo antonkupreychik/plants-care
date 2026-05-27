@@ -2,6 +2,7 @@ package com.plantcare.core.repository;
 
 import com.plantcare.core.domain.Plant;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -16,8 +17,16 @@ public interface PlantRepository extends JpaRepository<Plant, Long> {
 
     List<Plant> findAllByUserIdAndArchivedAtIsNullOrderByNameAsc(Long userId);
 
+    /**
+     * Пагинированный список для REST API (issue #85). {@code location} и
+     * {@code species} подтягиваются через {@link EntityGraph}, потому что
+     * {@code PlantController.toDto} читает их вне транзакции (OSIV=false) —
+     * без графа был бы {@code LazyInitializationException: no Session}.
+     */
+    @EntityGraph(attributePaths = {"location", "species"})
     List<Plant> findAllByUserIdAndArchivedAtIsNullOrderByNameAsc(Long userId, Pageable pageable);
 
+    @EntityGraph(attributePaths = {"location", "species"})
     List<Plant> findAllByUserIdAndLocationIdAndArchivedAtIsNullOrderByNameAsc(
             Long userId,
             Long locationId,
@@ -25,6 +34,21 @@ public interface PlantRepository extends JpaRepository<Plant, Long> {
     );
 
     Optional<Plant> findByUserIdAndIdAndArchivedAtIsNull(Long userId, Long plantId);
+
+    /**
+     * Растение по id с подтянутыми {@code location} и {@code species}.
+     * Используется в {@code PlantService.getPlantOrThrow}, результат которого
+     * мапится в DTO вне транзакции (REST API, issue #85) — иначе ленивые
+     * связи дают {@code no Session}. {@code LEFT JOIN}, т.к. {@code species}
+     * nullable.
+     */
+    @Query("""
+            SELECT p FROM Plant p
+            LEFT JOIN FETCH p.location
+            LEFT JOIN FETCH p.species
+            WHERE p.id = :id
+            """)
+    Optional<Plant> findByIdWithLocationAndSpecies(@Param("id") Long id);
 
     List<Plant> findAllByUserIdAndLocationIdAndArchivedAtIsNullOrderByNameAsc(
             Long userId,
