@@ -1,0 +1,30 @@
+name: Wiki link check
+
+# Событие gollum срабатывает при создании/изменении любой страницы вики.
+# ВАЖНО: воркфлоу запускается только из ветки по умолчанию (main), поэтому
+# проверка начнёт работать после мержа этого файла в main. Wiki — отдельный
+# git-репозиторий и не может хранить воркфлоу, поэтому он живёт здесь.
+on:
+  gollum:
+  workflow_dispatch:  # ручной запуск из вкладки Actions
+
+permissions:
+  contents: read
+
+jobs:
+  check-links:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo (для скрипта)
+        uses: actions/checkout@v4
+
+      - name: Clone wiki
+        run: git clone --depth 1 "https://github.com/${{ github.repository }}.wiki.git" wiki
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Check internal wiki links
+        run: python .github/scripts/wiki_link_check.py wiki
