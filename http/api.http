@@ -1,0 +1,152 @@
+### Plants Care API — коллекция запросов (issue #171)
+#
+# Формат совместим с JetBrains HTTP Client и VS Code REST Client.
+# Локально auth обычно выключен (AUTH_ENABLED=false) → токен не нужен,
+# все запросы идут от dev-пользователя (id=1), засеянного DevDataInitializer.
+# Для прод/secured-режима задай {{token}} (см. блок Auth ниже).
+
+@baseUrl = http://localhost:8080
+@token =
+
+### Health (публично)
+GET {{baseUrl}}/api/v1/health
+
+### --- Auth (публично) ---
+
+### Вход через Apple
+POST {{baseUrl}}/api/v1/auth/apple
+Content-Type: application/json
+
+{ "identityToken": "<apple-identity-token>" }
+
+### Вход через Google
+POST {{baseUrl}}/api/v1/auth/google
+Content-Type: application/json
+
+{ "idToken": "<google-id-token>" }
+
+### Запросить magic link на email
+POST {{baseUrl}}/api/v1/auth/email/request
+Content-Type: application/json
+
+{ "email": "user@example.com" }
+
+### Обменять magic-link токен на пару токенов
+POST {{baseUrl}}/api/v1/auth/email/verify
+Content-Type: application/json
+
+{ "token": "<token-из-письма>" }
+
+### Ротация пары токенов
+POST {{baseUrl}}/api/v1/auth/refresh
+Content-Type: application/json
+
+{ "refreshToken": "<refresh-token>" }
+
+### --- Today / Calendar / Stats ---
+
+### Задачи на сегодня
+GET {{baseUrl}}/api/v1/today
+Authorization: Bearer {{token}}
+
+### Календарь задач
+GET {{baseUrl}}/api/v1/calendar
+Authorization: Bearer {{token}}
+
+### Стрик растения
+GET {{baseUrl}}/api/v1/stats/streak?plantId=1
+Authorization: Bearer {{token}}
+
+### --- Plants ---
+
+### Список растений
+GET {{baseUrl}}/api/v1/plants?offset=0&limit=20
+Authorization: Bearer {{token}}
+
+### Список растений в локации
+GET {{baseUrl}}/api/v1/plants?locationId=1
+Authorization: Bearer {{token}}
+
+### Создать растение
+POST {{baseUrl}}/api/v1/plants
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "name": "Monstera", "locationId": 1, "notes": "Любит свет" }
+
+### Получить растение
+GET {{baseUrl}}/api/v1/plants/1
+Authorization: Bearer {{token}}
+
+### Обновить растение (PATCH-семантика: только name/notes/locationId)
+PUT {{baseUrl}}/api/v1/plants/1
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "notes": "Переставил ближе к окну" }
+
+### Архивировать растение (soft-delete)
+DELETE {{baseUrl}}/api/v1/plants/1
+Authorization: Bearer {{token}}
+
+### История ухода за растением
+GET {{baseUrl}}/api/v1/plants/1/history?offset=0&limit=20
+Authorization: Bearer {{token}}
+
+### --- Locations ---
+
+### Список локаций
+GET {{baseUrl}}/api/v1/locations
+Authorization: Bearer {{token}}
+
+### Создать локацию
+POST {{baseUrl}}/api/v1/locations
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "name": "Подоконник", "emoji": "🪟" }
+
+### Получить локацию
+GET {{baseUrl}}/api/v1/locations/1
+Authorization: Bearer {{token}}
+
+### Обновить локацию
+PUT {{baseUrl}}/api/v1/locations/1
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "emoji": "🌿" }
+
+### Удалить локацию (409 LOCATION_NOT_EMPTY, если в ней есть растения)
+DELETE {{baseUrl}}/api/v1/locations/1
+Authorization: Bearer {{token}}
+
+### --- Care events ---
+
+### Зарегистрировать уход (type: WATER | SPRAY | FERTILIZE)
+POST {{baseUrl}}/api/v1/care-events
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "plantId": 1,
+  "type": "WATER",
+  "performedAt": "2026-05-28T08:30:00Z",
+  "note": "полил обильно",
+  "clientId": "f47ac10b-58cc-4372-a567-0e02b2c3d479"
+}
+
+### Отменить уход (компенсирующая запись)
+DELETE {{baseUrl}}/api/v1/care-events/1
+Authorization: Bearer {{token}}
+
+### --- Справочники (публично) ---
+
+### Поиск/список видов
+GET {{baseUrl}}/api/v1/species?q=monstera&offset=0&limit=20
+
+### Детали вида
+GET {{baseUrl}}/api/v1/species/1
+
+### Справочник типов ухода
+GET {{baseUrl}}/api/v1/care-types
