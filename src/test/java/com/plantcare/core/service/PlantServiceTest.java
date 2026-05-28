@@ -18,6 +18,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.access.AccessDeniedException;
 
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
@@ -193,6 +194,35 @@ class PlantServiceTest extends IntegrationTestBase {
         // растение НЕ должно сохраниться (создание атомарно отвалилось до save)
         assertThat(plantRepository.findAllByUserIdAndArchivedAtIsNullOrderByNameAsc(testUser.getId()))
                 .isEmpty();
+    }
+
+    // ==================== getPlantHealth (REST, mobile gap G1) ====================
+
+    @Test
+    @DisplayName("getPlantHealth: для растения без истории ухода → insufficientData")
+    void getPlantHealth_insufficientForPlantWithoutHistory() {
+        Plant plant = plantService.createPlant(
+                testUser, "Свежее растение", null, null, null);
+
+        HealthScoreService.HealthScore health = plantService.getPlantHealth(
+                testUser.getId(), plant.getId());
+
+        assertThat(health.insufficientData()).isTrue();
+    }
+
+    @Test
+    @DisplayName("getPlantHealth: чужое растение → AccessDeniedException (как getPlantOrThrow)")
+    void getPlantHealth_foreignPlant_throwsAccessDenied() {
+        Plant plant = plantService.createPlant(
+                testUser, "Моё растение", null, null, null);
+
+        User otherUser = userRepository.save(User.builder()
+                .telegramChatId(801L)
+                .username("other_user")
+                .build());
+
+        assertThatThrownBy(() -> plantService.getPlantHealth(otherUser.getId(), plant.getId()))
+                .isInstanceOf(AccessDeniedException.class);
     }
 
     // ==================== getPopularSpecies ====================

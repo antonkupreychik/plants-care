@@ -7,8 +7,10 @@ import com.plantcare.core.domain.Location;
 import com.plantcare.core.domain.Plant;
 import com.plantcare.core.domain.Species;
 import com.plantcare.core.domain.User;
+import com.plantcare.core.domain.enums.HealthZone;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.security.access.AccessDeniedException;
+import com.plantcare.core.service.HealthScoreService;
 import com.plantcare.core.service.LocationService;
 import com.plantcare.core.service.PlantService;
 import com.plantcare.core.service.UserService;
@@ -299,5 +301,47 @@ class PlantControllerTest {
         mockMvc.perform(get("/api/v1/plants/1"))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.error.code").value("ACCESS_DENIED"));
+    }
+
+    // ------------------------------------------------------------- health (G1)
+
+    @Test
+    void should_return_health_score_when_sufficient_data() throws Exception {
+        // arrange
+        when(plantService.getPlantHealth(1L, 1L))
+                .thenReturn(HealthScoreService.HealthScore.of(82, HealthZone.GREEN));
+
+        // act + assert
+        mockMvc.perform(get("/api/v1/plants/1/health"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.insufficientData").value(false))
+                .andExpect(jsonPath("$.score").value(82))
+                .andExpect(jsonPath("$.zone").value("GREEN"));
+    }
+
+    @Test
+    void should_return_insufficient_health_when_little_data() throws Exception {
+        // arrange — данных мало → score/zone null
+        when(plantService.getPlantHealth(1L, 1L))
+                .thenReturn(HealthScoreService.HealthScore.insufficient());
+
+        // act + assert
+        mockMvc.perform(get("/api/v1/plants/1/health"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.insufficientData").value(true))
+                .andExpect(jsonPath("$.score").isEmpty())
+                .andExpect(jsonPath("$.zone").isEmpty());
+    }
+
+    @Test
+    void should_return_404_for_health_of_missing_plant() throws Exception {
+        // arrange — ownership/not-found пробрасывается из сервиса
+        when(plantService.getPlantHealth(1L, 999L))
+                .thenThrow(new EntityNotFoundException("Plant not found: 999"));
+
+        // act + assert
+        mockMvc.perform(get("/api/v1/plants/999/health"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.error.code").value("NOT_FOUND"));
     }
 }
