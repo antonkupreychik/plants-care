@@ -1,0 +1,14 @@
+# Spectral-правила для OpenAPI-спеки Plants Care (issue #170).
+# Линтуется СОБРАННАЯ (bundled) спека — см. воркфлоу api-contract.yml: спека
+# разбита по resources/*.yaml, а calendar.yaml ссылается на bundle-путь
+# `#/components/schemas/TaskDto` (обход бага openapi-generator 7.10 с типизацией
+# items в additionalProperties). В бандле root инлайнит TaskDto в
+# components.schemas, поэтому ссылка резолвится и invalid-ref не срабатывает.
+#
+# В CI падаем только на severity=error (--fail-severity error); warn'ы — информативны.
+extends: ["spectral:oas"]
+
+rules:
+  # Часть схем подключается из root через components.$ref «про запас» —
+  # штатная проверка неиспользуемых компонентов даёт ложные срабатывания.
+  oas3-unused-component: off
