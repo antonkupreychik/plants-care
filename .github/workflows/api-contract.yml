@@ -1,0 +1,82 @@
+name: API contract
+
+# Контракт REST API для мобильных клиентов (issue #170): линт OpenAPI-спеки,
+# генерация Swift/Kotlin SDK как артефактов, и drift-гейт (спека ↔ серверные
+# интерфейсы). Запускается только при изменении спеки или pom.
+on:
+  push:
+    paths:
+      - 'src/main/resources/openapi/**'
+      - 'pom.xml'
+      - '.github/workflows/api-contract.yml'
+      - '.spectral.yaml'
+  pull_request:
+    paths:
+      - 'src/main/resources/openapi/**'
+      - 'pom.xml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  SPEC: src/main/resources/openapi/openapi.yaml
+  OPENAPI_GENERATOR_VERSION: v7.10.0  # совпадает с openapi-generator.version в pom
+
+jobs:
+  lint:
+    name: Spectral lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      # Линтуем СОБРАННУЮ спеку: bundle инлайнит root-зарегистрированные схемы,
+      # благодаря чему резолвится bundle-путь #/components/schemas/TaskDto в
+      # calendar.yaml (см. комментарий в .spectral.yaml). --force: redocly
+      # ругается на этот ref при сборке, но бандл создаётся корректным.
+      - name: Bundle OpenAPI spec
+        run: npx -y @redocly/cli@1 bundle "$SPEC" -o openapi.bundled.yaml --force
+      - name: Lint bundled spec
+        run: npx -y @stoplight/spectral-cli@6 lint openapi.bundled.yaml --ruleset .spectral.yaml --fail-severity error
+
+  clients:
+    name: Generate ${{ matrix.generator }} client
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - generator: swift5
+            artifact: client-swift
+          - generator: kotlin
+            artifact: client-kotlin
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate client SDK
+        run: |
+          docker run --rm -v "$PWD:/work" \
+            "openapitools/openapi-generator-cli:${OPENAPI_GENERATOR_VERSION}" \
+            generate -i "/work/${SPEC}" -g ${{ matrix.generator }} \
+            -o "/work/clients/${{ matrix.generator }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: clients/${{ matrix.generator }}
+
+  drift:
+    name: Contract drift (спека ↔ контроллеры)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: maven
+      # Контроллеры реализуют сгенерированные из спеки *Api-интерфейсы.
+      # Если спека и код разошлись (метод в спеке без реализации и т.п.) —
+      # compile упадёт. Это и есть drift-гейт.
+      - name: Compile against generated server interfaces
+        run: mvn -B -DskipTests compile
