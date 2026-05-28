@@ -81,21 +81,28 @@ public class PlantService {
     }
 
     @Transactional
-    public Plant createPlant(User user, String name, String notes, Long locationId) {
+    public Plant createPlant(User user, String name, String notes, Long locationId, Long speciesId) {
         Location location;
         if (locationId != null) {
             location = locationService.getUserLocationOrThrow(user.getId(), locationId);
         } else {
             location = locationService.getOrCreateDefaultLocation(user);
         }
+        Species species = null;
+        if (speciesId != null) {
+            species = speciesRepository.findById(speciesId)
+                    .orElseThrow(() -> new EntityNotFoundException("Species not found: " + speciesId));
+        }
         Plant plant = Plant.builder()
                 .user(user)
                 .location(location)
                 .name(name)
                 .notes(notes)
+                .species(species)
                 .build();
         Plant saved = plantRepository.save(plant);
-        log.info("Created plant '{}' (id={}) via REST API for user {}", name, saved.getId(), user.getId());
+        log.info("Created plant '{}' (id={}, speciesId={}) via REST API for user {}",
+                name, saved.getId(), speciesId, user.getId());
         return saved;
     }
 

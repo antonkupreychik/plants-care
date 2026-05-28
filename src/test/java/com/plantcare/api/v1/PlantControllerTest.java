@@ -5,6 +5,7 @@ import com.plantcare.api.ApiExceptionHandler;
 import com.plantcare.api.CurrentUserProvider;
 import com.plantcare.core.domain.Location;
 import com.plantcare.core.domain.Plant;
+import com.plantcare.core.domain.Species;
 import com.plantcare.core.domain.User;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.security.access.AccessDeniedException;
@@ -171,7 +172,7 @@ class PlantControllerTest {
         Plant plant = mockPlant(10L, 1L, "Ficus");
 
         when(userService.getByIdOrThrow(1L)).thenReturn(user);
-        when(plantService.createPlant(eq(user), eq("Ficus"), isNull(), isNull()))
+        when(plantService.createPlant(eq(user), eq("Ficus"), isNull(), isNull(), isNull()))
                 .thenReturn(plant);
 
         String body = """
@@ -185,6 +186,34 @@ class PlantControllerTest {
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.id").value(10))
                 .andExpect(jsonPath("$.name").value("Ficus"));
+    }
+
+    @Test
+    void should_create_plant_with_speciesId() throws Exception {
+        // arrange — клиент передаёт speciesId (mobile gap G13)
+        User user = User.builder().telegramChatId(1L).build();
+        Plant plant = mockPlant(11L, 1L, "Монстера");
+        Species species = mock(Species.class);
+        when(species.getId()).thenReturn(7L);
+        when(species.getName()).thenReturn("Monstera deliciosa");
+        when(plant.getSpecies()).thenReturn(species);
+
+        when(userService.getByIdOrThrow(1L)).thenReturn(user);
+        when(plantService.createPlant(eq(user), eq("Монстера"), isNull(), isNull(), eq(7L)))
+                .thenReturn(plant);
+
+        String body = """
+                {"name": "Монстера", "speciesId": 7}
+                """;
+
+        // act + assert
+        mockMvc.perform(post("/api/v1/plants")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.id").value(11))
+                .andExpect(jsonPath("$.speciesId").value(7))
+                .andExpect(jsonPath("$.speciesName").value("Monstera deliciosa"));
     }
 
     @Test
