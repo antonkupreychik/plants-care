@@ -251,6 +251,15 @@ schemas:
         format: int64
         nullable: true
         description: Идентификатор локации. Если не задан, используется дефолтная локация пользователя.
+      speciesId:
+        type: integer
+        format: int64
+        nullable: true
+        description: |
+          Идентификатор вида растения (`Species.id`). Опционально. Если задан —
+          растение связывается с видом (mobile gap G13); вид должен существовать,
+          иначе `404 NOT_FOUND`. Расписания ухода при этом **не** создаются
+          автоматически (отдельная задача G14).
 
   PlantUpdateRequest:
     type: object

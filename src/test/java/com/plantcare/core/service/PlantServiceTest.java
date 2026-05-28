@@ -12,6 +12,7 @@ import com.plantcare.core.repository.PlantRepository;
 import com.plantcare.core.repository.SpeciesRepository;
 import com.plantcare.core.repository.UserRepository;
 import com.plantcare.bot.support.IntegrationTestBase;
+import jakarta.persistence.EntityNotFoundException;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -23,6 +24,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @DisplayName("Интеграционные тесты PlantService — создание растения")
 class PlantServiceTest extends IntegrationTestBase {
@@ -154,6 +156,43 @@ class PlantServiceTest extends IntegrationTestBase {
 
         Plant reloaded = plantRepository.findById(plant.getId()).orElseThrow();
         assertThat(reloaded.getName()).isEqualTo(specialName);
+    }
+
+    // ==================== createPlant (REST, mobile gap G13) ====================
+
+    @Test
+    @DisplayName("createPlant с speciesId связывает растение с видом и НЕ создаёт расписаний")
+    void createPlantViaApi_withSpecies_linksSpeciesAndNoSchedule() {
+        Plant plant = plantService.createPlant(
+                testUser, "Монстера у окна", "заметка", null, monstera.getId());
+
+        assertThat(plant.getId()).isNotNull();
+        assertThat(plant.getSpecies()).isNotNull();
+        assertThat(plant.getSpecies().getId()).isEqualTo(monstera.getId());
+        // G14 ещё не реализован — расписания при создании через REST не появляются
+        assertThat(scheduleRepository.findAllByPlantId(plant.getId())).isEmpty();
+    }
+
+    @Test
+    @DisplayName("createPlant без speciesId оставляет species = NULL")
+    void createPlantViaApi_withoutSpecies_speciesNull() {
+        Plant plant = plantService.createPlant(
+                testUser, "Безымянное", null, null, null);
+
+        assertThat(plant.getSpecies()).isNull();
+    }
+
+    @Test
+    @DisplayName("createPlant с несуществующим speciesId → EntityNotFoundException (404)")
+    void createPlantViaApi_withUnknownSpecies_throwsNotFound() {
+        assertThatThrownBy(() -> plantService.createPlant(
+                testUser, "Растение", null, null, 999_999L))
+                .isInstanceOf(EntityNotFoundException.class)
+                .hasMessageContaining("999999");
+
+        // растение НЕ должно сохраниться (создание атомарно отвалилось до save)
+        assertThat(plantRepository.findAllByUserIdAndArchivedAtIsNullOrderByNameAsc(testUser.getId()))
+                .isEmpty();
     }
 
     // ==================== getPopularSpecies ====================
