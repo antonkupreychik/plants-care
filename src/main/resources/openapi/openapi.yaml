@@ -123,6 +123,9 @@ paths:
   /api/v1/today:
     $ref: './resources/today.yaml#/paths/Collection'
 
+  /api/v1/weather/snapshot:
+    $ref: './resources/weather.yaml#/paths/Snapshot'
+
   /api/v1/stats/streak:
     $ref: './resources/stats.yaml#/paths/Streak'
 
