@@ -38,6 +38,7 @@ public class PlantService {
     private final SpeciesRepository speciesRepository;
     private final LocationService locationService;
     private final com.plantcare.core.seasonal.service.SeasonalIntervalService seasonalIntervalService;
+    private final HealthScoreService healthScoreService;
 
     // =================================================================
     // REST API CRUD (issue #85)
@@ -57,6 +58,18 @@ public class PlantService {
                     userId, locationId, pageable);
         }
         return plantRepository.findAllByUserIdAndArchivedAtIsNullOrderByNameAsc(userId, pageable);
+    }
+
+    /**
+     * Health-score растения для REST API (mobile gap G1, issue #138).
+     * Ownership/архив-проверки — те же, что в {@link #getPlantOrThrow}. Расчёт
+     * идёт в этой же read-only транзакции, поэтому lazy {@code plant.user}
+     * (нужен для TZ) инициализируется без LazyInitializationException.
+     */
+    @Transactional(readOnly = true)
+    public HealthScoreService.HealthScore getPlantHealth(Long userId, Long plantId) {
+        Plant plant = getPlantOrThrow(userId, plantId);
+        return healthScoreService.computeForPlant(plant);
     }
 
     @Transactional(readOnly = true)

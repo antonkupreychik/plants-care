@@ -4,10 +4,12 @@ import com.plantcare.api.generated.PlantsApi;
 import com.plantcare.api.generated.model.PageResponsePlantDto;
 import com.plantcare.api.generated.model.PlantCreateRequest;
 import com.plantcare.api.generated.model.PlantDto;
+import com.plantcare.api.generated.model.PlantHealthDto;
 import com.plantcare.api.generated.model.PlantUpdateRequest;
 import com.plantcare.api.CurrentUserProvider;
 import com.plantcare.core.domain.Plant;
 import com.plantcare.core.domain.User;
+import com.plantcare.core.service.HealthScoreService;
 import com.plantcare.core.service.PlantService;
 import com.plantcare.core.service.UserService;
 import lombok.RequiredArgsConstructor;
@@ -66,6 +68,19 @@ public class PlantController implements PlantsApi {
     @Override
     public void deletePlant(Long id) {
         plantService.archivePlant(currentUserProvider.currentUserId(), id);
+    }
+
+    @Override
+    public PlantHealthDto getPlantHealth(Long id) {
+        Long userId = currentUserProvider.currentUserId();
+        HealthScoreService.HealthScore health = plantService.getPlantHealth(userId, id);
+
+        PlantHealthDto dto = new PlantHealthDto(health.insufficientData());
+        if (!health.insufficientData()) {
+            dto.score(health.score())
+                    .zone(PlantHealthDto.ZoneEnum.fromValue(health.zone().name()));
+        }
+        return dto;
     }
 
     private static PlantDto toDto(Plant plant) {

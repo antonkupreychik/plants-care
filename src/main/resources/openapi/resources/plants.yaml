@@ -171,7 +171,65 @@ paths:
         '404':
           $ref: '../_common/responses.yaml#/NotFound'
 
+  ItemHealth:
+    get:
+      tags: [Plants]
+      operationId: getPlantHealth
+      summary: Health-score растения
+      description: |
+        Возвращает числовой балл здоровья растения 0–100 и цветовую зону
+        (mobile gap G1, issue #138). Балл считается поверх истории ухода за
+        окно 30 дней в таймзоне пользователя плюс бонусы за фото/заметки.
+
+        Если активных записей ухода меньше порога (`< 3`), балл не
+        вычисляется: `insufficientData = true`, а `score`/`zone` приходят
+        `null` (клиент рисует кольцо нейтральным / «Пока мало данных»).
+
+        Доступ только к своему неархивированному растению (как `GET /plants/{id}`).
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '../_common/parameters.yaml#/PlantIdPath'
+      responses:
+        '200':
+          description: Health-score растения.
+          content:
+            application/json:
+              schema:
+                $ref: '#/schemas/PlantHealthDto'
+        '403':
+          $ref: '../_common/responses.yaml#/Forbidden'
+        '404':
+          $ref: '../_common/responses.yaml#/NotFound'
+
 schemas:
+  PlantHealthDto:
+    type: object
+    description: |
+      Health-score растения (mobile gap G1). При `insufficientData = true`
+      поля `score` и `zone` равны `null`.
+    required: [insufficientData]
+    properties:
+      insufficientData:
+        type: boolean
+        description: |
+          `true` — данных мало (`< 3` активных записей ухода), балл не
+          вычислялся; `score`/`zone` будут `null`.
+      score:
+        type: integer
+        format: int32
+        minimum: 0
+        maximum: 100
+        nullable: true
+        description: Балл 0–100. `null`, если `insufficientData = true`.
+      zone:
+        type: string
+        enum: [GREEN, YELLOW, RED]
+        nullable: true
+        description: |
+          Цветовая зона по порогам (`GREEN`/`YELLOW`/`RED`). `null`, если
+          `insufficientData = true`.
+
   PlantDto:
     type: object
     description: |
