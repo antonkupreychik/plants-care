@@ -49,6 +49,7 @@ public interface CareScheduleRepository extends JpaRepository<CareSchedule, Long
         SELECT s FROM CareSchedule s
         JOIN FETCH s.plant p
         JOIN FETCH p.location l
+        LEFT JOIN FETCH p.species sp
         WHERE p.user.id = :userId
           AND p.archivedAt IS NULL
           AND s.active = true
@@ -70,6 +71,7 @@ public interface CareScheduleRepository extends JpaRepository<CareSchedule, Long
         SELECT s FROM CareSchedule s
         JOIN FETCH s.plant p
         JOIN FETCH p.location l
+        LEFT JOIN FETCH p.species sp
         WHERE p.user.id = :userId
           AND p.archivedAt IS NULL
           AND s.active = true

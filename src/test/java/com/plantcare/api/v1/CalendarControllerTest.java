@@ -6,6 +6,7 @@ import com.plantcare.api.CurrentUserProvider;
 import com.plantcare.core.domain.CareSchedule;
 import com.plantcare.core.domain.Location;
 import com.plantcare.core.domain.Plant;
+import com.plantcare.core.domain.Species;
 import com.plantcare.core.domain.User;
 import com.plantcare.core.domain.enums.TaskType;
 import com.plantcare.core.service.CalendarApiService;
@@ -71,6 +72,10 @@ class CalendarControllerTest {
         CareSchedule schedule = mockSchedule(
                 10L, 100L, "Монстера", TaskType.WATERING,
                 LocalDateTime.parse("2026-01-03T00:00:00"), 7);
+        Species species = mock(Species.class);
+        when(species.getId()).thenReturn(77L);
+        when(species.getName()).thenReturn("Monstera deliciosa");
+        when(schedule.getPlant().getSpecies()).thenReturn(species);
         when(calendarApiService.getActiveSchedules(anyLong()))
                 .thenReturn(List.of(schedule));
         when(calendarApiService.projectEvents(any(CareSchedule.class), any(LocalDate.class), any(LocalDate.class), anyString()))
@@ -85,7 +90,9 @@ class CalendarControllerTest {
                 .andExpect(jsonPath("$['2026-01-03']").isArray())
                 .andExpect(jsonPath("$['2026-01-03'].length()").value(1))
                 .andExpect(jsonPath("$['2026-01-03'][0].plantName").value("Монстера"))
-                .andExpect(jsonPath("$['2026-01-03'][0].taskType").value("WATERING"));
+                .andExpect(jsonPath("$['2026-01-03'][0].taskType").value("WATERING"))
+                .andExpect(jsonPath("$['2026-01-03'][0].speciesId").value(77))
+                .andExpect(jsonPath("$['2026-01-03'][0].speciesName").value("Monstera deliciosa"));
     }
 
     @Test

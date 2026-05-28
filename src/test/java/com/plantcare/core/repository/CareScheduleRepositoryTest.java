@@ -3,6 +3,7 @@ package com.plantcare.core.repository;
 import com.plantcare.core.domain.CareSchedule;
 import com.plantcare.core.domain.Location;
 import com.plantcare.core.domain.Plant;
+import com.plantcare.core.domain.Species;
 import com.plantcare.core.domain.User;
 import com.plantcare.core.domain.enums.TaskType;
 import com.plantcare.bot.support.IntegrationTestBase;
@@ -12,6 +13,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -30,12 +32,24 @@ class CareScheduleRepositoryTest extends IntegrationTestBase {
     @Autowired
     private CareScheduleRepository careScheduleRepository;
 
+    @Autowired
+    private SpeciesRepository speciesRepository;
+
+    /**
+     * Виды, созданные тестом. Чистим ТОЧЕЧНО (а не {@code deleteAll}), иначе при
+     * глобально включённом Testcontainers reuse удалили бы Flyway-сид видов из
+     * общего контейнера и обвалили все seed-зависимые тесты (см. MEMORY build-tool).
+     */
+    private final List<Long> createdSpeciesIds = new ArrayList<>();
+
     @AfterEach
     void cleanup() {
         careScheduleRepository.deleteAll();
         plantRepository.deleteAll();
         locationRepository.deleteAll();
         userRepository.deleteAll();
+        createdSpeciesIds.forEach(speciesRepository::deleteById);
+        createdSpeciesIds.clear();
     }
 
     @Test
@@ -205,6 +219,51 @@ class CareScheduleRepositoryTest extends IntegrationTestBase {
     }
 
     @Test
+    void findUserSchedulesDueBeforeFetchesSpecies() {
+        // arrange — растение с видом; сессия теста закрыта на момент ассерта,
+        // поэтому доступ к species доказывает, что LEFT JOIN FETCH его инициализировал (G6)
+        User user = saveUser(108L);
+        Species species = saveSpecies("Monstera deliciosa");
+        Plant plant = savePlant(user, "Монстера", species);
+
+        saveSchedule(plant, TaskType.WATERING, LocalDateTime.now().minusHours(1), true);
+
+        // act
+        List<CareSchedule> result = careScheduleRepository.findUserSchedulesDueBefore(
+                user.getId(),
+                LocalDateTime.now()
+        );
+
+        // assert — связь подтянута без LazyInitializationException
+        assertThat(result).hasSize(1);
+        Species fetched = result.get(0).getPlant().getSpecies();
+        assertThat(fetched).isNotNull();
+        assertThat(fetched.getName()).isEqualTo("Monstera deliciosa");
+    }
+
+    @Test
+    void findUserSchedulesDueBeforeWorksWhenPlantHasNoSpecies() {
+        // arrange — растение без вида: LEFT JOIN FETCH не должен отбрасывать строку (edge)
+        User user = saveUser(109L);
+        Plant plant = savePlant(user, "Безымянное");
+
+        CareSchedule schedule = saveSchedule(
+                plant, TaskType.WATERING, LocalDateTime.now().minusHours(1), true);
+
+        // act
+        List<CareSchedule> result = careScheduleRepository.findUserSchedulesDueBefore(
+                user.getId(),
+                LocalDateTime.now()
+        );
+
+        // assert — растение возвращается, species == null
+        assertThat(result)
+                .extracting(CareSchedule::getId)
+                .containsExactly(schedule.getId());
+        assertThat(result.get(0).getPlant().getSpecies()).isNull();
+    }
+
+    @Test
     void rescheduleFromUpdatesNextDueAt() {
         User user = saveUser(107L);
         Plant plant = savePlant(user, "Монстера");
@@ -244,13 +303,26 @@ class CareScheduleRepositoryTest extends IntegrationTestBase {
     }
 
     private Plant savePlant(User user, String name) {
+        return savePlant(user, name, null);
+    }
+
+    private Plant savePlant(User user, String name, Species species) {
         Location location = saveDefaultLocation(user);
 
         return plantRepository.save(Plant.builder()
                 .user(user)
                 .location(location)
                 .name(name)
+                .species(species)
                 .build());
+    }
+
+    private Species saveSpecies(String name) {
+        Species species = speciesRepository.save(Species.builder()
+                .name(name)
+                .build());
+        createdSpeciesIds.add(species.getId());
+        return species;
     }
 
     private CareSchedule saveSchedule(

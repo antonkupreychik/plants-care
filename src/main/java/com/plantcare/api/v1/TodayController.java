@@ -56,6 +56,10 @@ public class TodayController implements TodayApi {
         if (schedule.getPlant().getLocation() != null) {
             dto.locationName(schedule.getPlant().getLocation().getName());
         }
+        if (schedule.getPlant().getSpecies() != null) {
+            dto.speciesId(schedule.getPlant().getSpecies().getId());
+            dto.speciesName(schedule.getPlant().getSpecies().getName());
+        }
         return dto;
     }
 }
