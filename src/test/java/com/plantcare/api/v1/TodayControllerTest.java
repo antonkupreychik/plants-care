@@ -6,6 +6,7 @@ import com.plantcare.api.CurrentUserProvider;
 import com.plantcare.core.domain.CareSchedule;
 import com.plantcare.core.domain.Location;
 import com.plantcare.core.domain.Plant;
+import com.plantcare.core.domain.Species;
 import com.plantcare.core.domain.User;
 import com.plantcare.core.domain.enums.TaskType;
 import com.plantcare.core.service.TodayApiService;
@@ -166,6 +167,47 @@ class TodayControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.tasks.length()").value(2))
                 .andExpect(jsonPath("$.count").value(2));
+    }
+
+    @Test
+    void should_include_speciesId_and_name_when_plant_has_species() throws Exception {
+        // arrange — у растения задан вид (mobile gap G6)
+        User user = mockUserWithTimezone(4L, 4L, "UTC");
+        when(currentUserProvider.currentUser()).thenReturn(user);
+
+        CareSchedule schedule = mockSchedule(13L, 103L, "Монстера", TaskType.WATERING,
+                LocalDateTime.now().plusHours(1));
+        Species species = mock(Species.class);
+        when(species.getId()).thenReturn(77L);
+        when(species.getName()).thenReturn("Monstera deliciosa");
+        when(schedule.getPlant().getSpecies()).thenReturn(species);
+        when(todayApiService.getTodaySchedules(anyLong(), anyString()))
+                .thenReturn(List.of(schedule));
+
+        // act + assert
+        mockMvc.perform(get("/api/v1/today"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.tasks[0].speciesId").value(77))
+                .andExpect(jsonPath("$.tasks[0].speciesName").value("Monstera deliciosa"));
+    }
+
+    @Test
+    void should_leave_species_null_when_plant_has_no_species() throws Exception {
+        // arrange — растение без привязки к виду
+        User user = mockUserWithTimezone(5L, 5L, "UTC");
+        when(currentUserProvider.currentUser()).thenReturn(user);
+
+        CareSchedule schedule = mockSchedule(14L, 104L, "Безымянное", TaskType.MISTING,
+                LocalDateTime.now().plusHours(1));
+        // getSpecies() не застаблен → null
+        when(todayApiService.getTodaySchedules(anyLong(), anyString()))
+                .thenReturn(List.of(schedule));
+
+        // act + assert
+        mockMvc.perform(get("/api/v1/today"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.tasks[0].speciesId").isEmpty())
+                .andExpect(jsonPath("$.tasks[0].speciesName").isEmpty());
     }
 
     // ===================== helpers =====================
