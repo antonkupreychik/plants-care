@@ -76,7 +76,10 @@ public class SpeciesController implements SpeciesApi {
                 .fertilizingDays(s.getFertilizingDays())
                 .soilCheckDays(s.getSoilCheckDays())
                 .careDifficulty(s.getCareDifficulty() != null ? s.getCareDifficulty().name() : null)
-                .lightPreference(s.getLightPreference() != null ? s.getLightPreference().name() : null);
+                .lightPreference(s.getLightPreference() != null ? s.getLightPreference().name() : null)
+                .toxicToCats(s.getToxicToCats())
+                .toxicToDogs(s.getToxicToDogs())
+                .toxicToHumans(s.getToxicToHumans());
     }
 
     private static SpeciesFactDto toFact(com.plantcare.core.service.SpeciesFactDto fact) {
@@ -94,6 +97,9 @@ public class SpeciesController implements SpeciesApi {
                 .soilCheckDays(s.getSoilCheckDays())
                 .careDifficulty(s.getCareDifficulty() != null ? s.getCareDifficulty().name() : null)
                 .lightPreference(s.getLightPreference() != null ? s.getLightPreference().name() : null)
+                .toxicToCats(s.getToxicToCats())
+                .toxicToDogs(s.getToxicToDogs())
+                .toxicToHumans(s.getToxicToHumans())
                 .description(s.getDescription());
     }
 }
