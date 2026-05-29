@@ -90,6 +90,10 @@ tags:
       проверка почвы). Чтение всех четырёх и редактирование одного по типу.
   - name: Shopping
     description: Персональный список покупок пользователя — расходники для ухода за растениями.
+  - name: Notifications
+    description: |
+      Персистентный inbox уведомлений пользователя для мобильного приложения
+      (gap G17): лента со счётчиком непрочитанных и идемпотентная отметка прочтения.
 
 paths:
   /api/v1/auth/apple:
@@ -160,6 +164,11 @@ paths:
     $ref: './resources/shopping.yaml#/paths/Collection'
   /api/v1/shopping/{id}:
     $ref: './resources/shopping.yaml#/paths/Item'
+
+  /api/v1/notifications:
+    $ref: './resources/notifications.yaml#/paths/Collection'
+  /api/v1/notifications/{id}/read:
+    $ref: './resources/notifications.yaml#/paths/Item'
 
 components:
   securitySchemes:
@@ -290,6 +299,11 @@ components:
       $ref: './resources/shopping.yaml#/schemas/ShoppingItemCreateRequest'
     ShoppingItemUpdateRequest:
       $ref: './resources/shopping.yaml#/schemas/ShoppingItemUpdateRequest'
+
+    NotificationDto:
+      $ref: './resources/notifications.yaml#/schemas/NotificationDto'
+    NotificationsResponse:
+      $ref: './resources/notifications.yaml#/schemas/NotificationsResponse'
 
     ApiErrorResponse:
       $ref: './_common/errors.yaml#/schemas/ApiErrorResponse'
