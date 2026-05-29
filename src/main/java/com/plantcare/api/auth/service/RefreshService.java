@@ -27,11 +27,19 @@ public class RefreshService {
     public TokenPair rotate(String refreshToken) {
         TokenService.RefreshToken parsed = tokenService.parseRefresh(refreshToken);
 
-        // Атомарно отзываем предъявленный jti. 0 вставленных строк → уже отозван.
-        blacklistService.revokeOrThrow(parsed.jti(), parsed.expiresAt());
-
         User user = userRepository.findById(parsed.userId())
                 .orElseThrow(() -> AuthTokenException.invalid("User from refresh token not found"));
+
+        // Эпоха logout-all (issue #178): токен, выданный до tokens_valid_from,
+        // невалиден. NULL → проверка пропускается (backward-compat).
+        var tokensValidFrom = user.getTokensValidFrom();
+        if (tokensValidFrom != null && parsed.issuedAt().getEpochSecond() < tokensValidFrom.getEpochSecond()) {
+            log.warn("Refresh token issued before logout-all epoch for userId={}", user.getId());
+            throw AuthTokenException.revoked("Token issued before logout-all");
+        }
+
+        // Атомарно отзываем предъявленный jti. 0 вставленных строк → уже отозван.
+        blacklistService.revokeOrThrow(parsed.jti(), parsed.expiresAt());
 
         log.info("Rotated token pair for userId={}", user.getId());
         return tokenService.issuePair(user);

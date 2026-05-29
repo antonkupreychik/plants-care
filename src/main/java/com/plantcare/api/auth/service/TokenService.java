@@ -36,6 +36,7 @@ import java.util.UUID;
 public class TokenService {
 
     static final String CLAIM_TYPE = "typ";
+    static final String CLAIM_TOKENS_VALID_FROM = "tvf";
     static final String TYPE_ACCESS = "access";
     static final String TYPE_REFRESH = "refresh";
 
@@ -54,11 +55,12 @@ public class TokenService {
         Instant now = clock.instant();
         AuthProperties.Jwt cfg = authProperties.getJwt();
 
+        Instant tokensValidFrom = user.getTokensValidFrom();
         long accessTtlSeconds = cfg.getAccessTtl().toSeconds();
-        String access = encode(user.getId(), TYPE_ACCESS, now, cfg.getAccessTtl().toSeconds(), null);
+        String access = encode(user.getId(), TYPE_ACCESS, now, cfg.getAccessTtl().toSeconds(), null, tokensValidFrom);
 
         UUID refreshJti = UUID.randomUUID();
-        String refresh = encode(user.getId(), TYPE_REFRESH, now, cfg.getRefreshTtl().toSeconds(), refreshJti);
+        String refresh = encode(user.getId(), TYPE_REFRESH, now, cfg.getRefreshTtl().toSeconds(), refreshJti, tokensValidFrom);
 
         return new TokenPair(access, refresh, accessTtlSeconds);
     }
@@ -88,7 +90,11 @@ public class TokenService {
         if (expiresAt == null) {
             throw AuthTokenException.invalid("Refresh token has no exp");
         }
-        return new RefreshToken(userId, jti, expiresAt);
+        Instant issuedAt = jwt.getIssuedAt();
+        if (issuedAt == null) {
+            throw AuthTokenException.invalid("Refresh token has no iat");
+        }
+        return new RefreshToken(userId, jti, expiresAt, issuedAt);
     }
 
     private Jwt decode(String token) {
@@ -131,7 +137,8 @@ public class TokenService {
         }
     }
 
-    private String encode(Long userId, String type, Instant issuedAt, long ttlSeconds, UUID jti) {
+    private String encode(Long userId, String type, Instant issuedAt, long ttlSeconds, UUID jti,
+                          Instant tokensValidFrom) {
         JwtClaimsSet.Builder claims = JwtClaimsSet.builder()
                 .issuer(authProperties.getJwt().getIssuer())
                 .subject(String.valueOf(userId))
@@ -141,11 +148,16 @@ public class TokenService {
         if (jti != null) {
             claims.id(jti.toString());
         }
+        // tvf несём только когда эпоха задана; для старых юзеров (null) claim
+        // отсутствует и проверка на ротации пропускается (issue #178).
+        if (tokensValidFrom != null) {
+            claims.claim(CLAIM_TOKENS_VALID_FROM, tokensValidFrom.getEpochSecond());
+        }
         JwsHeader header = JwsHeader.with(MacAlgorithm.HS256).build();
         return appJwtEncoder.encode(JwtEncoderParameters.from(header, claims.build())).getTokenValue();
     }
 
     /** Разобранный refresh-токен. */
-    public record RefreshToken(Long userId, UUID jti, Instant expiresAt) {
+    public record RefreshToken(Long userId, UUID jti, Instant expiresAt, Instant issuedAt) {
     }
 }

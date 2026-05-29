@@ -108,6 +108,10 @@ paths:
     $ref: './resources/auth.yaml#/paths/EmailVerify'
   /api/v1/auth/refresh:
     $ref: './resources/auth.yaml#/paths/Refresh'
+  /api/v1/auth/logout:
+    $ref: './resources/auth.yaml#/paths/Logout'
+  /api/v1/auth/logout-all:
+    $ref: './resources/auth.yaml#/paths/LogoutAll'
 
   /api/v1/health:
     $ref: './resources/health.yaml#/paths/Health'
@@ -223,6 +227,8 @@ components:
       $ref: './resources/auth.yaml#/schemas/MagicLinkVerifyRequest'
     RefreshRequest:
       $ref: './resources/auth.yaml#/schemas/RefreshRequest'
+    LogoutRequest:
+      $ref: './resources/auth.yaml#/schemas/LogoutRequest'
     TokenPairResponse:
       $ref: './resources/auth.yaml#/schemas/TokenPairResponse'
 

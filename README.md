@@ -94,6 +94,17 @@ echo 'testcontainers.reuse.enable=true' >> ~/.testcontainers.properties
 | `/swagger-ui.html` | — | Swagger UI (OpenAPI 3) |
 | `/v3/api-docs` | — | OpenAPI JSON |
 
+### Auth (issue #178)
+
+Управление сессией. `logout`/`logout-all` требуют bearer-токен (остальные `/api/v1/auth/**` — публичные).
+
+| Метод | Путь | Статус ответа | Описание |
+|---|---|---|---|
+| `POST` | `/api/v1/auth/logout` | 204 | Отзывает предъявленный refresh-токен (тело: `{ "refreshToken" }`). Идемпотентен и толерантен: повторный вызов, невалидный/просроченный/чужой токен — всё равно 204 |
+| `POST` | `/api/v1/auth/logout-all` | 204 | Инвалидирует **все** refresh-токены пользователя через эпоху `users.tokens_valid_from = now` |
+
+После `logout-all` refresh-токен, чья секунда выпуска (`iat`) предшествует `tokens_valid_from`, отклоняется при ротации с `TOKEN_REVOKED`. Токены, выданные до появления фичи (эпоха `null`, без claim `tvf`), остаются валидными.
+
 ### События ухода (issue #86)
 
 | Путь | Метод | Статус ответа | Описание |

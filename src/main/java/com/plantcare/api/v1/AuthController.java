@@ -4,12 +4,15 @@ import com.plantcare.api.generated.AuthApi;
 import com.plantcare.api.generated.model.AppleAuthRequest;
 import com.plantcare.api.generated.model.EmailRequest;
 import com.plantcare.api.generated.model.GoogleAuthRequest;
+import com.plantcare.api.generated.model.LogoutRequest;
 import com.plantcare.api.generated.model.MagicLinkVerifyRequest;
 import com.plantcare.api.generated.model.RefreshRequest;
 import com.plantcare.api.generated.model.TokenPairResponse;
+import com.plantcare.api.CurrentUserProvider;
 import com.plantcare.api.auth.exception.RateLimitExceededException;
 import com.plantcare.api.auth.ratelimit.MagicLinkRateLimiter;
 import com.plantcare.api.auth.service.AuthService;
+import com.plantcare.api.auth.service.LogoutService;
 import com.plantcare.api.auth.service.MagicLinkService;
 import com.plantcare.api.auth.service.RefreshService;
 import com.plantcare.api.auth.service.TokenPair;
@@ -40,6 +43,8 @@ public class AuthController implements AuthApi {
     private final TokenService tokenService;
     private final RefreshService refreshService;
     private final MagicLinkService magicLinkService;
+    private final LogoutService logoutService;
+    private final CurrentUserProvider currentUserProvider;
     private final MagicLinkRateLimiter rateLimiter;
     private final HttpServletRequest httpRequest;
 
@@ -82,6 +87,16 @@ public class AuthController implements AuthApi {
     @Override
     public TokenPairResponse refreshTokens(RefreshRequest request) {
         return toResponse(refreshService.rotate(request.getRefreshToken()));
+    }
+
+    @Override
+    public void logout(LogoutRequest request) {
+        logoutService.logout(currentUserProvider.currentUserId(), request.getRefreshToken());
+    }
+
+    @Override
+    public void logoutAll() {
+        logoutService.logoutAll(currentUserProvider.currentUserId());
     }
 
     private void enforceRateLimit(String key) {
