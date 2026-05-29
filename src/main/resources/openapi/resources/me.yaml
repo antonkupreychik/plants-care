@@ -1,0 +1,160 @@
+# Профиль и настройки текущего пользователя (issue #182, mobile G5 + G16).
+# Скоуп — аутентифицированный пользователь (`sub` из bearer-токена).
+# `quietHours*` — локальное время в TZ юзера (HH:mm); все счётчики считаются
+# в таймзоне пользователя (users.timezone).
+
+paths:
+  Me:
+    get:
+      tags: [Me]
+      operationId: getMe
+      summary: Профиль и настройки пользователя
+      description: |
+        Возвращает профиль текущего пользователя: имя, аватар, счётчики для
+        хедера (растения, задачи на сегодня, непрочитанные уведомления) и
+        настройки (тихие часы, таймзона, язык).
+
+        `tasksToday` считается в **таймзоне пользователя** (`users.timezone`) —
+        число **невыполненных** (pending) задач ухода, дедлайн которых наступает
+        до конца сегодняшнего дня. Уже отмеченные сегодня задачи не учитываются.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Профиль пользователя.
+          content:
+            application/json:
+              schema:
+                $ref: '#/schemas/MeResponse'
+    patch:
+      tags: [Me]
+      operationId: updateMe
+      summary: Частичное обновление настроек пользователя
+      description: |
+        PATCH-семантика: обновляются только переданные поля, остальные остаются
+        без изменений. Имя и аватар через этот эндпоинт не меняются.
+
+        Смена `timezone` пересчитывает активные расписания так, чтобы локальное
+        время дня сохранилось (полить в 9:00 остаётся 9:00 в новой зоне).
+        Невалидный IANA-идентификатор → `400`.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/schemas/MeUpdateRequest'
+            example:
+              quietHoursStart: '23:00'
+              quietHoursEnd: '07:30'
+              timezone: Europe/Belgrade
+              locale: en
+      responses:
+        '200':
+          description: Профиль обновлён.
+          content:
+            application/json:
+              schema:
+                $ref: '#/schemas/MeResponse'
+        '400':
+          $ref: '../_common/responses.yaml#/BadRequest'
+
+schemas:
+  MeResponse:
+    type: object
+    description: Профиль и настройки текущего пользователя (`GET /api/v1/me`).
+    required:
+      - name
+      - plantsTotal
+      - tasksToday
+      - notificationsUnread
+      - quietHoursStart
+      - quietHoursEnd
+      - timezone
+      - locale
+    properties:
+      name:
+        type: string
+        nullable: true
+        description: Отображаемое имя пользователя (из `users.username`). Может быть `null`.
+        example: Антон
+      avatar:
+        type: string
+        nullable: true
+        description: |
+          URL аватара пользователя. Плейсхолдер: на текущей схеме нет колонки
+          под аватар, поэтому поле всегда `null` до появления хранилища аватаров.
+        example: null
+      plantsTotal:
+        type: integer
+        format: int32
+        minimum: 0
+        description: Число неархивированных растений пользователя.
+        example: 12
+      tasksToday:
+        type: integer
+        format: int32
+        minimum: 0
+        description: |
+          Число невыполненных (pending) задач ухода на сегодня в таймзоне
+          пользователя: дедлайн до конца сегодняшнего дня, отметка «сделано»
+          ещё не проставлена. Это pending-подмножество `GET /api/v1/today`.
+        example: 3
+      notificationsUnread:
+        type: integer
+        format: int32
+        minimum: 0
+        description: |
+          Плейсхолдер: фид уведомлений (issue #183) ещё не влит, поэтому поле
+          всегда `0`. Будет считаться по-настоящему после появления фида.
+        example: 0
+      quietHoursStart:
+        type: string
+        pattern: '^([01]\d|2[0-3]):[0-5]\d$'
+        description: Начало тихих часов, локальное время `HH:mm`.
+        example: '22:00'
+      quietHoursEnd:
+        type: string
+        pattern: '^([01]\d|2[0-3]):[0-5]\d$'
+        description: Конец тихих часов, локальное время `HH:mm`.
+        example: '08:00'
+      timezone:
+        type: string
+        description: IANA-идентификатор таймзоны пользователя.
+        example: Europe/Moscow
+      locale:
+        type: string
+        enum: [ru, en]
+        description: Язык интерфейса/уведомлений.
+        example: ru
+
+  MeUpdateRequest:
+    type: object
+    description: |
+      Частичное обновление настроек. Все поля опциональны — отсутствующие
+      остаются без изменений.
+    properties:
+      quietHoursStart:
+        type: string
+        pattern: '^([01]\d|2[0-3]):[0-5]\d$'
+        nullable: true
+        description: Начало тихих часов, локальное время `HH:mm`.
+        example: '23:00'
+      quietHoursEnd:
+        type: string
+        pattern: '^([01]\d|2[0-3]):[0-5]\d$'
+        nullable: true
+        description: Конец тихих часов, локальное время `HH:mm`.
+        example: '07:30'
+      timezone:
+        type: string
+        nullable: true
+        description: IANA-идентификатор таймзоны. Невалидный → `400`.
+        example: Europe/Belgrade
+      locale:
+        type: string
+        pattern: '^(ru|en)$'
+        nullable: true
+        description: Язык интерфейса/уведомлений. Допустимые значения — `ru` или `en`.
+        example: en

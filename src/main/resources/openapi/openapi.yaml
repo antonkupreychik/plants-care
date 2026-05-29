@@ -90,6 +90,8 @@ tags:
       проверка почвы). Чтение всех четырёх и редактирование одного по типу.
   - name: Shopping
     description: Персональный список покупок пользователя — расходники для ухода за растениями.
+  - name: Me
+    description: Профиль и настройки текущего пользователя — имя, счётчики, тихие часы, таймзона, язык (mobile G5 + G16).
   - name: Notifications
     description: |
       Персистентный inbox уведомлений пользователя для мобильного приложения
@@ -300,6 +302,10 @@ components:
     ShoppingItemUpdateRequest:
       $ref: './resources/shopping.yaml#/schemas/ShoppingItemUpdateRequest'
 
+    MeResponse:
+      $ref: './resources/me.yaml#/schemas/MeResponse'
+    MeUpdateRequest:
+      $ref: './resources/me.yaml#/schemas/MeUpdateRequest'
     NotificationDto:
       $ref: './resources/notifications.yaml#/schemas/NotificationDto'
     NotificationsResponse:
