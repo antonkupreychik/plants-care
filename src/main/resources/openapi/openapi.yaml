@@ -110,6 +110,8 @@ paths:
     $ref: './resources/plant-history.yaml#/paths/ItemHistory'
   /api/v1/plants/{id}/health:
     $ref: './resources/plants.yaml#/paths/ItemHealth'
+  /api/v1/plants/{id}/family:
+    $ref: './resources/plants.yaml#/paths/ItemFamily'
   /api/v1/plants/{id}/diagnosis:
     $ref: './resources/plants.yaml#/paths/ItemDiagnosis'
 
@@ -217,6 +219,10 @@ components:
       $ref: './resources/plants.yaml#/schemas/PlantDiagnosisDto'
     DiagnosisIssueDto:
       $ref: './resources/plants.yaml#/schemas/DiagnosisIssueDto'
+    PlantFamilyMemberDto:
+      $ref: './resources/plants.yaml#/schemas/PlantFamilyMemberDto'
+    PlantFamilyResponse:
+      $ref: './resources/plants.yaml#/schemas/PlantFamilyResponse'
 
     PlantHistoryResponse:
       $ref: './resources/plant-history.yaml#/schemas/PlantHistoryResponse'

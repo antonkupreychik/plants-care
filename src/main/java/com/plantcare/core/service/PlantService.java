@@ -106,30 +106,77 @@ public class PlantService {
         return plantRepository.countByUserIdAndArchivedAtIsNull(userId);
     }
 
+    public record PlantFamily(Plant parent, List<Plant> children) {
+    }
+
     @Transactional
-    public Plant createPlant(User user, String name, String notes, Long locationId, Long speciesId) {
+    public Plant createPlant(
+            User user,
+            String name,
+            String notes,
+            Long locationId,
+            Long speciesId,
+            Long parentPlantId
+    ) {
         Location location;
         if (locationId != null) {
             location = locationService.getUserLocationOrThrow(user.getId(), locationId);
         } else {
             location = locationService.getOrCreateDefaultLocation(user);
         }
+
         Species species = null;
         if (speciesId != null) {
             species = speciesRepository.findById(speciesId)
                     .orElseThrow(() -> new EntityNotFoundException("Species not found: " + speciesId));
         }
+
+        Plant parent = null;
+        if (parentPlantId != null) {
+            parent = plantRepository.findByUserIdAndIdAndArchivedAtIsNull(user.getId(), parentPlantId)
+                    .orElseThrow(() -> new EntityNotFoundException("Parent plant not found: " + parentPlantId));
+        }
+
         Plant plant = Plant.builder()
                 .user(user)
                 .location(location)
                 .name(name)
                 .notes(notes)
                 .species(species)
+                .parent(parent)
                 .build();
+
         Plant saved = plantRepository.save(plant);
-        log.info("Created plant '{}' (id={}, speciesId={}) via REST API for user {}",
-                name, saved.getId(), speciesId, user.getId());
+        log.info(
+                "Created plant '{}' (id={}, speciesId={}, parentPlantId={}) via REST API for user {}",
+                name,
+                saved.getId(),
+                speciesId,
+                parentPlantId,
+                user.getId()
+        );
         return saved;
+    }
+
+    @Transactional(readOnly = true)
+    public PlantFamily getPlantFamily(Long userId, Long plantId) {
+        Plant plant = getPlantOrThrow(userId, plantId);
+
+        Plant parent = null;
+        if (plant.getParent() != null) {
+            Long parentId = plant.getParent().getId();
+            parent = plantRepository
+                    .findByUserIdAndIdAndArchivedAtIsNull(userId, parentId)
+                    .orElse(null);
+        }
+
+        List<Plant> children = plantRepository
+                .findAllByUserIdAndParentIdAndArchivedAtIsNullOrderByNameAsc(
+                        userId,
+                        plant.getId()
+                );
+
+        return new PlantFamily(parent, children);
     }
 
     @Transactional
@@ -178,7 +225,7 @@ public class PlantService {
 
     /**
      * Создать новое растение с расписанием полива.
-     *
+     * <p>
      * Если локация не выбрана явно, растение попадает в дефолтную локацию пользователя:
      * "Мои растения".
      *
@@ -241,7 +288,7 @@ public class PlantService {
 
     /**
      * Создать новое растение с расписанием полива и конкретной локацией.
-     *
+     * <p>
      * Этот метод пригодится позже, когда в Telegram-flow добавишь выбор комнаты.
      */
     @Transactional
@@ -322,10 +369,10 @@ public class PlantService {
      * WATERING уже создаётся при создании растения.
      * Если расписание данного типа уже есть — активирует его с новым интервалом.
      *
-     * @param plant       растение
-     * @param taskType    тип задачи (MISTING или FERTILIZING)
+     * @param plant        растение
+     * @param taskType     тип задачи (MISTING или FERTILIZING)
      * @param intervalDays интервал в днях
-     * @param nextDueAt   время следующего события
+     * @param nextDueAt    время следующего события
      * @return сохранённое расписание
      */
     @Transactional
@@ -575,10 +622,10 @@ public class PlantService {
 
     /**
      * Переключить активность расписания типа ухода:
-     *   - если расписание есть и активно — выключаем (active=false);
-     *   - если расписание есть и отключено — включаем (active=true);
-     *   - если расписания нет — создаём новое с дефолтным интервалом и nextDueAt = today + interval.
-     *
+     * - если расписание есть и активно — выключаем (active=false);
+     * - если расписание есть и отключено — включаем (active=true);
+     * - если расписания нет — создаём новое с дефолтным интервалом и nextDueAt = today + interval.
+     * <p>
      * Дефолтные интервалы берём из вида (Species). Если для данного вида не задан или null —
      * используем разумные хардкоды: WATERING=7, MISTING=3, FERTILIZING=14.
      */
@@ -693,18 +740,19 @@ public class PlantService {
             CareSchedule schedule,
             CareHistory history,
             LocalDateTime doneAt
-    ) {}
+    ) {
+    }
 
     /**
      * Отметить уход выполненным из карточки растения.
-     *
+     * <p>
      * Дублирует поведение {@link NotificationCallbackService} ("done"-действие)
      * для случая, когда юзер сам открыл карточку и нажал кнопку быстрого ухода:
-     *   1. Если активного расписания этого типа у растения нет — возвращаем null.
-     *   2. Если за последние {@value #CARE_DEDUP_SECONDS} сек уже было "сделано" —
-     *      возвращаем wasDuplicate=true, в БД ничего не пишем.
-     *   3. Иначе пишем запись в care_history (с флагом on_time) и сдвигаем
-     *      next_due_at на интервал от фактического времени выполнения.
+     * 1. Если активного расписания этого типа у растения нет — возвращаем null.
+     * 2. Если за последние {@value #CARE_DEDUP_SECONDS} сек уже было "сделано" —
+     * возвращаем wasDuplicate=true, в БД ничего не пишем.
+     * 3. Иначе пишем запись в care_history (с флагом on_time) и сдвигаем
+     * next_due_at на интервал от фактического времени выполнения.
      *
      * @param userId   владелец растения (защита от чужого растения)
      * @param plantId  ID растения
@@ -783,15 +831,15 @@ public class PlantService {
     /**
      * Массовая отметка ухода для всех активных растений в локации одного типа задач.
      * Используется кнопкой «💧 Полить все растения здесь» в карточке локации.
-     *
+     * <p>
      * Каждое растение обрабатывается индивидуально:
-     *   - проверяется дедуп ({@link #CARE_DEDUP_SECONDS} сек) — если недавно уже было
-     *     «сделано», то для этого растения пропускаем, но другие в локации
-     *     продолжаем обрабатывать (мягкий, а не all-or-none);
-     *   - пишем CareHistory с onTime по тому же 24h grace-правилу;
-     *   - двигаем next_due_at от now на интервал расписания (каждое растение
-     *     получает свой интервал, по полю plant.interval_days).
-     *
+     * - проверяется дедуп ({@link #CARE_DEDUP_SECONDS} сек) — если недавно уже было
+     * «сделано», то для этого растения пропускаем, но другие в локации
+     * продолжаем обрабатывать (мягкий, а не all-or-none);
+     * - пишем CareHistory с onTime по тому же 24h grace-правилу;
+     * - двигаем next_due_at от now на интервал расписания (каждое растение
+     * получает свой интервал, по полю plant.interval_days).
+     * <p>
      * Вся операция в одной транзакции — либо все обновления применятся,
      * либо ни одно (ТЗ #19).
      *
@@ -848,4 +896,5 @@ public class PlantService {
 
         return new BulkCareDoneResult(updated, deduped, locationName);
     }
+
 }

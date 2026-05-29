@@ -3,7 +3,7 @@
 paths:
   Collection:
     get:
-      tags: [Plants]
+      tags: [ Plants ]
       operationId: listPlants
       summary: Список растений пользователя
       description: |
@@ -19,7 +19,7 @@ paths:
           становится 100; всё, что меньше 1 — становится 1);
         * `offset` ниже нуля становится 0.
       security:
-        - bearerAuth: []
+        - bearerAuth: [ ]
       parameters:
         - name: locationId
           in: query
@@ -59,16 +59,18 @@ paths:
                 $ref: '#/schemas/PageResponsePlantDto'
         '400':
           $ref: '../_common/responses.yaml#/BadRequest'
+
     post:
-      tags: [Plants]
+      tags: [ Plants ]
       operationId: createPlant
       summary: Создать растение
       description: |
         Создаёт растение от имени текущего пользователя (`sub` из
         bearer-токена). Если `locationId` не указан, растение попадает в
-        дефолтную локацию пользователя.
+        дефолтную локацию пользователя. Если `parentPlantId` указан, растение
+        создаётся как отводок/потомок материнского растения.
       security:
-        - bearerAuth: []
+        - bearerAuth: [ ]
       requestBody:
         required: true
         content:
@@ -79,6 +81,8 @@ paths:
               name: Monstera
               notes: Стоит у окна, любит свет
               locationId: 2
+              speciesId: 5
+              parentPlantId: 10
       responses:
         '201':
           description: Растение создано.
@@ -91,7 +95,7 @@ paths:
 
   Item:
     get:
-      tags: [Plants]
+      tags: [ Plants ]
       operationId: getPlant
       summary: Получить растение по ID
       description: |
@@ -100,7 +104,7 @@ paths:
         растения отдаются как 404, чужие активные — как 403 (когда сервис уже
         знает, что запись есть, но принадлежит другому пользователю).
       security:
-        - bearerAuth: []
+        - bearerAuth: [ ]
       parameters:
         - $ref: '../_common/parameters.yaml#/PlantIdPath'
       responses:
@@ -114,8 +118,9 @@ paths:
           $ref: '../_common/responses.yaml#/Forbidden'
         '404':
           $ref: '../_common/responses.yaml#/NotFound'
+
     put:
-      tags: [Plants]
+      tags: [ Plants ]
       operationId: updatePlant
       summary: Обновить растение (PATCH-семантика)
       description: |
@@ -126,7 +131,7 @@ paths:
         Пример: чтобы переместить растение в другую локацию, достаточно
         отправить `{ "locationId": 5 }`.
       security:
-        - bearerAuth: []
+        - bearerAuth: [ ]
       parameters:
         - $ref: '../_common/parameters.yaml#/PlantIdPath'
       requestBody:
@@ -151,8 +156,9 @@ paths:
           $ref: '../_common/responses.yaml#/Forbidden'
         '404':
           $ref: '../_common/responses.yaml#/NotFound'
+
     delete:
-      tags: [Plants]
+      tags: [ Plants ]
       operationId: deletePlant
       summary: Архивировать растение (soft-delete)
       description: |
@@ -160,7 +166,7 @@ paths:
         в БД остаётся, но перестаёт появляться во всех `/api/v1/plants/*`
         выборках. Восстановления через API в этой версии нет.
       security:
-        - bearerAuth: []
+        - bearerAuth: [ ]
       parameters:
         - $ref: '../_common/parameters.yaml#/PlantIdPath'
       responses:
@@ -173,7 +179,7 @@ paths:
 
   ItemHealth:
     get:
-      tags: [Plants]
+      tags: [ Plants ]
       operationId: getPlantHealth
       summary: Health-score растения
       description: |
@@ -187,7 +193,7 @@ paths:
 
         Доступ только к своему неархивированному растению (как `GET /plants/{id}`).
       security:
-        - bearerAuth: []
+        - bearerAuth: [ ]
       parameters:
         - $ref: '../_common/parameters.yaml#/PlantIdPath'
       responses:
@@ -202,9 +208,40 @@ paths:
         '404':
           $ref: '../_common/responses.yaml#/NotFound'
 
+  ItemFamily:
+    get:
+      tags: [ Plants ]
+      operationId: getPlantFamily
+      summary: Родословная растения
+      description: |
+        Возвращает материнское растение и прямых потомков/отводки
+        для текущего растения. Доступ только к растениям текущего пользователя.
+      security:
+        - bearerAuth: [ ]
+      parameters:
+        - $ref: '../_common/parameters.yaml#/PlantIdPath'
+      responses:
+        '200':
+          description: Родословная растения.
+          content:
+            application/json:
+              schema:
+                $ref: '#/schemas/PlantFamilyResponse'
+              example:
+                parent:
+                  id: 10
+                  name: Монстера мама
+                children:
+                  - id: 25
+                    name: Отводок 1
+        '403':
+          $ref: '../_common/responses.yaml#/Forbidden'
+        '404':
+          $ref: '../_common/responses.yaml#/NotFound'
+
   ItemDiagnosis:
     get:
-      tags: [Plants]
+      tags: [ Plants ]
       operationId: getPlantDiagnosis
       summary: Пассивная диагностика растения
       description: |
@@ -223,7 +260,7 @@ paths:
 
         Доступ только к своему неархивированному растению (как `GET /plants/{id}`).
       security:
-        - bearerAuth: []
+        - bearerAuth: [ ]
       parameters:
         - $ref: '../_common/parameters.yaml#/PlantIdPath'
       responses:
@@ -245,7 +282,7 @@ schemas:
       Результат пассивной диагностики растения (mobile screen 15, issue #193).
       Форма ответа всегда `{ issues, recommendations }` — даже когда данных мало
       или растение здорово (тогда массивы пустые / содержат только подсказку).
-    required: [issues, recommendations]
+    required: [ issues, recommendations ]
     properties:
       issues:
         type: array
@@ -265,7 +302,7 @@ schemas:
   DiagnosisIssueDto:
     type: object
     description: Отдельная выявленная проблема растения.
-    required: [code, severity, title]
+    required: [ code, severity, title ]
     properties:
       code:
         type: string
@@ -276,7 +313,7 @@ schemas:
         example: UNDERWATERED
       severity:
         type: string
-        enum: [HIGH, MEDIUM, LOW]
+        enum: [ HIGH, MEDIUM, LOW ]
         description: Серьёзность проблемы.
         example: HIGH
       title:
@@ -289,7 +326,7 @@ schemas:
     description: |
       Health-score растения (mobile gap G1). При `insufficientData = true`
       поля `score` и `zone` равны `null`.
-    required: [insufficientData]
+    required: [ insufficientData ]
     properties:
       insufficientData:
         type: boolean
@@ -305,18 +342,45 @@ schemas:
         description: Балл 0–100. `null`, если `insufficientData = true`.
       zone:
         type: string
-        enum: [GREEN, YELLOW, RED]
+        enum: [ GREEN, YELLOW, RED ]
         nullable: true
         description: |
           Цветовая зона по порогам (`GREEN`/`YELLOW`/`RED`). `null`, если
           `insufficientData = true`.
+
+  PlantFamilyMemberDto:
+    type: object
+    description: Короткое представление растения в родословной.
+    required: [ id, name ]
+    properties:
+      id:
+        type: integer
+        format: int64
+        example: 10
+      name:
+        type: string
+        example: Монстера мама
+
+  PlantFamilyResponse:
+    type: object
+    description: Родословная растения — родитель и прямые потомки.
+    required: [ children ]
+    properties:
+      parent:
+        nullable: true
+        allOf:
+          - $ref: '#/schemas/PlantFamilyMemberDto'
+      children:
+        type: array
+        items:
+          $ref: '#/schemas/PlantFamilyMemberDto'
 
   PlantDto:
     type: object
     description: |
       Растение в формате REST API. Поля `locationName` / `speciesName`
       денормализованы из связанных сущностей для удобства фронта.
-    required: [id, name, archived]
+    required: [ id, name, archived ]
     properties:
       id:
         type: integer
@@ -372,7 +436,7 @@ schemas:
   PlantCreateRequest:
     type: object
     description: Тело POST /api/v1/plants.
-    required: [name]
+    required: [ name ]
     properties:
       name:
         type: string
@@ -399,6 +463,15 @@ schemas:
           растение связывается с видом (mobile gap G13); вид должен существовать,
           иначе `404 NOT_FOUND`. Расписания ухода при этом **не** создаются
           автоматически (отдельная задача G14).
+      parentPlantId:
+        type: integer
+        format: int64
+        nullable: true
+        description: |
+          ID материнского растения. Если задан, новое растение считается
+          отводком/потомком этого растения. Родитель должен принадлежать текущему
+          пользователю и не быть архивированным, иначе 404/403.
+        example: 10
 
   PlantUpdateRequest:
     type: object
@@ -421,7 +494,7 @@ schemas:
   PageResponsePlantDto:
     type: object
     description: Постраничный ответ со списком растений.
-    required: [items, total, offset, limit]
+    required: [ items, total, offset, limit ]
     properties:
       items:
         type: array
