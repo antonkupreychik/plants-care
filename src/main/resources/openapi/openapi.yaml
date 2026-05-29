@@ -133,6 +133,8 @@ paths:
 
   /api/v1/calendar:
     $ref: './resources/calendar.yaml#/paths/Collection'
+  /api/v1/calendar/progress:
+    $ref: './resources/calendar.yaml#/paths/Progress'
 
   /api/v1/today:
     $ref: './resources/today.yaml#/paths/Collection'
@@ -247,6 +249,10 @@ components:
       $ref: './resources/calendar.yaml#/schemas/TaskDto'
     CalendarResponse:
       $ref: './resources/calendar.yaml#/schemas/CalendarResponse'
+    DayProgress:
+      $ref: './resources/calendar.yaml#/schemas/DayProgress'
+    CalendarProgressResponse:
+      $ref: './resources/calendar.yaml#/schemas/CalendarProgressResponse'
 
     TodayResponse:
       $ref: './resources/today.yaml#/schemas/TodayResponse'
