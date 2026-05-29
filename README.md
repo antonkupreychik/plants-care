@@ -80,6 +80,7 @@ echo 'testcontainers.reuse.enable=true' >> ~/.testcontainers.properties
 - **V28** — добавляет `plants.parent_id BIGINT NULL` — self-FK на `plants(id)` для родословной растений (ADR-012, issue #139). Растение-черенок ссылается на материнское; NULL = корень родословной. FK `ON DELETE SET NULL` (удаление родителя обрывает связь, потомок остаётся). btree-индекс `idx_plants_parent_id` под выборку потомков по родителю. Карточка показывает «🌱 Потомки: N» у родителя и кликабельную ссылку «⬅️ Родитель: …» у потомка
 - **V29** — сидинг энциклопедических фактов в `species_facts` (`ORIGIN`/`CARE`/`TOXICITY`/`CURIOSITY`) и простановка флагов токсичности `species.toxic_to_*` для топ-видов по популярности (issue #132). Это сидинг, обещанный в V22 (#129), и данные под флаги из V26 (#130). Чистый сид без DDL. Привязка к виду по `latin_name`, не по id. Идемпотентен: факты — `INSERT ... WHERE NOT EXISTS` по `(species_id, category, body)`, токсичность — `UPDATE`. Виды без достоверных данных ASPCA остаются с `NULL` («нет данных»)
 - **V30** — таблица `transplant_supply_suggestions` (issue #141): трекер идемпотентности подсказок расходников перед пересадкой. По строке на `(user_id, plant_id, source_event_id)`, где `source_event_id` — id записи TRANSPLANT в `plant_events`, от которой посчитана предстоящая пересадка. UNIQUE `(user_id, plant_id, source_event_id)` гарантирует один пуш на одно предстоящее событие (новая пересадка → новый `source_event_id` → можно подсказать снова). `status` (`SUGGESTED`/`ADDED`/`DISMISSED`, CHECK), `predicted_transplant_at`. FK на `users`/`plants`/`plant_events` `ON DELETE CASCADE`. Индексы `(user_id, status)` и по обоим FK
+- **V34** — добавляет `care_schedules.amount_ml INT NULL` (issue #185): объём полива в миллилитрах для расписаний типа `WATERING`. NULL = объём не задан; для остальных типов колонка не используется
 
 ## REST API
 
@@ -116,6 +117,25 @@ echo 'testcontainers.reuse.enable=true' >> ~/.testcontainers.properties
 | `POST` | `/api/v1/plants` | Создать растение (без расписания полива) |
 | `PUT` | `/api/v1/plants/{id}` | Обновить растение. PATCH-семантика: обновляются только переданные поля (`name`, `notes`, `locationId`) |
 | `DELETE` | `/api/v1/plants/{id}` | Soft-delete: выставляет `archivedAt`, из выборок не возвращается |
+
+При создании растения через REST засеваются все четыре расписания ухода (`WATERING`/`MISTING`/`FERTILIZING`/`SOIL_CHECK`) из дефолтов вида; включён по умолчанию только `WATERING`.
+
+### Schedules (issue #185)
+
+Расписания ухода конкретного растения. У каждого растения ровно четыре расписания по числу типов ухода. Все эндпоинты user-scoped (JWT).
+
+| Метод | Путь | Описание |
+|---|---|---|
+| `GET` | `/api/v1/plants/{id}/schedules` | Все четыре расписания в фиксированном порядке. Если расписание ещё не настроено — отдаётся дефолтный интервал вида с `enabled=false` |
+| `PUT` | `/api/v1/plants/{id}/schedules/{type}` | Создать/обновить расписание типа `{type}`; пересчитывает `nextDueAt` |
+
+`type` ∈ `WATERING` / `MISTING` / `FERTILIZING` / `SOIL_CHECK`. Тело `PUT`: `{ "every", "unit", "amountMl?", "enabled" }`. Элемент ответа:
+
+```json
+{ "type": "WATERING", "every": 7, "unit": "DAY", "amountMl": 250, "enabled": true, "nextDueAt": "2026-06-05T08:00:00Z" }
+```
+
+`unit` сейчас всегда `DAY`. `amountMl` осмыслен только для `WATERING` (для остальных типов игнорируется). `nextDueAt` (UTC) заполнен только при `enabled=true`, иначе `null`.
 
 ### Locations
 
