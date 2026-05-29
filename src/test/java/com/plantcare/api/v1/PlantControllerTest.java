@@ -175,7 +175,7 @@ class PlantControllerTest {
         Plant plant = mockPlant(10L, 1L, "Ficus");
 
         when(userService.getByIdOrThrow(1L)).thenReturn(user);
-        when(plantService.createPlant(eq(user), eq("Ficus"), isNull(), isNull(), isNull()))
+        when(plantService.createPlantWithDefaultSchedules(eq(user), eq("Ficus"), isNull(), isNull(), isNull()))
                 .thenReturn(plant);
 
         String body = """
@@ -202,7 +202,7 @@ class PlantControllerTest {
         when(plant.getSpecies()).thenReturn(species);
 
         when(userService.getByIdOrThrow(1L)).thenReturn(user);
-        when(plantService.createPlant(eq(user), eq("Монстера"), isNull(), isNull(), eq(7L)))
+        when(plantService.createPlantWithDefaultSchedules(eq(user), eq("Монстера"), isNull(), isNull(), eq(7L)))
                 .thenReturn(plant);
 
         String body = """

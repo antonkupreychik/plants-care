@@ -1,0 +1,134 @@
+# Чтение и редактирование расписаний ухода конкретного растения (issue #185).
+#
+# У каждого растения ровно четыре расписания (WATERING / MISTING / FERTILIZING /
+# SOIL_CHECK). Коллекция всегда возвращает все четыре — даже если строки в БД ещё
+# нет (тогда отдаётся дефолтный интервал и enabled=false).
+
+paths:
+  Collection:
+    get:
+      tags: [Schedules]
+      operationId: listPlantSchedules
+      summary: Расписания ухода растения
+      description: |
+        Возвращает все четыре расписания ухода растения (WATERING, MISTING,
+        FERTILIZING, SOIL_CHECK) в фиксированном порядке. Если расписание ещё
+        не настроено — отдаётся дефолтный интервал вида с `enabled=false`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '../_common/parameters.yaml#/PlantIdPath'
+      responses:
+        '200':
+          description: Список из четырёх расписаний ухода.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/schemas/CareScheduleDto'
+        '404':
+          $ref: '../_common/responses.yaml#/NotFound'
+
+  Item:
+    put:
+      tags: [Schedules]
+      operationId: updatePlantSchedule
+      summary: Изменить расписание ухода
+      description: |
+        Создаёт или обновляет расписание ухода заданного типа. Поле `amountMl`
+        осмысленно только для типа `WATERING`; для остальных типов игнорируется.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '../_common/parameters.yaml#/PlantIdPath'
+        - name: type
+          in: path
+          required: true
+          description: Тип задачи ухода.
+          schema:
+            type: string
+            enum: [WATERING, MISTING, FERTILIZING, SOIL_CHECK]
+            example: WATERING
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/schemas/CareScheduleUpdateRequest'
+            example:
+              every: 7
+              unit: DAY
+              amountMl: 250
+              enabled: true
+      responses:
+        '200':
+          description: Расписание сохранено.
+          content:
+            application/json:
+              schema:
+                $ref: '#/schemas/CareScheduleDto'
+        '400':
+          $ref: '../_common/responses.yaml#/BadRequest'
+        '404':
+          $ref: '../_common/responses.yaml#/NotFound'
+
+schemas:
+  CareScheduleDto:
+    type: object
+    description: Расписание ухода растения одного типа.
+    required: [type, every, unit, enabled]
+    properties:
+      type:
+        type: string
+        enum: [WATERING, MISTING, FERTILIZING, SOIL_CHECK]
+        example: WATERING
+      every:
+        type: integer
+        format: int32
+        description: Интервал в днях.
+        example: 7
+      unit:
+        type: string
+        enum: [DAY]
+        description: Единица интервала. Сейчас всегда DAY.
+        example: DAY
+      amountMl:
+        type: integer
+        format: int32
+        nullable: true
+        description: Объём полива в миллилитрах. Только для type=WATERING.
+        example: 250
+      enabled:
+        type: boolean
+        example: true
+      nextDueAt:
+        type: string
+        format: date-time
+        nullable: true
+        description: Ближайшее срабатывание (UTC). Заполнено только если enabled=true.
+
+  CareScheduleUpdateRequest:
+    type: object
+    required: [every, unit, enabled]
+    properties:
+      every:
+        type: integer
+        format: int32
+        minimum: 1
+        maximum: 365
+        example: 7
+      unit:
+        type: string
+        enum: [DAY]
+        example: DAY
+      amountMl:
+        type: integer
+        format: int32
+        nullable: true
+        minimum: 1
+        description: Объём полива в миллилитрах. Только для type=WATERING.
+        example: 250
+      enabled:
+        type: boolean
+        example: true

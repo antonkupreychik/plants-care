@@ -84,6 +84,10 @@ tags:
     description: Публичный справочник видов растений. Без авторизации.
   - name: Care Types
     description: Публичный справочник типов ухода (полив, опрыскивание, и т.п.). Без авторизации.
+  - name: Schedules
+    description: |
+      Расписания ухода конкретного растения (полив, опрыскивание, удобрение,
+      проверка почвы). Чтение всех четырёх и редактирование одного по типу.
   - name: Shopping
     description: Персональный список покупок пользователя — расходники для ухода за растениями.
 
@@ -112,6 +116,10 @@ paths:
     $ref: './resources/plants.yaml#/paths/ItemHealth'
   /api/v1/plants/{id}/diagnosis:
     $ref: './resources/plants.yaml#/paths/ItemDiagnosis'
+  /api/v1/plants/{id}/schedules:
+    $ref: './resources/schedules.yaml#/paths/Collection'
+  /api/v1/plants/{id}/schedules/{type}:
+    $ref: './resources/schedules.yaml#/paths/Item'
 
   /api/v1/locations:
     $ref: './resources/locations.yaml#/paths/Collection'
@@ -262,6 +270,11 @@ components:
 
     CareTypeDto:
       $ref: './resources/care-types.yaml#/schemas/CareTypeDto'
+
+    CareScheduleDto:
+      $ref: './resources/schedules.yaml#/schemas/CareScheduleDto'
+    CareScheduleUpdateRequest:
+      $ref: './resources/schedules.yaml#/schemas/CareScheduleUpdateRequest'
 
     ShoppingItemDto:
       $ref: './resources/shopping.yaml#/schemas/ShoppingItemDto'
