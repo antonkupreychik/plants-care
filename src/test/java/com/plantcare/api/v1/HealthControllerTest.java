@@ -64,4 +64,13 @@ class HealthControllerTest extends IntegrationTestBase {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.paths['/api/v1/plants/{id}/diagnosis'].get").exists());
     }
+
+    @Test
+    void should_document_plant_schedules_paths_in_api_docs() throws Exception {
+        // issue #185 AC: per-plant расписания задокументированы в /v3/api-docs
+        mockMvc.perform(get("/v3/api-docs"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.paths['/api/v1/plants/{id}/schedules'].get").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/plants/{id}/schedules/{type}'].put").exists());
+    }
 }

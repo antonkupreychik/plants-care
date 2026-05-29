@@ -1,6 +1,7 @@
 package com.plantcare.api.v1;
 
 import com.plantcare.api.generated.CalendarApi;
+import com.plantcare.api.generated.model.DayProgress;
 import com.plantcare.api.generated.model.TaskDto;
 import com.plantcare.core.domain.CareSchedule;
 import com.plantcare.core.domain.User;
@@ -58,6 +59,24 @@ public class CalendarController implements CalendarApi {
                         .add(TodayController.toTaskDto(schedule));
             }
         }
+
+        return result;
+    }
+
+    @Override
+    public Map<String, DayProgress> getCalendarProgress(LocalDate from, LocalDate to) {
+        if (ChronoUnit.DAYS.between(from, to) > MAX_RANGE_DAYS) {
+            throw new IllegalArgumentException(
+                    "Date range exceeds maximum of " + MAX_RANGE_DAYS + " days");
+        }
+
+        User user = currentUserProvider.currentUser();
+        log.info("GET /api/v1/calendar/progress: userId={}, from={}, to={}", user.getId(), from, to);
+
+        Map<String, DayProgress> result = new TreeMap<>();
+        calendarApiService.getProgress(user.getId(), from, to, user.getTimezone())
+                .forEach((day, progress) ->
+                        result.put(day.toString(), new DayProgress(progress.planned(), progress.done())));
 
         return result;
     }

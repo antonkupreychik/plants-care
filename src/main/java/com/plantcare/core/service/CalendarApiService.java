@@ -1,6 +1,7 @@
 package com.plantcare.core.service;
 
 import com.plantcare.core.domain.CareSchedule;
+import com.plantcare.core.repository.CareHistoryRepository;
 import com.plantcare.core.repository.CareScheduleRepository;
 import com.plantcare.core.util.TimeUtils;
 import lombok.RequiredArgsConstructor;
@@ -9,11 +10,14 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
 
 /**
  * Сервис для REST API календаря ухода (issue #86).
@@ -28,6 +32,56 @@ import java.util.List;
 public class CalendarApiService {
 
     private final CareScheduleRepository careScheduleRepository;
+    private final CareHistoryRepository careHistoryRepository;
+
+    /**
+     * Прогресс выполнения по дням за диапазон {@code [from, to]} (включительно)
+     * в таймзоне пользователя (issue #179, gap G11).
+     *
+     * <p>{@code planned} — число запланированных occurrence'ов (та же проекция
+     * активных расписаний, что и в {@link #projectEvents}). {@code done} — число
+     * активных (не-cancelled) записей {@code care_history}, попавших в этот
+     * локальный день. Дни без планов и без выполнений в результат не попадают.
+     *
+     * @param userId   id пользователя
+     * @param from     начало диапазона (включительно)
+     * @param to       конец диапазона (включительно)
+     * @param timezone строка таймзоны пользователя
+     * @return отсортированная по дате карта «локальный день → прогресс»
+     */
+    public Map<LocalDate, DayProgress> getProgress(Long userId, LocalDate from,
+                                                   LocalDate to, String timezone) {
+        ZoneId tz = TimeUtils.safeZone(timezone);
+        LocalDate winEnd = to.plusDays(1);
+
+        // counts[0] = planned, counts[1] = done
+        Map<LocalDate, int[]> counts = new TreeMap<>();
+
+        for (CareSchedule schedule : careScheduleRepository.findActiveSchedulesByUserId(userId)) {
+            for (LocalDate day : projectEvents(schedule, from, winEnd, timezone)) {
+                counts.computeIfAbsent(day, k -> new int[2])[0]++;
+            }
+        }
+
+        LocalDateTime fromUtc = from.atStartOfDay(tz).toInstant().atZone(ZoneOffset.UTC).toLocalDateTime();
+        LocalDateTime toExclusiveUtc = winEnd.atStartOfDay(tz).toInstant().atZone(ZoneOffset.UTC).toLocalDateTime();
+
+        for (LocalDateTime doneAtUtc : careHistoryRepository.findActiveDoneAtsByUserIdInRange(userId, fromUtc, toExclusiveUtc)) {
+            LocalDate localDay = doneAtUtc.atOffset(ZoneOffset.UTC).atZoneSameInstant(tz).toLocalDate();
+            counts.computeIfAbsent(localDay, k -> new int[2])[1]++;
+        }
+
+        Map<LocalDate, DayProgress> result = new TreeMap<>();
+        counts.forEach((day, c) -> result.put(day, new DayProgress(c[0], c[1])));
+        log.debug("getProgress: userId={}, from={}, to={}, days={}", userId, from, to, result.size());
+        return result;
+    }
+
+    /**
+     * Прогресс за один день: запланировано/выполнено. Числа в TZ пользователя.
+     */
+    public record DayProgress(int planned, int done) {
+    }
 
     /**
      * Все активные расписания пользователя.

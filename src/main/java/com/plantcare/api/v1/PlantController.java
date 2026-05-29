@@ -56,7 +56,7 @@ public class PlantController implements PlantsApi {
     @Override
     public PlantDto createPlant(PlantCreateRequest request) {
         User user = userService.getByIdOrThrow(currentUserProvider.currentUserId());
-        Plant plant = plantService.createPlant(
+        Plant plant = plantService.createPlantWithDefaultSchedules(
                 user, request.getName(), request.getNotes(), request.getLocationId(), request.getSpeciesId());
         return toDto(plant);
     }
