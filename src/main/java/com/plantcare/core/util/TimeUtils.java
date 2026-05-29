@@ -39,6 +39,24 @@ public final class TimeUtils {
     }
 
     /**
+     * Начало текущего дня (00:00:00) в UTC, вычисленное относительно таймзоны пользователя.
+     *
+     * <p>Зеркало {@link #endOfTodayInUtc(String, Clock)} — даёт нижнюю границу
+     * окна «сегодня» в TZ юзера, сконвертированную в UTC.
+     *
+     * @param timezone строка таймзоны (например, "Europe/Moscow", "Asia/Almaty")
+     * @param clock    инжектируемый Clock-бин
+     * @return начало сегодняшнего дня в UTC
+     */
+    public static LocalDateTime startOfTodayInUtc(String timezone, Clock clock) {
+        ZoneId userZone = safeZone(timezone);
+        LocalDate todayInUserTz = clock.instant().atZone(userZone).toLocalDate();
+        ZonedDateTime startOfDay = todayInUserTz
+                .atStartOfDay(userZone);
+        return startOfDay.withZoneSameInstant(ZoneOffset.UTC).toLocalDateTime();
+    }
+
+    /**
      * Безопасное получение {@link ZoneId} по строке: при неверном значении
      * логирует предупреждение и возвращает UTC.
      *
