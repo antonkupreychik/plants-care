@@ -39,6 +39,7 @@ public class PlantService {
     private final LocationService locationService;
     private final com.plantcare.core.seasonal.service.SeasonalIntervalService seasonalIntervalService;
     private final HealthScoreService healthScoreService;
+    private final PlantDiagnosisReportService plantDiagnosisReportService;
 
     // =================================================================
     // REST API CRUD (issue #85)
@@ -70,6 +71,18 @@ public class PlantService {
     public HealthScoreService.HealthScore getPlantHealth(Long userId, Long plantId) {
         Plant plant = getPlantOrThrow(userId, plantId);
         return healthScoreService.computeForPlant(plant);
+    }
+
+    /**
+     * Пассивная диагностика растения для REST API (mobile screen 15, issue #193).
+     * Ownership/архив-проверки те же, что в {@link #getPlantOrThrow}. Расчёт идёт
+     * в этой же read-only транзакции — lazy {@code plant.user} (TZ) и расписания
+     * инициализируются без LazyInitializationException.
+     */
+    @Transactional(readOnly = true)
+    public PlantDiagnosisReportService.DiagnosisReport getPlantDiagnosis(Long userId, Long plantId) {
+        Plant plant = getPlantOrThrow(userId, plantId);
+        return plantDiagnosisReportService.diagnose(plant);
     }
 
     @Transactional(readOnly = true)

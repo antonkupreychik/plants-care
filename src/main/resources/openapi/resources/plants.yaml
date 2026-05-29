@@ -202,7 +202,88 @@ paths:
         '404':
           $ref: '../_common/responses.yaml#/NotFound'
 
+  ItemDiagnosis:
+    get:
+      tags: [Plants]
+      operationId: getPlantDiagnosis
+      summary: Пассивная диагностика растения
+      description: |
+        Возвращает список выявленных проблем (`issues`) и рекомендаций
+        (`recommendations`) для растения (mobile screen 15 «Диагноз»,
+        issue #193). Диагноз пассивный — выводится только из уже имеющихся
+        данных (просроченные расписания ухода, health-зона), без ИИ и без
+        интерактивного опросника. Новой схемы БД не требует.
+
+        Если активных записей ухода меньше порога (`< 3`), диагноз не
+        строится: `issues` пустой, в `recommendations` — единственная
+        подсказка продолжать отмечать уход.
+
+        У здорового растения (данных достаточно, нет просрочек, зона не `RED`)
+        и `issues`, и `recommendations` пустые.
+
+        Доступ только к своему неархивированному растению (как `GET /plants/{id}`).
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '../_common/parameters.yaml#/PlantIdPath'
+      responses:
+        '200':
+          description: Диагноз растения.
+          content:
+            application/json:
+              schema:
+                $ref: '#/schemas/PlantDiagnosisDto'
+        '403':
+          $ref: '../_common/responses.yaml#/Forbidden'
+        '404':
+          $ref: '../_common/responses.yaml#/NotFound'
+
 schemas:
+  PlantDiagnosisDto:
+    type: object
+    description: |
+      Результат пассивной диагностики растения (mobile screen 15, issue #193).
+      Форма ответа всегда `{ issues, recommendations }` — даже когда данных мало
+      или растение здорово (тогда массивы пустые / содержат только подсказку).
+    required: [issues, recommendations]
+    properties:
+      issues:
+        type: array
+        description: Выявленные проблемы, отсортированы по severity (HIGH → LOW).
+        items:
+          $ref: '#/schemas/DiagnosisIssueDto'
+      recommendations:
+        type: array
+        description: |
+          Рекомендации, собранные по проблемам (в том же порядке) с дедупликацией.
+        items:
+          type: string
+        example:
+          - Полей растение сегодня
+          - Проверь, не пересох ли грунт
+
+  DiagnosisIssueDto:
+    type: object
+    description: Отдельная выявленная проблема растения.
+    required: [code, severity, title]
+    properties:
+      code:
+        type: string
+        description: |
+          Семантический код проблемы (`UNDERWATERED`, `UNDERFED`,
+          `LOW_HUMIDITY`, `SOIL_CHECK_DUE`, `NEGLECTED`, ...). Строка —
+          а не enum — для forward-совместимости с новыми кодами.
+        example: UNDERWATERED
+      severity:
+        type: string
+        enum: [HIGH, MEDIUM, LOW]
+        description: Серьёзность проблемы.
+        example: HIGH
+      title:
+        type: string
+        description: Человекочитаемый заголовок проблемы (локализован).
+        example: Пересушен
+
   PlantHealthDto:
     type: object
     description: |

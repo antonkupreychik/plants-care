@@ -12,6 +12,7 @@ import jakarta.persistence.EntityNotFoundException;
 import org.springframework.security.access.AccessDeniedException;
 import com.plantcare.core.service.HealthScoreService;
 import com.plantcare.core.service.LocationService;
+import com.plantcare.core.service.PlantDiagnosisReportService;
 import com.plantcare.core.service.PlantService;
 import com.plantcare.core.service.UserService;
 import org.junit.jupiter.api.Test;
@@ -341,6 +342,55 @@ class PlantControllerTest {
 
         // act + assert
         mockMvc.perform(get("/api/v1/plants/999/health"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.error.code").value("NOT_FOUND"));
+    }
+
+    // ---------------------------------------------------- diagnosis (#193)
+
+    @Test
+    void should_return_diagnosis_json_shape_when_plant_has_issues() throws Exception {
+        // arrange — отчёт с двумя проблемами (HIGH первой) и deduped-рекомендациями
+        var issues = List.of(
+                new PlantDiagnosisReportService.Issue(
+                        "UNDERWATERED",
+                        PlantDiagnosisReportService.Severity.HIGH,
+                        "Пересушен",
+                        List.of("Полей растение сегодня", "Проверь, не пересох ли грунт")),
+                new PlantDiagnosisReportService.Issue(
+                        "UNDERFED",
+                        PlantDiagnosisReportService.Severity.LOW,
+                        "Не хватает подкормки",
+                        List.of("Подкорми растение по графику")));
+        var report = new PlantDiagnosisReportService.DiagnosisReport(
+                issues,
+                List.of("Полей растение сегодня", "Проверь, не пересох ли грунт",
+                        "Подкорми растение по графику"));
+
+        when(plantService.getPlantDiagnosis(1L, 1L)).thenReturn(report);
+
+        // act + assert
+        mockMvc.perform(get("/api/v1/plants/1/diagnosis"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.issues.length()").value(2))
+                .andExpect(jsonPath("$.issues[0].code").value("UNDERWATERED"))
+                .andExpect(jsonPath("$.issues[0].severity").value("HIGH"))
+                .andExpect(jsonPath("$.issues[0].title").value("Пересушен"))
+                .andExpect(jsonPath("$.issues[1].code").value("UNDERFED"))
+                .andExpect(jsonPath("$.issues[1].severity").value("LOW"))
+                .andExpect(jsonPath("$.recommendations.length()").value(3))
+                .andExpect(jsonPath("$.recommendations[0]").value("Полей растение сегодня"))
+                .andExpect(jsonPath("$.recommendations[2]").value("Подкорми растение по графику"));
+    }
+
+    @Test
+    void should_return_404_for_diagnosis_of_missing_plant() throws Exception {
+        // arrange — чужое/архивное растение → not-found пробрасывается из сервиса
+        when(plantService.getPlantDiagnosis(1L, 999L))
+                .thenThrow(new EntityNotFoundException("Plant not found: 999"));
+
+        // act + assert
+        mockMvc.perform(get("/api/v1/plants/999/diagnosis"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.error.code").value("NOT_FOUND"));
     }

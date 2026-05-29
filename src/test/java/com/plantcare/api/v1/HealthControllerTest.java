@@ -56,4 +56,12 @@ class HealthControllerTest extends IntegrationTestBase {
                 .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
                 .andExpect(jsonPath("$.info.title").value("Plants Care API"));
     }
+
+    @Test
+    void should_document_plant_diagnosis_path_in_api_docs() throws Exception {
+        // issue #193: новый эндпоинт диагностики должен присутствовать в OpenAPI-контракте.
+        mockMvc.perform(get("/v3/api-docs"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.paths['/api/v1/plants/{id}/diagnosis'].get").exists());
+    }
 }
