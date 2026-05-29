@@ -53,6 +53,10 @@ Authorization: Bearer {{token}}
 GET {{baseUrl}}/api/v1/calendar
 Authorization: Bearer {{token}}
 
+### Прогресс по дням (planned/done), диапазон ≤ 60 дней
+GET {{baseUrl}}/api/v1/calendar/progress?from=2026-05-01&to=2026-05-31
+Authorization: Bearer {{token}}
+
 ### Стрик растения
 GET {{baseUrl}}/api/v1/stats/streak?plantId=1
 Authorization: Bearer {{token}}

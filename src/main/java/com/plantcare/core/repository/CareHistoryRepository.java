@@ -209,6 +209,25 @@ public interface CareHistoryRepository extends JpaRepository<CareHistory, Long> 
             Limit limit
     );
 
+    // ===== Прогресс выполнения по дням (issue #179, gap G11) =====
+
+    /**
+     * {@code done_at} всех активных (не-cancelled) записей юзера за окно
+     * {@code [from; toExclusive)} — для агрегации прогресса по локальным дням
+     * в {@code GET /api/v1/calendar/progress}. Бакетирование по TZ юзера
+     * выполняется в сервисе, поэтому возвращаем сырые UTC-метки.
+     *
+     * <p>Границы — «начало/конец локального дня в TZ юзера, сконвертированные в UTC».
+     */
+    @Query("SELECT h.doneAt FROM CareHistory h " +
+            "WHERE h.plant.user.id = :userId AND h.cancelledBy IS NULL " +
+            "AND h.doneAt >= :from AND h.doneAt < :toExclusive")
+    List<LocalDateTime> findActiveDoneAtsByUserIdInRange(
+            @Param("userId") Long userId,
+            @Param("from") LocalDateTime from,
+            @Param("toExclusive") LocalDateTime toExclusive
+    );
+
     // ===== Месячный отчёт REST API (issue #192, gap G23) =====
 
     /**
