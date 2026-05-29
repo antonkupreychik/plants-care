@@ -45,4 +45,11 @@ public class ShoppingItem extends BaseEntity {
     public void setChecked(boolean checked) {
         this.checked = checked;
     }
+
+    /**
+     * Меняет текст позиции. Валидация (не пусто, не длиннее лимита) — на сервисе.
+     */
+    public void setTitle(String title) {
+        this.title = title;
+    }
 }

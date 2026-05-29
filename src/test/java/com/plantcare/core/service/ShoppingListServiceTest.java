@@ -299,6 +299,153 @@ class ShoppingListServiceTest extends IntegrationTestBase {
                 .containsExactly("Вторая", "Третья", "Первая");
     }
 
+    // --- AC 10: update — partial field updates persist ---
+
+    @Test
+    void should_set_checked_only_when_updating_with_checked() {
+        ShoppingItem item = shoppingListService.add(userA, "Грунт");
+
+        shoppingListService.update(userA.getId(), item.getId(), true, null);
+
+        ShoppingItem reloaded = shoppingItemRepository.findById(item.getId()).orElseThrow();
+        assertThat(reloaded.isChecked()).isTrue();
+        assertThat(reloaded.getTitle()).isEqualTo("Грунт");
+    }
+
+    @Test
+    void should_set_title_only_when_updating_with_title() {
+        ShoppingItem item = shoppingListService.add(userA, "Старый текст");
+        shoppingListService.toggle(userA.getId(), item.getId(), true);
+
+        shoppingListService.update(userA.getId(), item.getId(), null, "Новый текст");
+
+        ShoppingItem reloaded = shoppingItemRepository.findById(item.getId()).orElseThrow();
+        assertThat(reloaded.getTitle()).isEqualTo("Новый текст");
+        assertThat(reloaded.isChecked()).isTrue();
+    }
+
+    @Test
+    void should_set_both_checked_and_title_when_updating_with_both() {
+        ShoppingItem item = shoppingListService.add(userA, "Старый текст");
+
+        shoppingListService.update(userA.getId(), item.getId(), true, "Новый текст");
+
+        ShoppingItem reloaded = shoppingItemRepository.findById(item.getId()).orElseThrow();
+        assertThat(reloaded.isChecked()).isTrue();
+        assertThat(reloaded.getTitle()).isEqualTo("Новый текст");
+    }
+
+    @Test
+    void should_trim_title_when_updating() {
+        ShoppingItem item = shoppingListService.add(userA, "Старый текст");
+
+        shoppingListService.update(userA.getId(), item.getId(), null, "   Керамзит   ");
+
+        ShoppingItem reloaded = shoppingItemRepository.findById(item.getId()).orElseThrow();
+        assertThat(reloaded.getTitle()).isEqualTo("Керамзит");
+    }
+
+    @Test
+    void should_keep_fields_unchanged_when_updating_with_both_null() {
+        ShoppingItem item = shoppingListService.add(userA, "Грунт");
+
+        shoppingListService.update(userA.getId(), item.getId(), null, null);
+
+        ShoppingItem reloaded = shoppingItemRepository.findById(item.getId()).orElseThrow();
+        assertThat(reloaded.getTitle()).isEqualTo("Грунт");
+        assertThat(reloaded.isChecked()).isFalse();
+    }
+
+    // --- AC 11: update — not-found / cross-user scope ---
+
+    @Test
+    void should_throw_not_found_when_updating_missing_item() {
+        assertThatThrownBy(() -> shoppingListService.update(userA.getId(), 999_999L, true, null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage(ShoppingListService.ITEM_NOT_FOUND);
+    }
+
+    @Test
+    void should_throw_not_found_when_updating_item_of_another_user() {
+        ShoppingItem itemOfB = shoppingListService.add(userB, "Позиция B");
+
+        assertThatThrownBy(() -> shoppingListService.update(userA.getId(), itemOfB.getId(), true, null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage(ShoppingListService.ITEM_NOT_FOUND);
+
+        ShoppingItem reloaded = shoppingItemRepository.findById(itemOfB.getId()).orElseThrow();
+        assertThat(reloaded.isChecked()).isFalse();
+        assertThat(reloaded.getTitle()).isEqualTo("Позиция B");
+    }
+
+    // --- AC 12: update — title validation (400-path, NOT the not-found message) ---
+
+    @Test
+    void should_reject_blank_title_with_validation_message_when_updating() {
+        ShoppingItem item = shoppingListService.add(userA, "Грунт");
+
+        assertThatThrownBy(() -> shoppingListService.update(userA.getId(), item.getId(), null, "   "))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("не может быть пустым")
+                .hasMessageNotContaining(ShoppingListService.ITEM_NOT_FOUND);
+
+        ShoppingItem reloaded = shoppingItemRepository.findById(item.getId()).orElseThrow();
+        assertThat(reloaded.getTitle()).isEqualTo("Грунт");
+    }
+
+    @Test
+    void should_reject_too_long_title_with_validation_message_when_updating() {
+        ShoppingItem item = shoppingListService.add(userA, "Грунт");
+        String tooLong = "а".repeat(161);
+
+        assertThatThrownBy(() -> shoppingListService.update(userA.getId(), item.getId(), null, tooLong))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("160")
+                .hasMessageNotContaining(ShoppingListService.ITEM_NOT_FOUND);
+
+        ShoppingItem reloaded = shoppingItemRepository.findById(item.getId()).orElseThrow();
+        assertThat(reloaded.getTitle()).isEqualTo("Грунт");
+    }
+
+    @Test
+    void should_validate_title_before_lookup_when_updating_missing_item() {
+        // Невалидный title на несуществующей позиции должен давать ошибку валидации (→ 400),
+        // а не not-found (→ 404): валидация в update() идёт ДО поиска.
+        assertThatThrownBy(() -> shoppingListService.update(userA.getId(), 999_999L, null, "   "))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("не может быть пустым")
+                .hasMessageNotContaining(ShoppingListService.ITEM_NOT_FOUND);
+    }
+
+    // --- AC 13: delete — own / not-found / cross-user scope ---
+
+    @Test
+    void should_delete_own_item_when_deleting() {
+        ShoppingItem item = shoppingListService.add(userA, "Грунт");
+
+        shoppingListService.delete(userA.getId(), item.getId());
+
+        assertThat(shoppingItemRepository.findById(item.getId())).isEmpty();
+    }
+
+    @Test
+    void should_throw_not_found_when_deleting_missing_item() {
+        assertThatThrownBy(() -> shoppingListService.delete(userA.getId(), 999_999L))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage(ShoppingListService.ITEM_NOT_FOUND);
+    }
+
+    @Test
+    void should_throw_not_found_and_keep_row_when_deleting_item_of_another_user() {
+        ShoppingItem itemOfB = shoppingListService.add(userB, "Позиция B");
+
+        assertThatThrownBy(() -> shoppingListService.delete(userA.getId(), itemOfB.getId()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage(ShoppingListService.ITEM_NOT_FOUND);
+
+        assertThat(shoppingItemRepository.findById(itemOfB.getId())).isPresent();
+    }
+
     private void setCreatedAt(Long itemId, LocalDateTime createdAt) {
         entityManager.createNativeQuery("UPDATE shopping_items SET created_at = :createdAt WHERE id = :id")
                 .setParameter("createdAt", createdAt)

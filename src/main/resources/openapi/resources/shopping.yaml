@@ -1,0 +1,154 @@
+# CRUD персонального списка покупок пользователя (issue #196, mobile G27).
+
+paths:
+  Collection:
+    get:
+      tags: [Shopping]
+      operationId: listShoppingItems
+      summary: Список покупок пользователя
+      description: |
+        Возвращает все позиции списка покупок текущего пользователя
+        (`sub` из bearer-токена). Сначала ещё не купленные, затем купленные.
+        Без пагинации — список обычно короткий.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Список покупок.
+          content:
+            application/json:
+              schema:
+                $ref: '#/schemas/ShoppingListResponse'
+    post:
+      tags: [Shopping]
+      operationId: createShoppingItem
+      summary: Добавить позицию в список покупок
+      description: Создаёт позицию от имени пользователя. Пустой или слишком длинный текст — 400.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/schemas/ShoppingItemCreateRequest'
+            example:
+              title: Грунт для суккулентов
+      responses:
+        '201':
+          description: Позиция создана.
+          content:
+            application/json:
+              schema:
+                $ref: '#/schemas/ShoppingItemDto'
+        '400':
+          $ref: '../_common/responses.yaml#/BadRequest'
+
+  Item:
+    patch:
+      tags: [Shopping]
+      operationId: updateShoppingItem
+      summary: Обновить позицию списка покупок
+      description: PATCH-семантика — обновляются только переданные поля.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Идентификатор позиции.
+          schema:
+            type: integer
+            format: int64
+            example: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/schemas/ShoppingItemUpdateRequest'
+      responses:
+        '200':
+          description: Позиция обновлена.
+          content:
+            application/json:
+              schema:
+                $ref: '#/schemas/ShoppingItemDto'
+        '400':
+          $ref: '../_common/responses.yaml#/BadRequest'
+        '404':
+          $ref: '../_common/responses.yaml#/NotFound'
+    delete:
+      tags: [Shopping]
+      operationId: deleteShoppingItem
+      summary: Удалить позицию списка покупок
+      description: Удаляет позицию, принадлежащую пользователю. Чужая или несуществующая — 404.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Идентификатор позиции.
+          schema:
+            type: integer
+            format: int64
+            example: 1
+      responses:
+        '204':
+          description: Позиция удалена.
+        '404':
+          $ref: '../_common/responses.yaml#/NotFound'
+
+schemas:
+  ShoppingItemDto:
+    type: object
+    description: Позиция персонального списка покупок.
+    required: [id, title, checked]
+    properties:
+      id:
+        type: integer
+        format: int64
+      title:
+        type: string
+        example: Грунт для суккулентов
+      checked:
+        type: boolean
+        description: Куплено ли уже.
+        example: false
+      createdAt:
+        type: string
+        format: date-time
+        nullable: true
+
+  ShoppingListResponse:
+    type: object
+    description: Обёртка над списком позиций покупок.
+    required: [items]
+    properties:
+      items:
+        type: array
+        items:
+          $ref: '#/schemas/ShoppingItemDto'
+
+  ShoppingItemCreateRequest:
+    type: object
+    required: [title]
+    properties:
+      title:
+        type: string
+        minLength: 1
+        maxLength: 160
+        example: Грунт для суккулентов
+
+  ShoppingItemUpdateRequest:
+    type: object
+    description: Все поля опциональны.
+    properties:
+      title:
+        type: string
+        maxLength: 160
+        nullable: true
+      checked:
+        type: boolean
+        nullable: true
