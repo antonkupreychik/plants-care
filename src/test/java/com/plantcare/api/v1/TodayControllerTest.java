@@ -71,8 +71,9 @@ class TodayControllerTest {
 
         CareSchedule schedule = mockSchedule(10L, 100L, "Монстера", TaskType.WATERING,
                 LocalDateTime.now().plusHours(1));
-        when(todayApiService.getTodaySchedules(anyLong(), anyString()))
-                .thenReturn(List.of(schedule));
+        when(todayApiService.getTodayTasks(anyLong(), anyString()))
+                .thenReturn(List.of(new TodayApiService.TodayTask(schedule, null)));
+        when(todayApiService.nowUtc()).thenReturn(LocalDateTime.now());
 
         // act + assert
         mockMvc.perform(get("/api/v1/today"))
@@ -90,8 +91,9 @@ class TodayControllerTest {
         // arrange
         User user = mockUserWithTimezone(2L, 2L, "UTC");
         when(currentUserProvider.currentUser()).thenReturn(user);
-        when(todayApiService.getTodaySchedules(anyLong(), anyString()))
+        when(todayApiService.getTodayTasks(anyLong(), anyString()))
                 .thenReturn(List.of());
+        when(todayApiService.nowUtc()).thenReturn(LocalDateTime.now());
 
         // act + assert
         mockMvc.perform(get("/api/v1/today"))
@@ -159,8 +161,11 @@ class TodayControllerTest {
                 LocalDateTime.now().plusHours(2));
         CareSchedule misting = mockSchedule(12L, 102L, "Орхидея", TaskType.MISTING,
                 LocalDateTime.now().plusHours(3));
-        when(todayApiService.getTodaySchedules(anyLong(), anyString()))
-                .thenReturn(List.of(watering, misting));
+        when(todayApiService.getTodayTasks(anyLong(), anyString()))
+                .thenReturn(List.of(
+                        new TodayApiService.TodayTask(watering, null),
+                        new TodayApiService.TodayTask(misting, null)));
+        when(todayApiService.nowUtc()).thenReturn(LocalDateTime.now());
 
         // act + assert
         mockMvc.perform(get("/api/v1/today"))
@@ -181,8 +186,9 @@ class TodayControllerTest {
         when(species.getId()).thenReturn(77L);
         when(species.getName()).thenReturn("Monstera deliciosa");
         when(schedule.getPlant().getSpecies()).thenReturn(species);
-        when(todayApiService.getTodaySchedules(anyLong(), anyString()))
-                .thenReturn(List.of(schedule));
+        when(todayApiService.getTodayTasks(anyLong(), anyString()))
+                .thenReturn(List.of(new TodayApiService.TodayTask(schedule, null)));
+        when(todayApiService.nowUtc()).thenReturn(LocalDateTime.now());
 
         // act + assert
         mockMvc.perform(get("/api/v1/today"))
@@ -200,14 +206,43 @@ class TodayControllerTest {
         CareSchedule schedule = mockSchedule(14L, 104L, "Безымянное", TaskType.MISTING,
                 LocalDateTime.now().plusHours(1));
         // getSpecies() не застаблен → null
-        when(todayApiService.getTodaySchedules(anyLong(), anyString()))
-                .thenReturn(List.of(schedule));
+        when(todayApiService.getTodayTasks(anyLong(), anyString()))
+                .thenReturn(List.of(new TodayApiService.TodayTask(schedule, null)));
+        when(todayApiService.nowUtc()).thenReturn(LocalDateTime.now());
 
         // act + assert
         mockMvc.perform(get("/api/v1/today"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.tasks[0].speciesId").isEmpty())
                 .andExpect(jsonPath("$.tasks[0].speciesName").isEmpty());
+    }
+
+    @Test
+    void should_compute_summary_with_done_and_overdue() throws Exception {
+        // arrange — одна просроченная pending + одна выполненная сегодня (mobile gap G11)
+        User user = mockUserWithTimezone(6L, 6L, "UTC");
+        when(currentUserProvider.currentUser()).thenReturn(user);
+
+        LocalDateTime now = LocalDateTime.of(2026, 5, 25, 12, 0);
+        CareSchedule overdue = mockSchedule(15L, 105L, "Фикус", TaskType.WATERING, now.minusHours(2));
+        CareSchedule doneSched = mockSchedule(16L, 106L, "Монстера", TaskType.MISTING, now.plusDays(3));
+        LocalDateTime doneAt = LocalDateTime.of(2026, 5, 25, 7, 42);
+        when(todayApiService.getTodayTasks(anyLong(), anyString()))
+                .thenReturn(List.of(
+                        new TodayApiService.TodayTask(overdue, null),
+                        new TodayApiService.TodayTask(doneSched, doneAt)));
+        when(todayApiService.nowUtc()).thenReturn(now);
+
+        // act + assert — overdue pending (doneAt null) + done; summary считается контроллером
+        mockMvc.perform(get("/api/v1/today"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.count").value(2))
+                .andExpect(jsonPath("$.summary.total").value(2))
+                .andExpect(jsonPath("$.summary.done").value(1))
+                .andExpect(jsonPath("$.summary.remaining").value(1))
+                .andExpect(jsonPath("$.summary.overdue").value(1))
+                .andExpect(jsonPath("$.tasks[0].doneAt").isEmpty())
+                .andExpect(jsonPath("$.tasks[1].doneAt").value("2026-05-25T07:42:00Z"));
     }
 
     // ===================== helpers =====================

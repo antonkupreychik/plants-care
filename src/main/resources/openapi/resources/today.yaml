@@ -26,7 +26,7 @@ schemas:
   TodayResponse:
     type: object
     description: Ответ `GET /api/v1/today`.
-    required: [tasks, count]
+    required: [tasks, count, summary]
     properties:
       tasks:
         type: array
@@ -36,3 +36,29 @@ schemas:
         type: integer
         format: int32
         description: Длина `tasks` (дублируется для удобства клиента).
+      summary:
+        $ref: '#/schemas/TodaySummary'
+
+  TodaySummary:
+    type: object
+    description: |
+      Сводка по сегодняшним задачам (mobile gap G11, ADR-014).
+      `total == count ==` длине `tasks`. `done + remaining == total`.
+    required: [total, done, remaining, overdue]
+    properties:
+      total:
+        type: integer
+        format: int32
+        description: Всего задач в выдаче (= `count`).
+      done:
+        type: integer
+        format: int32
+        description: Задачи, отмеченные сегодня (`doneAt != null`).
+      remaining:
+        type: integer
+        format: int32
+        description: Невыполненные задачи (`total - done`).
+      overdue:
+        type: integer
+        format: int32
+        description: Невыполненные задачи, дедлайн которых уже прошёл (`nextDueAt < now`).

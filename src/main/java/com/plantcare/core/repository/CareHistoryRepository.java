@@ -209,6 +209,36 @@ public interface CareHistoryRepository extends JpaRepository<CareHistory, Long> 
             Limit limit
     );
 
+    // ===== Done-фид для /today (issue #184, ADR-014) =====
+
+    /**
+     * Ключи задач, отмеченных «сделано» за окно сегодняшнего дня (issue #184).
+     * Возвращает по одной строке на пару (plantId, taskType) с максимальным
+     * {@code doneAt} в окне — берётся самый поздний момент отметки.
+     *
+     * <p>Только активные (не-cancelled) записи неархивных растений юзера.
+     * Границы окна {@code [from; to]} — UTC LocalDateTime, передаёт сервис
+     * (начало/конец локального дня в TZ юзера, сконвертированные в UTC).
+     */
+    @Query("SELECT h.plant.id AS plantId, h.taskType AS taskType, MAX(h.doneAt) AS doneAt " +
+            "FROM CareHistory h " +
+            "WHERE h.plant.user.id = :userId AND h.cancelledBy IS NULL " +
+            "AND h.plant.archivedAt IS NULL " +
+            "AND h.doneAt >= :from AND h.doneAt <= :to " +
+            "GROUP BY h.plant.id, h.taskType")
+    List<DoneTaskKey> findDoneTaskKeysInRange(
+            @Param("userId") Long userId,
+            @Param("from") LocalDateTime from,
+            @Param("to") LocalDateTime to
+    );
+
+    /** Проекция «(plant, taskType) → момент отметки» для done-фида /today (issue #184). */
+    interface DoneTaskKey {
+        Long getPlantId();
+        TaskType getTaskType();
+        LocalDateTime getDoneAt();
+    }
+
     /** Проекция «тип ухода → количество» для разбивки месячного отчёта (issue #137). */
     interface TaskTypeCount {
         TaskType getTaskType();

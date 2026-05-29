@@ -81,6 +81,14 @@ schemas:
         type: string
         format: date-time
         description: Ближайший дедлайн (UTC).
+      doneAt:
+        type: string
+        format: date-time
+        nullable: true
+        description: |
+          Момент отметки «сделано» (UTC), если задача выполнена сегодня
+          (mobile gap G11, ADR-014). `null` — задача ещё не выполнена (pending).
+          В выдаче `/calendar` всегда `null`.
 
   CalendarResponse:
     type: object

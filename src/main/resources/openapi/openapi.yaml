@@ -224,6 +224,8 @@ components:
 
     TodayResponse:
       $ref: './resources/today.yaml#/schemas/TodayResponse'
+    TodaySummary:
+      $ref: './resources/today.yaml#/schemas/TodaySummary'
 
     StreakResponse:
       $ref: './resources/stats.yaml#/schemas/StreakResponse'
