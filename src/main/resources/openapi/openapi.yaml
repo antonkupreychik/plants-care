@@ -172,6 +172,9 @@ paths:
   /api/v1/notifications/{id}/read:
     $ref: './resources/notifications.yaml#/paths/Item'
 
+  /api/v1/me:
+    $ref: './resources/me.yaml#/paths/Me'
+
 components:
   securitySchemes:
     bearerAuth:
