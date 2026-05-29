@@ -126,6 +126,17 @@ echo 'testcontainers.reuse.enable=true' >> ~/.testcontainers.properties
 | `PUT` | `/api/v1/locations/{id}` | Обновить имя и/или emoji |
 | `DELETE` | `/api/v1/locations/{id}` | Удалить локацию. Если в ней есть растения, обязателен параметр `targetLocationId` — растения переносятся в указанную локацию перед удалением |
 
+### Shopping (issue #196)
+
+Персональный список покупок пользователя. Все эндпоинты user-scoped.
+
+| Метод | Путь | Статус ответа | Описание |
+|---|---|---|---|
+| `GET` | `/api/v1/shopping` | 200 | Список позиций: `{ "items": [{ "id", "title", "checked", "createdAt" }] }` |
+| `POST` | `/api/v1/shopping` | 201 | Добавить позицию. Тело: `{ "title" }` |
+| `PATCH` | `/api/v1/shopping/{id}` | 200 | Частичное обновление: передаются только изменяемые поля (`checked`, `title`) |
+| `DELETE` | `/api/v1/shopping/{id}` | 204 | Удалить позицию |
+
 ### Формат ошибок
 
 Все ошибки `/api/**` возвращаются в едином формате:

@@ -140,6 +140,34 @@ Content-Type: application/json
 DELETE {{baseUrl}}/api/v1/care-events/1
 Authorization: Bearer {{token}}
 
+### --- Shopping (список покупок) ---
+
+### Список позиций
+GET {{baseUrl}}/api/v1/shopping
+Authorization: Bearer {{token}}
+
+### Добавить позицию
+POST {{baseUrl}}/api/v1/shopping
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "title": "удобрение для монстеры"
+}
+
+### Обновить позицию (частично: checked и/или title)
+PATCH {{baseUrl}}/api/v1/shopping/1
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "checked": true
+}
+
+### Удалить позицию
+DELETE {{baseUrl}}/api/v1/shopping/1
+Authorization: Bearer {{token}}
+
 ### --- Справочники (публично) ---
 
 ### Поиск/список видов

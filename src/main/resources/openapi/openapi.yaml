@@ -82,6 +82,8 @@ tags:
     description: Публичный справочник видов растений. Без авторизации.
   - name: Care Types
     description: Публичный справочник типов ухода (полив, опрыскивание, и т.п.). Без авторизации.
+  - name: Shopping
+    description: Персональный список покупок пользователя — расходники для ухода за растениями.
 
 paths:
   /api/v1/auth/apple:
@@ -136,6 +138,11 @@ paths:
 
   /api/v1/care-types:
     $ref: './resources/care-types.yaml#/paths/Collection'
+
+  /api/v1/shopping:
+    $ref: './resources/shopping.yaml#/paths/Collection'
+  /api/v1/shopping/{id}:
+    $ref: './resources/shopping.yaml#/paths/Item'
 
 components:
   securitySchemes:
@@ -239,6 +246,15 @@ components:
 
     CareTypeDto:
       $ref: './resources/care-types.yaml#/schemas/CareTypeDto'
+
+    ShoppingItemDto:
+      $ref: './resources/shopping.yaml#/schemas/ShoppingItemDto'
+    ShoppingListResponse:
+      $ref: './resources/shopping.yaml#/schemas/ShoppingListResponse'
+    ShoppingItemCreateRequest:
+      $ref: './resources/shopping.yaml#/schemas/ShoppingItemCreateRequest'
+    ShoppingItemUpdateRequest:
+      $ref: './resources/shopping.yaml#/schemas/ShoppingItemUpdateRequest'
 
     ApiErrorResponse:
       $ref: './_common/errors.yaml#/schemas/ApiErrorResponse'
