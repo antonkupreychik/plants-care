@@ -57,6 +57,10 @@ Authorization: Bearer {{token}}
 GET {{baseUrl}}/api/v1/stats/streak?plantId=1
 Authorization: Bearer {{token}}
 
+### Месячный отчёт по уходу (month обязателен, формат YYYY-MM)
+GET {{baseUrl}}/api/v1/reports/monthly?month=2026-05
+Authorization: Bearer {{token}}
+
 ### --- Plants ---
 
 ### Список растений

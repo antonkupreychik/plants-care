@@ -78,6 +78,8 @@ tags:
     description: Задачи ухода, дедлайн которых до конца сегодняшнего дня в таймзоне пользователя.
   - name: Stats
     description: Статистика по уходу. Сейчас доступен только стрик растения.
+  - name: Reports
+    description: Сводные отчёты по уходу. Месячный отчёт для мобильного экрана (gap G23).
   - name: Species
     description: Публичный справочник видов растений. Без авторизации.
   - name: Care Types
@@ -128,6 +130,9 @@ paths:
 
   /api/v1/stats/streak:
     $ref: './resources/stats.yaml#/paths/Streak'
+
+  /api/v1/reports/monthly:
+    $ref: './resources/reports.yaml#/paths/Monthly'
 
   /api/v1/species:
     $ref: './resources/species.yaml#/paths/Collection'
@@ -229,6 +234,11 @@ components:
 
     StreakResponse:
       $ref: './resources/stats.yaml#/schemas/StreakResponse'
+
+    MonthlyReportResponse:
+      $ref: './resources/reports.yaml#/schemas/MonthlyReportResponse'
+    WeeklyHealthBucket:
+      $ref: './resources/reports.yaml#/schemas/WeeklyHealthBucket'
 
     SpeciesSummaryDto:
       $ref: './resources/species.yaml#/schemas/SpeciesSummaryDto'
