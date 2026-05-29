@@ -174,7 +174,10 @@ echo 'testcontainers.reuse.enable=true' >> ~/.testcontainers.properties
       "fertilizingDays": 14,
       "soilCheckDays": null,
       "careDifficulty": "EASY",
-      "lightPreference": "INDIRECT"
+      "lightPreference": "INDIRECT",
+      "toxicToCats": true,
+      "toxicToDogs": true,
+      "toxicToHumans": null
     }
   ],
   "page": 0,
@@ -183,6 +186,8 @@ echo 'testcontainers.reuse.enable=true' >> ~/.testcontainers.properties
   "totalPages": 2
 }
 ```
+
+Флаги `toxicToCats` / `toxicToDogs` / `toxicToHumans` — тройное состояние: `true` токсично, `false` безопасно, `null` данных нет.
 
 Ответ `GET /api/v1/species/{id}` — те же поля плюс `description` и `facts[]` — энциклопедические факты вида (ADR-011), отсортированные по категории, затем по `display_order`; пустой массив, если фактов нет. Каждый факт: `category` (`ORIGIN`/`CARE`/`TOXICITY`/`CURIOSITY`), `body`, опциональные `title` и `source`. При отсутствии записи — `404`.
 

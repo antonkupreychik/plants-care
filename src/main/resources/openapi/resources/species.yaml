@@ -125,6 +125,18 @@ schemas:
         nullable: true
         description: Имя enum'а `LightPreference.name()`.
         example: BRIGHT_INDIRECT
+      toxicToCats:
+        type: boolean
+        nullable: true
+        description: Токсично для кошек. null — данных нет.
+      toxicToDogs:
+        type: boolean
+        nullable: true
+        description: Токсично для собак. null — данных нет.
+      toxicToHumans:
+        type: boolean
+        nullable: true
+        description: Токсично для человека. null — данных нет.
 
   SpeciesDetailDto:
     type: object
@@ -162,6 +174,18 @@ schemas:
       lightPreference:
         type: string
         nullable: true
+      toxicToCats:
+        type: boolean
+        nullable: true
+        description: Токсично для кошек. null — данных нет.
+      toxicToDogs:
+        type: boolean
+        nullable: true
+        description: Токсично для собак. null — данных нет.
+      toxicToHumans:
+        type: boolean
+        nullable: true
+        description: Токсично для человека. null — данных нет.
       description:
         type: string
         nullable: true

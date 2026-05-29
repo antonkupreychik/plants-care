@@ -134,6 +134,58 @@ class SpeciesControllerTest {
     }
 
     @Test
+    void should_return_toxicity_flags_in_detail_when_species_has_values() throws Exception {
+        // arrange — issue #186: токсичность отдаётся на GET /species/{id}
+        var species = buildSpecies(1L, "Монстера", "Monstera deliciosa");
+        species.setToxicToCats(true);
+        species.setToxicToDogs(true);
+        species.setToxicToHumans(false);
+        when(speciesService.getById(1L)).thenReturn(species);
+        when(speciesFactService.getFactsBySpecies(eq(1L), any())).thenReturn(Map.of());
+
+        // act + assert
+        mockMvc.perform(get("/api/v1/species/1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.toxicToCats").value(true))
+                .andExpect(jsonPath("$.toxicToDogs").value(true))
+                .andExpect(jsonPath("$.toxicToHumans").value(false));
+    }
+
+    @Test
+    void should_return_toxicity_flags_in_list_item_when_species_has_values() throws Exception {
+        // arrange — issue #186: токсичность отдаётся и в элементах списка GET /species
+        var species = buildSpecies(7L, "Орхидея фаленопсис", "Phalaenopsis");
+        species.setToxicToCats(false);
+        species.setToxicToDogs(false);
+        species.setToxicToHumans(false);
+        Page<Species> page = new PageImpl<>(List.of(species));
+        when(speciesService.findPage(any(), any(Pageable.class))).thenReturn(page);
+
+        // act + assert
+        mockMvc.perform(get("/api/v1/species"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items[0].toxicToCats").value(false))
+                .andExpect(jsonPath("$.items[0].toxicToDogs").value(false))
+                .andExpect(jsonPath("$.items[0].toxicToHumans").value(false));
+    }
+
+    @Test
+    void should_serialize_toxicity_as_null_in_detail_when_no_data() throws Exception {
+        // arrange — поля nullable: NULL означает «данных о токсичности нет»
+        var species = buildSpecies(1L, "Монстера", "Monstera deliciosa");
+        // toxic* остаются null (билдер их не выставляет)
+        when(speciesService.getById(1L)).thenReturn(species);
+        when(speciesFactService.getFactsBySpecies(eq(1L), any())).thenReturn(Map.of());
+
+        // act + assert — сериализация не падает, значения присутствуют как null
+        mockMvc.perform(get("/api/v1/species/1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.toxicToCats").value(org.hamcrest.Matchers.nullValue()))
+                .andExpect(jsonPath("$.toxicToDogs").value(org.hamcrest.Matchers.nullValue()))
+                .andExpect(jsonPath("$.toxicToHumans").value(org.hamcrest.Matchers.nullValue()));
+    }
+
+    @Test
     void should_return_404_when_species_not_found() throws Exception {
         // arrange
         when(speciesService.getById(999L))
