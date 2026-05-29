@@ -5,6 +5,7 @@ import com.plantcare.api.auth.exception.RateLimitExceededException;
 import com.plantcare.api.dto.ApiErrorResponse;
 import com.plantcare.api.dto.FieldError;
 import jakarta.persistence.EntityNotFoundException;
+import jakarta.validation.ConstraintViolationException;
 import java.util.List;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -13,6 +14,7 @@ import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.HandlerMethodValidationException;
 
 /**
  * Глобальный обработчик ошибок REST API ({@code /api/**}).
@@ -29,6 +31,12 @@ public class ApiExceptionHandler {
                 .toList();
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                 .body(ApiErrorResponse.of("VALIDATION_ERROR", "Validation failed", details));
+    }
+
+    @ExceptionHandler({HandlerMethodValidationException.class, ConstraintViolationException.class})
+    public ResponseEntity<ApiErrorResponse> handleMethodValidation(Exception e) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(ApiErrorResponse.of("VALIDATION_ERROR", "Validation failed"));
     }
 
     @ExceptionHandler(EntityNotFoundException.class)

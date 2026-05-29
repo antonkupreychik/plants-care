@@ -209,6 +209,45 @@ public interface CareHistoryRepository extends JpaRepository<CareHistory, Long> 
             Limit limit
     );
 
+    // ===== Месячный отчёт REST API (issue #192, gap G23) =====
+
+    /**
+     * Кол-во активных (не-cancelled) действий ухода юзера за период
+     * {@code [from; toExclusive)}, выполненных с опозданием ({@code was_on_time = false}).
+     * Числитель «overdue» месячного отчёта. Границы — UTC LocalDateTime
+     * (начало/конец месяца в TZ юзера, сконвертированные в UTC).
+     */
+    @Query("SELECT COUNT(h) FROM CareHistory h " +
+            "WHERE h.plant.user.id = :userId AND h.cancelledBy IS NULL " +
+            "AND h.onTime = false " +
+            "AND h.doneAt >= :from AND h.doneAt < :toExclusive")
+    long countLateActiveByUserIdInRange(
+            @Param("userId") Long userId,
+            @Param("from") LocalDateTime from,
+            @Param("toExclusive") LocalDateTime toExclusive
+    );
+
+    /**
+     * Пары {@code (done_at, was_on_time)} всех активных (не-cancelled) действий
+     * юзера за период {@code [from; toExclusive)} — для понедельного тренда
+     * качества месячного отчёта (issue #192). Бакетинг по ISO-неделе и в TZ
+     * юзера выполняется в Java, поэтому из БД тянем сырые точки одним запросом.
+     */
+    @Query("SELECT h.doneAt AS doneAt, h.onTime AS onTime FROM CareHistory h " +
+            "WHERE h.plant.user.id = :userId AND h.cancelledBy IS NULL " +
+            "AND h.doneAt >= :from AND h.doneAt < :toExclusive")
+    List<DoneAtOnTime> findActiveDoneAtOnTimeByUserIdInRange(
+            @Param("userId") Long userId,
+            @Param("from") LocalDateTime from,
+            @Param("toExclusive") LocalDateTime toExclusive
+    );
+
+    /** Проекция «момент выполнения → on-time» для понедельного тренда (issue #192). */
+    interface DoneAtOnTime {
+        LocalDateTime getDoneAt();
+        boolean getOnTime();
+    }
+
     // ===== Done-фид для /today (issue #184, ADR-014) =====
 
     /**

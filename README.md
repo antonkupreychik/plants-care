@@ -103,6 +103,7 @@ echo 'testcontainers.reuse.enable=true' >> ~/.testcontainers.properties
 | `/api/v1/today` | `GET` | 200 | Задачи ухода на сегодня в таймзоне пользователя |
 | `/api/v1/calendar` | `GET` | 200 | Расписание за произвольный период. Query params: `from`, `to` (ISO date). Диапазон не более 60 дней. Дни без задач в ответ не включаются |
 | `/api/v1/stats/streak` | `GET` | 200 | Текущий стрик растения (последовательные выполнения без пропусков). Query param: `plantId` |
+| `/api/v1/reports/monthly` | `GET` | 200 | Сводный отчёт по уходу за месяц текущего пользователя: `done`, `overdue` (выполнено с опозданием), `byType` (по всем типам ухода), `streak`, `healthTrend` (понедельные ISO-бакеты качества). Query param `month` обязателен, формат `YYYY-MM`. Границы месяца считаются в таймзоне пользователя. Невалидный `month` → 400 |
 
 ### Формат ошибок
 
