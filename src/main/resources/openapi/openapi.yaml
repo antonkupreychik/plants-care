@@ -86,6 +86,8 @@ tags:
     description: Публичный справочник типов ухода (полив, опрыскивание, и т.п.). Без авторизации.
   - name: Shopping
     description: Персональный список покупок пользователя — расходники для ухода за растениями.
+  - name: Me
+    description: Профиль и настройки текущего пользователя — имя, счётчики, тихие часы, таймзона, язык (mobile G5 + G16).
 
 paths:
   /api/v1/auth/apple:
@@ -150,6 +152,9 @@ paths:
     $ref: './resources/shopping.yaml#/paths/Collection'
   /api/v1/shopping/{id}:
     $ref: './resources/shopping.yaml#/paths/Item'
+
+  /api/v1/me:
+    $ref: './resources/me.yaml#/paths/Me'
 
 components:
   securitySchemes:
@@ -271,6 +276,11 @@ components:
       $ref: './resources/shopping.yaml#/schemas/ShoppingItemCreateRequest'
     ShoppingItemUpdateRequest:
       $ref: './resources/shopping.yaml#/schemas/ShoppingItemUpdateRequest'
+
+    MeResponse:
+      $ref: './resources/me.yaml#/schemas/MeResponse'
+    MeUpdateRequest:
+      $ref: './resources/me.yaml#/schemas/MeUpdateRequest'
 
     ApiErrorResponse:
       $ref: './_common/errors.yaml#/schemas/ApiErrorResponse'

@@ -138,6 +138,15 @@ echo 'testcontainers.reuse.enable=true' >> ~/.testcontainers.properties
 | `PATCH` | `/api/v1/shopping/{id}` | 200 | Частичное обновление: передаются только изменяемые поля (`checked`, `title`) |
 | `DELETE` | `/api/v1/shopping/{id}` | 204 | Удалить позицию |
 
+### Me (issue #182)
+
+Профиль и настройки текущего пользователя. Скоуп — аутентифицированный пользователь.
+
+| Метод | Путь | Статус ответа | Описание |
+|---|---|---|---|
+| `GET` | `/api/v1/me` | 200 | Профиль: имя, аватар, счётчики для хедера (`plantsTotal`, `tasksToday`, `notificationsUnread`) и настройки (`quietHoursStart`, `quietHoursEnd`, `timezone`, `locale`). `tasksToday` — число невыполненных задач на сегодня в таймзоне пользователя. `avatar` — плейсхолдер (всегда `null`, колонки в схеме нет); `notificationsUnread` — плейсхолдер (всегда `0` до фида уведомлений, issue #183) |
+| `PATCH` | `/api/v1/me` | 200 | Частичное обновление настроек (`quietHoursStart`, `quietHoursEnd`, `timezone`, `locale`): меняются только переданные поля. Смена `timezone` пересчитывает активные расписания с сохранением локального времени дня. Невалидный IANA-`timezone` → 400 |
+
 ### Формат ошибок
 
 Все ошибки `/api/**` возвращаются в едином формате:
