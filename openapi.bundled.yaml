@@ -1,0 +1,2762 @@
+openapi: 3.0.3
+info:
+  title: Plants Care API
+  description: |
+    Публичный REST API сервиса Plants Care — Telegram-бота для напоминаний об
+    уходе за домашними растениями.
+
+    ## Аутентификация
+
+    Пользовательские эндпоинты защищены JWT bearer-токеном (issue #88, ADR-011).
+    Клиент получает пару токенов через `/api/v1/auth/*` (Apple / Google / email
+    magic link), затем передаёт access-токен в заголовке
+    `Authorization: Bearer <token>`. Идентификатор пользователя (`users.id`)
+    берётся из claim `sub`.
+
+    Эндпоинты `/api/v1/auth/**` и публичные справочники (`/api/v1/species`,
+    `/api/v1/care-types`) аутентификацию не требуют.
+
+    ## Таймзоны и время
+
+    Все временные метки в ответах — UTC, формат `date-time` (ISO-8601).
+    Расписания и расчёт «сегодня» выполняются в таймзоне конкретного
+    пользователя (поле `users.timezone`), но в API наружу пробрасываются как UTC.
+
+    ## Ошибки
+
+    Все ошибки имеют единый формат — обёртку `{ "error": { code, message, details? } }`,
+    см. схему [`ApiErrorResponse`](#/components/schemas/ApiErrorResponse).
+  version: 0.1.0
+  contact:
+    name: Plants Care Bot
+    url: https://github.com/kupreichik/plants-care
+  license:
+    name: MIT
+servers:
+  - url: http://localhost:8080
+    description: Локальная разработка
+  - url: https://plants-care.up.railway.app
+    description: Production (Railway)
+tags:
+  - name: Auth
+    description: |
+      Мобильная аутентификация (issue #88): Sign in with Apple, Google,
+      email magic link и ротация токенов. Все эндпоинты публичны.
+  - name: Health
+    description: Liveness probe — простой пинг для оркестратора (Railway, Docker), не проверяет состояние БД и внешних API.
+  - name: Plants
+    description: |
+      CRUD растений, принадлежащих авторизованному пользователю. Удаление —
+      soft-delete (флаг `archivedAt`), физически записи в БД остаются.
+  - name: Plant History
+    description: История событий ухода для конкретного растения с пагинацией.
+  - name: Locations
+    description: |
+      Локации (комнаты/места) пользователя, в которых стоят растения. Каждый
+      пользователь имеет «дефолтную» локацию, создаваемую автоматически.
+  - name: Care Events
+    description: |
+      Регистрация выполнения ухода (полив, опрыскивание, удобрение) и его отмена.
+      Поддерживается идемпотентность по `clientId`.
+  - name: Calendar
+    description: |
+      Календарь будущих задач ухода для пользователя. Проекция активных
+      расписаний на диапазон дат (до 60 дней) в таймзоне пользователя.
+  - name: Today
+    description: Задачи ухода, дедлайн которых до конца сегодняшнего дня в таймзоне пользователя.
+  - name: Stats
+    description: Статистика по уходу. Сейчас доступен только стрик растения.
+  - name: Reports
+    description: Сводные отчёты по уходу. Месячный отчёт для мобильного экрана (gap G23).
+  - name: Species
+    description: Публичный справочник видов растений. Без авторизации.
+  - name: Care Types
+    description: Публичный справочник типов ухода (полив, опрыскивание, и т.п.). Без авторизации.
+  - name: Schedules
+    description: |
+      Расписания ухода конкретного растения (полив, опрыскивание, удобрение,
+      проверка почвы). Чтение всех четырёх и редактирование одного по типу.
+  - name: Shopping
+    description: Персональный список покупок пользователя — расходники для ухода за растениями.
+  - name: Me
+    description: Профиль и настройки текущего пользователя — имя, счётчики, тихие часы, таймзона, язык (mobile G5 + G16).
+  - name: Notifications
+    description: |
+      Персистентный inbox уведомлений пользователя для мобильного приложения
+      (gap G17): лента со счётчиком непрочитанных и идемпотентная отметка прочтения.
+paths:
+  /api/v1/auth/apple:
+    post:
+      tags:
+        - Auth
+      operationId: authApple
+      summary: Вход через Sign in with Apple
+      description: |
+        Принимает `identityToken` (JWT, выданный Apple). Сервер верифицирует
+        его подпись по Apple JWKS, проверяет `iss`/`aud`/`exp`, извлекает
+        стабильный `sub` (apple_subject) и email. Линковка с существующим
+        пользователем — по email; если пользователя нет — создаётся новый.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AppleAuthRequest'
+      responses:
+        '200':
+          description: Пара токенов выдана.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenPairResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/v1/auth/google:
+    post:
+      tags:
+        - Auth
+      operationId: authGoogle
+      summary: Вход через Google
+      description: |
+        Принимает Google `idToken`. Сервер верифицирует подпись по Google JWKS,
+        проверяет `iss`/`aud`/`exp` и требует `email_verified = true`. Линковка
+        по email.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GoogleAuthRequest'
+      responses:
+        '200':
+          description: Пара токенов выдана.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenPairResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/v1/auth/email/request:
+    post:
+      tags:
+        - Auth
+      operationId: requestMagicLink
+      summary: Запросить magic link на email
+      description: |
+        Отправляет на указанный email одноразовую ссылку для входа. Ради защиты
+        от перебора (enumeration) эндпоинт **всегда** отвечает `202`, независимо
+        от того, существует ли пользователь. Ограничен rate-limit'ом по IP и по
+        email.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmailRequest'
+      responses:
+        '202':
+          description: Запрос принят. Если email валиден, письмо будет отправлено.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /api/v1/auth/email/verify:
+    post:
+      tags:
+        - Auth
+      operationId: verifyMagicLink
+      summary: Обменять magic-link токен на пару токенов
+      description: |
+        Принимает opaque-токен из письма. Токен одноразовый: после успешного
+        обмена помечается использованным и повторно не принимается. Линковка по
+        email, при необходимости создаётся новый пользователь.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MagicLinkVerifyRequest'
+      responses:
+        '200':
+          description: Пара токенов выдана.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenPairResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/v1/auth/refresh:
+    post:
+      tags:
+        - Auth
+      operationId: refreshTokens
+      summary: Ротация пары токенов по refresh-токену
+      description: |
+        Принимает refresh-токен, проверяет подпись/срок/тип и что его `jti` не
+        отозван. Старый refresh атомарно отзывается (защита от повторного
+        использования), выдаётся новая пара. Если токен уже отозван — `401`
+        с кодом `TOKEN_REVOKED`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshRequest'
+      responses:
+        '200':
+          description: Новая пара токенов выдана.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenPairResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/v1/health:
+    get:
+      tags:
+        - Health
+      operationId: getHealth
+      summary: Liveness probe
+      description: |
+        Возвращает фиксированный `{"status":"UP"}` без обращения к БД или
+        внешним сервисам. Подходит как `livenessProbe` в Kubernetes/Railway.
+
+        Не требует никаких заголовков и аутентификации.
+      responses:
+        '200':
+          description: Сервис жив.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+              example:
+                status: UP
+  /api/v1/plants:
+    get:
+      tags:
+        - Plants
+      operationId: listPlants
+      summary: Список растений пользователя
+      description: |
+        Возвращает страницу растений, принадлежащих текущему пользователю
+        (`sub` из bearer-токена). Архивированные (soft-deleted) растения в
+        выдачу не попадают.
+
+        Можно фильтровать по локации параметром `locationId`. Пагинация —
+        классическая `offset/limit`.
+
+        Параметры приводятся к безопасным границам:
+        * `limit` обрезается до диапазона **[1, 100]** (всё, что больше 100,
+          становится 100; всё, что меньше 1 — становится 1);
+        * `offset` ниже нуля становится 0.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: locationId
+          in: query
+          required: false
+          description: Идентификатор локации. Если задан, возвращаются только растения из неё.
+          schema:
+            type: integer
+            format: int64
+            example: 2
+        - name: offset
+          in: query
+          required: false
+          description: Сдвиг от начала выборки. Значения < 0 трактуются как 0.
+          schema:
+            type: integer
+            format: int32
+            default: 0
+            minimum: 0
+            example: 0
+        - name: limit
+          in: query
+          required: false
+          description: Размер страницы. Обрезается до [1, 100] на сервере.
+          schema:
+            type: integer
+            format: int32
+            default: 20
+            minimum: 1
+            maximum: 100
+            example: 20
+      responses:
+        '200':
+          description: Страница растений.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PageResponsePlantDto'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+    post:
+      tags:
+        - Plants
+      operationId: createPlant
+      summary: Создать растение
+      description: |
+        Создаёт растение от имени текущего пользователя (`sub` из
+        bearer-токена). Если `locationId` не указан, растение попадает в
+        дефолтную локацию пользователя. Если `parentPlantId` указан, растение
+        создаётся как отводок/потомок материнского растения.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlantCreateRequest'
+            example:
+              name: Monstera
+              notes: Стоит у окна, любит свет
+              locationId: 2
+              speciesId: 5
+              parentPlantId: 10
+      responses:
+        '201':
+          description: Растение создано.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlantDto'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+  /api/v1/plants/{id}:
+    get:
+      tags:
+        - Plants
+      operationId: getPlant
+      summary: Получить растение по ID
+      description: |
+        Возвращает растение, если оно принадлежит текущему пользователю
+        (`sub` из bearer-токена) и не архивировано. Чужие или несуществующие
+        растения отдаются как 404, чужие активные — как 403 (когда сервис уже
+        знает, что запись есть, но принадлежит другому пользователю).
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PlantIdPath'
+      responses:
+        '200':
+          description: Растение найдено.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlantDto'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      tags:
+        - Plants
+      operationId: updatePlant
+      summary: Обновить растение (PATCH-семантика)
+      description: |
+        Несмотря на HTTP-метод `PUT`, апдейт реализован по принципу PATCH:
+        обновляются **только присутствующие в теле** поля. Передача `null`
+        в поле трактуется как «не менять».
+
+        Пример: чтобы переместить растение в другую локацию, достаточно
+        отправить `{ "locationId": 5 }`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PlantIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlantUpdateRequest'
+            example:
+              name: Monstera deliciosa
+              notes: Поливать раз в неделю
+      responses:
+        '200':
+          description: Растение обновлено.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlantDto'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags:
+        - Plants
+      operationId: deletePlant
+      summary: Архивировать растение (soft-delete)
+      description: |
+        Помечает растение как удалённое (`archived_at = now()` в UTC). Запись
+        в БД остаётся, но перестаёт появляться во всех `/api/v1/plants/*`
+        выборках. Восстановления через API в этой версии нет.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PlantIdPath'
+      responses:
+        '204':
+          description: Растение архивировано. Тело ответа отсутствует.
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/plants/{id}/history:
+    get:
+      tags:
+        - Plant History
+      operationId: getPlantHistory
+      summary: История событий ухода за растением
+      description: |
+        Возвращает страницу истории ухода за растением, принадлежащим
+        текущему пользователю (`sub` из bearer-токена).
+
+        В выдачу попадают только активные (не отменённые) записи всех типов
+        ухода **кроме `SOIL_CHECK`** — это служебный тип, который наружу не
+        выставляется.
+
+        Пагинация — `limit/offset`. `limit` строго в диапазоне [1, 100]
+        (значения вне диапазона отдаются как 400). `offset` < 0 нормализуется
+        в 0.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PlantIdPath'
+        - name: limit
+          in: query
+          required: false
+          description: Размер страницы. Допустимые значения — [1, 100].
+          schema:
+            type: integer
+            format: int32
+            default: 20
+            minimum: 1
+            maximum: 100
+        - name: offset
+          in: query
+          required: false
+          description: Сдвиг от начала истории. Значения < 0 нормализуются в 0.
+          schema:
+            type: integer
+            format: int32
+            default: 0
+            minimum: 0
+      responses:
+        '200':
+          description: Страница истории.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlantHistoryResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/plants/{id}/health:
+    get:
+      tags:
+        - Plants
+      operationId: getPlantHealth
+      summary: Health-score растения
+      description: |
+        Возвращает числовой балл здоровья растения 0–100 и цветовую зону
+        (mobile gap G1, issue #138). Балл считается поверх истории ухода за
+        окно 30 дней в таймзоне пользователя плюс бонусы за фото/заметки.
+
+        Если активных записей ухода меньше порога (`< 3`), балл не
+        вычисляется: `insufficientData = true`, а `score`/`zone` приходят
+        `null` (клиент рисует кольцо нейтральным / «Пока мало данных»).
+
+        Доступ только к своему неархивированному растению (как `GET /plants/{id}`).
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PlantIdPath'
+      responses:
+        '200':
+          description: Health-score растения.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlantHealthDto'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/plants/{id}/family:
+    get:
+      tags:
+        - Plants
+      operationId: getPlantFamily
+      summary: Родословная растения
+      description: |
+        Возвращает материнское растение и прямых потомков/отводки
+        для текущего растения. Доступ только к растениям текущего пользователя.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PlantIdPath'
+      responses:
+        '200':
+          description: Родословная растения.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlantFamilyResponse'
+              example:
+                parent:
+                  id: 10
+                  name: Монстера мама
+                children:
+                  - id: 25
+                    name: Отводок 1
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/plants/{id}/diagnosis:
+    get:
+      tags:
+        - Plants
+      operationId: getPlantDiagnosis
+      summary: Пассивная диагностика растения
+      description: |
+        Возвращает список выявленных проблем (`issues`) и рекомендаций
+        (`recommendations`) для растения (mobile screen 15 «Диагноз»,
+        issue #193). Диагноз пассивный — выводится только из уже имеющихся
+        данных (просроченные расписания ухода, health-зона), без ИИ и без
+        интерактивного опросника. Новой схемы БД не требует.
+
+        Если активных записей ухода меньше порога (`< 3`), диагноз не
+        строится: `issues` пустой, в `recommendations` — единственная
+        подсказка продолжать отмечать уход.
+
+        У здорового растения (данных достаточно, нет просрочек, зона не `RED`)
+        и `issues`, и `recommendations` пустые.
+
+        Доступ только к своему неархивированному растению (как `GET /plants/{id}`).
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PlantIdPath'
+      responses:
+        '200':
+          description: Диагноз растения.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlantDiagnosisDto'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/plants/{id}/schedules:
+    get:
+      tags:
+        - Schedules
+      operationId: listPlantSchedules
+      summary: Расписания ухода растения
+      description: |
+        Возвращает все четыре расписания ухода растения (WATERING, MISTING,
+        FERTILIZING, SOIL_CHECK) в фиксированном порядке. Если расписание ещё
+        не настроено — отдаётся дефолтный интервал вида с `enabled=false`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PlantIdPath'
+      responses:
+        '200':
+          description: Список из четырёх расписаний ухода.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/CareScheduleDto'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/plants/{id}/schedules/{type}:
+    put:
+      tags:
+        - Schedules
+      operationId: updatePlantSchedule
+      summary: Изменить расписание ухода
+      description: |
+        Создаёт или обновляет расписание ухода заданного типа. Поле `amountMl`
+        осмысленно только для типа `WATERING`; для остальных типов игнорируется.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PlantIdPath'
+        - name: type
+          in: path
+          required: true
+          description: Тип задачи ухода.
+          schema:
+            type: string
+            enum:
+              - WATERING
+              - MISTING
+              - FERTILIZING
+              - SOIL_CHECK
+            example: WATERING
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CareScheduleUpdateRequest'
+            example:
+              every: 7
+              unit: DAY
+              amountMl: 250
+              enabled: true
+      responses:
+        '200':
+          description: Расписание сохранено.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CareScheduleDto'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/locations:
+    get:
+      tags:
+        - Locations
+      operationId: listLocations
+      summary: Список локаций пользователя
+      description: |
+        Возвращает все локации, принадлежащие текущему пользователю
+        (`sub` из bearer-токена). Без пагинации — у пользователя обычно
+        меньше десятка локаций.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Список локаций.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/LocationDto'
+    post:
+      tags:
+        - Locations
+      operationId: createLocation
+      summary: Создать локацию
+      description: |
+        Создаёт локацию от имени пользователя. Имя уникально в рамках
+        пользователя — при коллизии возвращается 400 с `code=BAD_REQUEST`.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LocationCreateRequest'
+            example:
+              name: Подоконник
+              emoji: 🪟
+      responses:
+        '201':
+          description: Локация создана.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LocationDto'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+  /api/v1/locations/{id}:
+    get:
+      tags:
+        - Locations
+      operationId: getLocation
+      summary: Получить локацию по ID
+      description: |
+        Возвращает локацию, если она принадлежит пользователю. Чужие или
+        несуществующие локации — 404 (различения не делаем, чтобы не
+        раскрывать существование чужих ID).
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/LocationIdPath'
+      responses:
+        '200':
+          description: Локация найдена.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LocationDto'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      tags:
+        - Locations
+      operationId: updateLocation
+      summary: Обновить локацию
+      description: PATCH-семантика — обновляются только переданные поля.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/LocationIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LocationUpdateRequest'
+      responses:
+        '200':
+          description: Локация обновлена.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LocationDto'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags:
+        - Locations
+      operationId: deleteLocation
+      summary: Удалить локацию
+      description: |
+        Удаляет локацию. Если в локации есть растения — обязательно передать
+        `targetLocationId`, чтобы переместить их в другую локацию того же
+        пользователя.
+
+        Если растений нет — `targetLocationId` игнорируется.
+
+        Особый код ошибки `LOCATION_NOT_EMPTY` возвращается, когда в локации
+        есть растения, а `targetLocationId` не задан.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/LocationIdPath'
+        - name: targetLocationId
+          in: query
+          required: false
+          description: Локация, куда переместить растения. Обязателен, если в удаляемой локации есть растения.
+          schema:
+            type: integer
+            format: int64
+            example: 2
+      responses:
+        '204':
+          description: Локация удалена.
+        '400':
+          description: |
+            Невалидный запрос или попытка удалить непустую локацию без
+            `targetLocationId`. В последнем случае `code=LOCATION_NOT_EMPTY`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiErrorResponse'
+              examples:
+                notEmpty:
+                  summary: Локация содержит растения
+                  value:
+                    error:
+                      code: LOCATION_NOT_EMPTY
+                      message: Provide targetLocationId to move plants
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/care-events:
+    post:
+      tags:
+        - Care Events
+      operationId: createCareEvent
+      summary: Зарегистрировать событие ухода
+      description: |
+        Записывает выполнение ухода (полив/опрыскивание/удобрение) для растения
+        пользователя. После записи пересчитывается ближайший дедлайн в
+        связанном расписании.
+
+        ## Идемпотентность
+
+        Если в теле передан `clientId`, и ранее уже была зарегистрирована
+        запись с таким `clientId` от того же пользователя/растения, возвращается
+        существующая запись без повторной вставки. Это позволяет мобильным
+        клиентам безопасно ретраить запрос при потере соединения.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCareEventRequest'
+            example:
+              plantId: 10
+              type: WATER
+              performedAt: '2026-05-22T10:00:00Z'
+              note: Полил из лейки, грунт был сухой
+              clientId: 9b1c4a36-3f6f-4a92-8b69-fb1d2cb1d2a1
+      responses:
+        '201':
+          description: Событие зарегистрировано (или возвращена существующая запись с тем же `clientId`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CareEventResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/care-events/{id}:
+    delete:
+      tags:
+        - Care Events
+      operationId: cancelCareEvent
+      summary: Отменить событие ухода (компенсация)
+      description: |
+        Запись физически не удаляется — создаётся компенсирующая запись и в
+        исходной проставляется FK `cancelled_by`. Это сохраняет полную историю
+        и позволяет восстанавливать состояние.
+
+        Повторная отмена уже отменённой записи возвращает 409.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Идентификатор записи `care_history`.
+          schema:
+            type: integer
+            format: int64
+            example: 5
+      responses:
+        '204':
+          description: Событие отменено.
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /api/v1/calendar:
+    get:
+      tags:
+        - Calendar
+      operationId: getCalendar
+      summary: Календарь задач ухода на диапазон дат
+      description: |
+        Возвращает проекцию активных расписаний пользователя на диапазон дат
+        `[from, to]` (включительно), сгруппированную по дате.
+
+        Дни без задач в ответе **не появляются**. Ключи объекта-результата —
+        строки-даты в формате `YYYY-MM-DD`, упорядоченные по возрастанию.
+
+        Максимальная длина диапазона — 60 дней; больше → 400.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: from
+          in: query
+          required: true
+          description: Начало диапазона (включительно).
+          schema:
+            type: string
+            format: date
+            example: '2026-05-24'
+        - name: to
+          in: query
+          required: true
+          description: Конец диапазона (включительно). Разница `to - from` ≤ 60 дней.
+          schema:
+            type: string
+            format: date
+            example: '2026-06-22'
+      responses:
+        '200':
+          description: Карта «дата → задачи».
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CalendarResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+  /api/v1/calendar/progress:
+    get:
+      tags:
+        - Calendar
+      operationId: getCalendarProgress
+      summary: Прогресс выполнения задач ухода по дням
+      description: |
+        Возвращает по каждому дню диапазона `[from, to]` (включительно) пару
+        чисел: сколько задач **запланировано** (проекция активных расписаний)
+        и сколько **выполнено** (`care_history` с `cancelled_by IS NULL`).
+
+        Оба числа считаются в **таймзоне пользователя** (`users.timezone`).
+        Дни без планов и без выполнений в ответе **не появляются**. Ключи —
+        строки-даты `YYYY-MM-DD`, упорядоченные по возрастанию.
+
+        Максимальная длина диапазона — 60 дней; больше → 400.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: from
+          in: query
+          required: true
+          description: Начало диапазона (включительно).
+          schema:
+            type: string
+            format: date
+            example: '2026-05-24'
+        - name: to
+          in: query
+          required: true
+          description: Конец диапазона (включительно). Разница `to - from` ≤ 60 дней.
+          schema:
+            type: string
+            format: date
+            example: '2026-06-22'
+      responses:
+        '200':
+          description: Карта «дата → прогресс».
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CalendarProgressResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+  /api/v1/today:
+    get:
+      tags:
+        - Today
+      operationId: getToday
+      summary: Задачи на сегодня
+      description: |
+        Возвращает задачи ухода, дедлайн которых наступает до конца
+        сегодняшнего дня в **таймзоне пользователя** (`users.timezone`).
+
+        Учитываются только активные расписания; завершённые или приостановленные
+        не попадают в выдачу.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Список задач на сегодня.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TodayResponse'
+  /api/v1/weather/snapshot:
+    get:
+      tags:
+        - Weather
+      operationId: getWeatherSnapshot
+      summary: Снепшот погоды (влажность) для пользователя
+      description: |
+        Возвращает текущую относительную влажность и рекомендацию по поливу
+        для **текущего пользователя** (координаты и флаг погоды берутся из
+        профиля).
+
+        Если погода у пользователя не настроена (выключена или нет координат)
+        либо внешний источник недоступен — отвечает `200` с
+        `available = false` и пустыми полями (клиент просто скрывает строку
+        погоды, это не ошибка).
+
+        Значение кешируется на стороне сервера (~60 мин), повторные запросы в
+        пределах окна не ходят во внешний API (`fromCache = true`).
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Снепшот погоды (или `available = false`, если недоступно).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WeatherSnapshotDto'
+  /api/v1/stats/streak:
+    get:
+      tags:
+        - Stats
+      operationId: getPlantStreak
+      summary: Текущий стрик растения
+      description: |
+        Возвращает текущий «стрик» растения — количество последовательных
+        выполнений ухода без пропусков (`on_time = true` подряд).
+
+        Проверяется владение растением: если растение принадлежит другому
+        пользователю или не существует — 404.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: plantId
+          in: query
+          required: true
+          description: Идентификатор растения, для которого считаем стрик.
+          schema:
+            type: integer
+            format: int64
+            example: 10
+      responses:
+        '200':
+          description: Стрик посчитан.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StreakResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/reports/monthly:
+    get:
+      tags:
+        - Reports
+      operationId: getMonthlyReport
+      summary: Месячный отчёт по уходу
+      description: |
+        Возвращает сводку по уходу за указанный месяц для текущего пользователя:
+        число выполненных действий, число просроченных (выполненных с опозданием),
+        разбивку по типам ухода, текущий стрик и понедельный тренд качества.
+
+        Месяц передаётся параметром `month` в формате `YYYY-MM`. Границы месяца
+        вычисляются в таймзоне пользователя (`users.timezone`).
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: month
+          in: query
+          required: true
+          description: Отчётный месяц в формате `YYYY-MM` (например, `2026-05`).
+          schema:
+            type: string
+            pattern: ^\d{4}-\d{2}$
+            example: 2026-05
+      responses:
+        '200':
+          description: Отчёт посчитан.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MonthlyReportResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+  /api/v1/species:
+    get:
+      tags:
+        - Species
+      operationId: listSpecies
+      summary: Поиск/список видов растений
+      description: |
+        Публичный справочник видов. Без авторизации. Кеширован на стороне
+        сервера (TTL 1 час) для популярных запросов.
+
+        Параметр `q` — необязательный поиск по подстроке имени/латинского имени.
+        Если пустой — возвращаются все виды постранично.
+
+        Пагинация в этой версии переведена с `page/size` на унифицированный
+        `offset/limit` (как в остальных списках API). Внутри сервиса
+        конвертируется в `PageRequest.of(offset/limit, limit)`, поэтому
+        `offset` должен быть кратен `limit` для предсказуемой страницы.
+
+        `limit` обрезается до 100.
+      parameters:
+        - name: q
+          in: query
+          required: false
+          description: Подстрока для поиска по имени или латинскому имени. Если пустая — без фильтра.
+          schema:
+            type: string
+            default: ''
+            example: монстера
+        - name: offset
+          in: query
+          required: false
+          description: Сдвиг от начала.
+          schema:
+            type: integer
+            format: int32
+            default: 0
+            minimum: 0
+        - name: limit
+          in: query
+          required: false
+          description: Размер страницы. Обрезается до 100.
+          schema:
+            type: integer
+            format: int32
+            default: 20
+            minimum: 1
+            maximum: 100
+      responses:
+        '200':
+          description: Страница видов.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PageResponseSpeciesSummaryDto'
+  /api/v1/species/{id}:
+    get:
+      tags:
+        - Species
+      operationId: getSpecies
+      summary: Детали вида растения
+      description: |
+        Полная карточка вида, включая `description`. Кешируется по `id`
+        (TTL 1 час).
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Идентификатор вида.
+          schema:
+            type: integer
+            format: int64
+            example: 5
+      responses:
+        '200':
+          description: Вид найден.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SpeciesDetailDto'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/care-types:
+    get:
+      tags:
+        - Care Types
+      operationId: listCareTypes
+      summary: Справочник типов ухода
+      description: |
+        Возвращает все типы ухода с локализованными русскими названиями.
+        Список фиксирован: `WATERING`, `MISTING`, `FERTILIZING`, `SOIL_CHECK`.
+
+        Аутентификация не требуется.
+      responses:
+        '200':
+          description: Список типов ухода.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/CareTypeDto'
+  /api/v1/shopping:
+    get:
+      tags:
+        - Shopping
+      operationId: listShoppingItems
+      summary: Список покупок пользователя
+      description: |
+        Возвращает все позиции списка покупок текущего пользователя
+        (`sub` из bearer-токена). Сначала ещё не купленные, затем купленные.
+        Без пагинации — список обычно короткий.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Список покупок.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShoppingListResponse'
+    post:
+      tags:
+        - Shopping
+      operationId: createShoppingItem
+      summary: Добавить позицию в список покупок
+      description: Создаёт позицию от имени пользователя. Пустой или слишком длинный текст — 400.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ShoppingItemCreateRequest'
+            example:
+              title: Грунт для суккулентов
+      responses:
+        '201':
+          description: Позиция создана.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShoppingItemDto'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+  /api/v1/shopping/{id}:
+    patch:
+      tags:
+        - Shopping
+      operationId: updateShoppingItem
+      summary: Обновить позицию списка покупок
+      description: PATCH-семантика — обновляются только переданные поля.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Идентификатор позиции.
+          schema:
+            type: integer
+            format: int64
+            example: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ShoppingItemUpdateRequest'
+      responses:
+        '200':
+          description: Позиция обновлена.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShoppingItemDto'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags:
+        - Shopping
+      operationId: deleteShoppingItem
+      summary: Удалить позицию списка покупок
+      description: Удаляет позицию, принадлежащую пользователю. Чужая или несуществующая — 404.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Идентификатор позиции.
+          schema:
+            type: integer
+            format: int64
+            example: 1
+      responses:
+        '204':
+          description: Позиция удалена.
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/notifications:
+    get:
+      tags:
+        - Notifications
+      operationId: listNotifications
+      summary: Лента уведомлений пользователя
+      description: |
+        Возвращает страницу уведомлений текущего пользователя (`sub` из
+        bearer-токена), новые сверху (по `createdAt` DESC), плюс счётчик
+        непрочитанных `unreadCount`.
+
+        `createdAt`/`readAt` — UTC (`date-time`); клиент группирует по дням в
+        таймзоне пользователя. Пагинация — `offset`/`limit`:
+        * `limit` — в диапазоне **[1, 100]**; значение вне диапазона → `400`;
+        * `offset` — **≥ 0**; отрицательное значение → `400`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: offset
+          in: query
+          required: false
+          description: Сдвиг от начала выборки (≥ 0). Отрицательное значение → 400.
+          schema:
+            type: integer
+            format: int32
+            default: 0
+            minimum: 0
+            example: 0
+        - name: limit
+          in: query
+          required: false
+          description: Размер страницы, [1, 100]. Значение вне диапазона → 400.
+          schema:
+            type: integer
+            format: int32
+            default: 20
+            minimum: 1
+            maximum: 100
+            example: 20
+      responses:
+        '200':
+          description: Лента уведомлений со счётчиком непрочитанных.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationsResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+  /api/v1/notifications/{id}/read:
+    post:
+      tags:
+        - Notifications
+      operationId: markNotificationRead
+      summary: Пометить уведомление прочитанным
+      description: |
+        Идемпотентно помечает уведомление прочитанным. Повторный вызов
+        безопасен (no-op, момент первого прочтения не перезаписывается).
+        Чужое или несуществующее уведомление — 404.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Идентификатор уведомления.
+          schema:
+            type: integer
+            format: int64
+            example: 101
+      responses:
+        '204':
+          description: Уведомление помечено прочитанным.
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/me:
+    get:
+      tags:
+        - Me
+      operationId: getMe
+      summary: Профиль и настройки пользователя
+      description: |
+        Возвращает профиль текущего пользователя: имя, аватар, счётчики для
+        хедера (растения, задачи на сегодня, непрочитанные уведомления) и
+        настройки (тихие часы, таймзона, язык).
+
+        `tasksToday` считается в **таймзоне пользователя** (`users.timezone`) —
+        число **невыполненных** (pending) задач ухода, дедлайн которых наступает
+        до конца сегодняшнего дня. Уже отмеченные сегодня задачи не учитываются.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Профиль пользователя.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeResponse'
+    patch:
+      tags:
+        - Me
+      operationId: updateMe
+      summary: Частичное обновление настроек пользователя
+      description: |
+        PATCH-семантика: обновляются только переданные поля, остальные остаются
+        без изменений. Имя и аватар через этот эндпоинт не меняются.
+
+        Смена `timezone` пересчитывает активные расписания так, чтобы локальное
+        время дня сохранилось (полить в 9:00 остаётся 9:00 в новой зоне).
+        Невалидный IANA-идентификатор → `400`.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MeUpdateRequest'
+            example:
+              quietHoursStart: '23:00'
+              quietHoursEnd: '07:30'
+              timezone: Europe/Belgrade
+              locale: en
+      responses:
+        '200':
+          description: Профиль обновлён.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Наш access-JWT, выданный `/api/v1/auth/*`. Передаётся в заголовке
+        `Authorization: Bearer <token>`. Идентификатор пользователя — в claim
+        `sub` (= `users.id`).
+  parameters:
+    PlantIdPath:
+      name: id
+      in: path
+      required: true
+      description: Идентификатор растения.
+      schema:
+        type: integer
+        format: int64
+        example: 1
+    LocationIdPath:
+      name: id
+      in: path
+      required: true
+      description: Идентификатор локации.
+      schema:
+        type: integer
+        format: int64
+        example: 1
+  responses:
+    BadRequest:
+      description: |
+        Невалидный запрос. Возвращается при провале Bean Validation
+        (`VALIDATION_ERROR` + `details` по полям) или при неприемлемых
+        параметрах (`BAD_REQUEST`).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiErrorResponse'
+          examples:
+            validation:
+              summary: Ошибка валидации поля
+              value:
+                error:
+                  code: VALIDATION_ERROR
+                  message: Validation failed
+                  details:
+                    - field: name
+                      message: must not be blank
+            badRequest:
+              summary: Невалидный аргумент
+              value:
+                error:
+                  code: BAD_REQUEST
+                  message: limit must be between 1 and 100
+    Unauthorized:
+      description: |
+        Аутентификация не пройдена. Возвращается при отсутствии/невалидности
+        bearer-токена или при проблеме с auth-токеном (Apple/Google/magic-link/
+        refresh). Коды: `TOKEN_EXPIRED`, `TOKEN_INVALID`, `TOKEN_REVOKED`.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiErrorResponse'
+          example:
+            error:
+              code: TOKEN_INVALID
+              message: Token is invalid
+    TooManyRequests:
+      description: Превышен лимит запросов (rate limit).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiErrorResponse'
+          example:
+            error:
+              code: RATE_LIMITED
+              message: Too many requests
+    Forbidden:
+      description: Ресурс существует, но принадлежит другому пользователю.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiErrorResponse'
+          example:
+            error:
+              code: ACCESS_DENIED
+              message: Access denied
+    NotFound:
+      description: Ресурс не найден или архивирован.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiErrorResponse'
+          example:
+            error:
+              code: NOT_FOUND
+              message: Resource not found
+    Conflict:
+      description: Конфликт состояния — например, попытка нарушить инвариант домена.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiErrorResponse'
+          example:
+            error:
+              code: CONFLICT
+              message: Operation not allowed in the current state
+  schemas:
+    AppleAuthRequest:
+      type: object
+      description: Тело POST /api/v1/auth/apple.
+      required:
+        - identityToken
+      properties:
+        identityToken:
+          type: string
+          minLength: 1
+          description: JWT identity token, выданный Sign in with Apple.
+    GoogleAuthRequest:
+      type: object
+      description: Тело POST /api/v1/auth/google.
+      required:
+        - idToken
+      properties:
+        idToken:
+          type: string
+          minLength: 1
+          description: Google OIDC id_token.
+    EmailRequest:
+      type: object
+      description: Тело POST /api/v1/auth/email/request.
+      required:
+        - email
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 320
+          description: Email, на который отправить magic link.
+          example: user@example.com
+    MagicLinkVerifyRequest:
+      type: object
+      description: Тело POST /api/v1/auth/email/verify.
+      required:
+        - token
+      properties:
+        token:
+          type: string
+          minLength: 1
+          description: Opaque-токен из ссылки в письме.
+    RefreshRequest:
+      type: object
+      description: Тело POST /api/v1/auth/refresh.
+      required:
+        - refreshToken
+      properties:
+        refreshToken:
+          type: string
+          minLength: 1
+          description: Refresh-токен, полученный при предыдущем входе/ротации.
+    TokenPairResponse:
+      type: object
+      description: Пара токенов доступа (issue
+      required:
+        - accessToken
+        - refreshToken
+        - expiresIn
+        - tokenType
+      properties:
+        accessToken:
+          type: string
+          description: Короткоживущий access-JWT для авторизации запросов к API.
+        refreshToken:
+          type: string
+          description: Долгоживущий refresh-JWT для получения новой пары.
+        expiresIn:
+          type: integer
+          format: int64
+          description: Время жизни access-токена в секундах.
+          example: 3600
+        tokenType:
+          type: string
+          description: Тип токена для заголовка Authorization.
+          example: Bearer
+    HealthResponse:
+      type: object
+      description: Ответ liveness-эндпоинта.
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          description: Фиксированное значение `UP`, когда приложение принимает HTTP-запросы.
+          example: UP
+    PlantDto:
+      type: object
+      description: |
+        Растение в формате REST API. Поля `locationName` / `speciesName`
+        денормализованы из связанных сущностей для удобства фронта.
+      required:
+        - id
+        - name
+        - archived
+      properties:
+        id:
+          type: integer
+          format: int64
+          description: Уникальный идентификатор растения.
+          example: 1
+        name:
+          type: string
+          description: Имя растения, заданное пользователем.
+          example: Monstera
+        notes:
+          type: string
+          nullable: true
+          description: Произвольные заметки пользователя.
+          example: Стоит у окна, любит свет
+        photoFileId:
+          type: string
+          nullable: true
+          description: Telegram `file_id` загруженной фотографии. Используется ботом для повторной отправки без скачивания.
+        locationId:
+          type: integer
+          format: int64
+          nullable: true
+          description: Идентификатор локации, в которой стоит растение.
+          example: 2
+        locationName:
+          type: string
+          nullable: true
+          description: Денормализованное имя локации на момент запроса.
+          example: Подоконник
+        speciesId:
+          type: integer
+          format: int64
+          nullable: true
+          description: Идентификатор вида из справочника.
+          example: 5
+        speciesName:
+          type: string
+          nullable: true
+          description: Денормализованное название вида.
+          example: Monstera deliciosa
+        archived:
+          type: boolean
+          description: Признак того, что растение архивировано (soft-deleted). В выдаче списков всегда `false`.
+          example: false
+        createdAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: Момент создания записи в БД (UTC).
+          example: '2026-05-24T10:15:30Z'
+    PlantCreateRequest:
+      type: object
+      description: Тело POST /api/v1/plants.
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+          description: Имя нового растения. Обязательно, не пустое.
+          example: Monstera
+        notes:
+          type: string
+          maxLength: 2000
+          nullable: true
+          description: Опциональные заметки пользователя.
+        locationId:
+          type: integer
+          format: int64
+          nullable: true
+          description: Идентификатор локации. Если не задан, используется дефолтная локация пользователя.
+        speciesId:
+          type: integer
+          format: int64
+          nullable: true
+          description: |
+            Идентификатор вида растения (`Species.id`). Опционально. Если задан —
+            растение связывается с видом (mobile gap G13); вид должен существовать,
+            иначе `404 NOT_FOUND`. Расписания ухода при этом **не** создаются
+            автоматически (отдельная задача G14).
+        parentPlantId:
+          type: integer
+          format: int64
+          nullable: true
+          description: |
+            ID материнского растения. Если задан, новое растение считается
+            отводком/потомком этого растения. Родитель должен принадлежать текущему
+            пользователю и не быть архивированным, иначе 404/403.
+          example: 10
+    PlantUpdateRequest:
+      type: object
+      description: Тело PUT /api/v1/plants/{id}. Все поля опциональны.
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+          nullable: true
+        notes:
+          type: string
+          maxLength: 2000
+          nullable: true
+        locationId:
+          type: integer
+          format: int64
+          nullable: true
+    PageResponsePlantDto:
+      type: object
+      description: Постраничный ответ со списком растений.
+      required:
+        - items
+        - total
+        - offset
+        - limit
+      properties:
+        items:
+          type: array
+          description: Растения на текущей странице.
+          items:
+            $ref: '#/components/schemas/PlantDto'
+        total:
+          type: integer
+          format: int32
+          description: Общее количество растений, удовлетворяющих фильтру.
+          example: 42
+        offset:
+          type: integer
+          format: int32
+          example: 0
+        limit:
+          type: integer
+          format: int32
+          example: 20
+    PlantDiagnosisDto:
+      type: object
+      description: |
+        Результат пассивной диагностики растения (mobile screen 15, issue #193).
+        Форма ответа всегда `{ issues, recommendations }` — даже когда данных мало
+        или растение здорово (тогда массивы пустые / содержат только подсказку).
+      required:
+        - issues
+        - recommendations
+      properties:
+        issues:
+          type: array
+          description: Выявленные проблемы, отсортированы по severity (HIGH → LOW).
+          items:
+            $ref: '#/components/schemas/DiagnosisIssueDto'
+        recommendations:
+          type: array
+          description: |
+            Рекомендации, собранные по проблемам (в том же порядке) с дедупликацией.
+          items:
+            type: string
+          example:
+            - Полей растение сегодня
+            - Проверь, не пересох ли грунт
+    DiagnosisIssueDto:
+      type: object
+      description: Отдельная выявленная проблема растения.
+      required:
+        - code
+        - severity
+        - title
+      properties:
+        code:
+          type: string
+          description: |
+            Семантический код проблемы (`UNDERWATERED`, `UNDERFED`,
+            `LOW_HUMIDITY`, `SOIL_CHECK_DUE`, `NEGLECTED`, ...). Строка —
+            а не enum — для forward-совместимости с новыми кодами.
+          example: UNDERWATERED
+        severity:
+          type: string
+          enum:
+            - HIGH
+            - MEDIUM
+            - LOW
+          description: Серьёзность проблемы.
+          example: HIGH
+        title:
+          type: string
+          description: Человекочитаемый заголовок проблемы (локализован).
+          example: Пересушен
+    PlantFamilyMemberDto:
+      type: object
+      description: Короткое представление растения в родословной.
+      required:
+        - id
+        - name
+      properties:
+        id:
+          type: integer
+          format: int64
+          example: 10
+        name:
+          type: string
+          example: Монстера мама
+    PlantFamilyResponse:
+      type: object
+      description: Родословная растения — родитель и прямые потомки.
+      required:
+        - children
+      properties:
+        parent:
+          $ref: '#/components/schemas/PlantFamilyMemberDto'
+        children:
+          type: array
+          items:
+            $ref: '#/components/schemas/PlantFamilyMemberDto'
+    PlantHistoryResponse:
+      type: object
+      description: Страница истории ухода за растением с метаданными пагинации.
+      required:
+        - items
+        - total
+        - limit
+        - offset
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/CareEventResponse'
+        total:
+          type: integer
+          format: int64
+          description: Общее количество активных записей.
+          example: 17
+        limit:
+          type: integer
+          format: int32
+          example: 20
+        offset:
+          type: integer
+          format: int32
+          example: 0
+    LocationDto:
+      type: object
+      description: Локация (комната/место), в которой пользователь держит растения.
+      required:
+        - id
+        - name
+        - defaultLocation
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+          example: Подоконник
+        emoji:
+          type: string
+          nullable: true
+          example: 🪟
+        defaultLocation:
+          type: boolean
+          description: Является ли локация дефолтной для пользователя.
+          example: false
+        createdAt:
+          type: string
+          format: date-time
+          nullable: true
+    LocationCreateRequest:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 30
+          example: Подоконник
+        emoji:
+          type: string
+          maxLength: 16
+          nullable: true
+          example: 🌿
+    LocationUpdateRequest:
+      type: object
+      description: Все поля опциональны.
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 30
+          nullable: true
+        emoji:
+          type: string
+          maxLength: 16
+          nullable: true
+    CareEventType:
+      type: string
+      description: |
+        Публичный тип ухода. **Намеренно не совпадает** один-к-одному с
+        внутренним `TaskType`: API-контракт стабилен и не зависит от
+        эволюции доменной модели. Тип `SOIL_CHECK` через REST не доступен.
+      enum:
+        - WATER
+        - SPRAY
+        - FERTILIZE
+      example: WATER
+    CreateCareEventRequest:
+      type: object
+      description: Тело POST /api/v1/care-events.
+      required:
+        - plantId
+        - type
+        - performedAt
+      properties:
+        plantId:
+          type: integer
+          format: int64
+          example: 10
+        type:
+          $ref: '#/components/schemas/CareEventType'
+        performedAt:
+          type: string
+          format: date-time
+          description: Момент выполнения ухода (UTC).
+          example: '2026-05-22T10:00:00Z'
+        note:
+          type: string
+          nullable: true
+          description: Необязательная заметка (например, «добавил удобрение X»).
+        clientId:
+          type: string
+          nullable: true
+          description: UUID от клиента для идемпотентности при retry. Если null — идемпотентность отключена.
+    CareEventResponse:
+      type: object
+      description: Запись события ухода после регистрации или из истории.
+      required:
+        - id
+        - plantId
+        - plantName
+        - type
+        - performedAt
+        - onTime
+      properties:
+        id:
+          type: integer
+          format: int64
+        plantId:
+          type: integer
+          format: int64
+        plantName:
+          type: string
+        type:
+          $ref: '#/components/schemas/CareEventType'
+        performedAt:
+          type: string
+          format: date-time
+          description: Момент выполнения в UTC.
+        note:
+          type: string
+          nullable: true
+        clientId:
+          type: string
+          nullable: true
+        onTime:
+          type: boolean
+          description: |
+            Признак выполнения «в срок» — выполнено до дедлайна расписания.
+            Используется для расчёта стрика.
+    TaskDto:
+      type: object
+      description: Задача ухода в выдаче `today`/`calendar`.
+      required:
+        - scheduleId
+        - plantId
+        - plantName
+        - taskType
+        - nextDueAt
+      properties:
+        scheduleId:
+          type: integer
+          format: int64
+        plantId:
+          type: integer
+          format: int64
+        plantName:
+          type: string
+        speciesId:
+          type: integer
+          format: int64
+          nullable: true
+          description: |
+            Id вида растения (`Species.id`), если вид задан. Нужен клиенту, чтобы
+            выбрать иллюстрацию задачи (mobile gap G6). `null`, если у растения
+            нет привязки к виду.
+        speciesName:
+          type: string
+          nullable: true
+          description: Денормализованное имя вида (подпись/фолбэк иллюстрации). `null`, если вид не задан.
+        taskType:
+          type: string
+          description: Имя `TaskType.name()` — `WATERING` / `MISTING` / `FERTILIZING` / `SOIL_CHECK`.
+          example: WATERING
+        locationName:
+          type: string
+          nullable: true
+        nextDueAt:
+          type: string
+          format: date-time
+          description: Ближайший дедлайн (UTC).
+        doneAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: |
+            Момент отметки «сделано» (UTC), если задача выполнена сегодня
+            (mobile gap G11, ADR-014). `null` — задача ещё не выполнена (pending).
+            В выдаче `/calendar` всегда `null`.
+    CalendarResponse:
+      type: object
+      description: |
+        Карта `date → tasks` для эндпоинта `/api/v1/calendar`. Ключи — строки
+        в формате `YYYY-MM-DD`. В JSON отсортированы по возрастанию.
+
+        ⚠️ Внутренний $ref на TaskDto использует bundle-путь
+        `#/components/schemas/TaskDto` (а не относительный к этому файлу),
+        потому что openapi-generator 7.10 теряет типизацию items внутри
+        `additionalProperties` при cross-file разрешении.
+      additionalProperties:
+        type: array
+        items:
+          $ref: '#/components/schemas/TaskDto'
+    DayProgress:
+      type: object
+      description: Прогресс за один день — запланировано/выполнено в TZ пользователя.
+      required:
+        - planned
+        - done
+      properties:
+        planned:
+          type: integer
+          format: int32
+          description: Количество запланированных occurrence'ов в этот локальный день.
+        done:
+          type: integer
+          format: int32
+          description: Количество выполненных (не отменённых) записей в этот локальный день.
+    CalendarProgressResponse:
+      type: object
+      description: |
+        Карта `date → {planned, done}` для эндпоинта `/api/v1/calendar/progress`.
+        Ключи — строки `YYYY-MM-DD`, отсортированы по возрастанию. Значения —
+        объекты `DayProgress`.
+      additionalProperties:
+        $ref: '#/components/schemas/DayProgress'
+    TodayResponse:
+      type: object
+      description: Ответ `GET /api/v1/today`.
+      required:
+        - tasks
+        - count
+        - summary
+      properties:
+        tasks:
+          type: array
+          items:
+            $ref: '#/components/schemas/TaskDto'
+        count:
+          type: integer
+          format: int32
+          description: Длина `tasks` (дублируется для удобства клиента).
+        summary:
+          $ref: '#/components/schemas/TodaySummary'
+    TodaySummary:
+      type: object
+      description: |
+        Сводка по сегодняшним задачам (mobile gap G11, ADR-014).
+        `total == count ==` длине `tasks`. `done + remaining == total`.
+      required:
+        - total
+        - done
+        - remaining
+        - overdue
+      properties:
+        total:
+          type: integer
+          format: int32
+          description: Всего задач в выдаче (= `count`).
+        done:
+          type: integer
+          format: int32
+          description: Задачи, отмеченные сегодня (`doneAt != null`).
+        remaining:
+          type: integer
+          format: int32
+          description: Невыполненные задачи (`total - done`).
+        overdue:
+          type: integer
+          format: int32
+          description: Невыполненные задачи, дедлайн которых уже прошёл (`nextDueAt < now`).
+    StreakResponse:
+      type: object
+      description: Ответ `GET /api/v1/stats/streak`.
+      required:
+        - plantId
+        - streak
+      properties:
+        plantId:
+          type: integer
+          format: int64
+        streak:
+          type: integer
+          format: int32
+          description: Количество on-time подряд.
+          example: 7
+    MonthlyReportResponse:
+      type: object
+      description: Ответ `GET /api/v1/reports/monthly`.
+      required:
+        - month
+        - done
+        - overdue
+        - byType
+        - streak
+        - healthTrend
+      properties:
+        month:
+          type: string
+          description: Эхо запрошенного месяца (`YYYY-MM`).
+          example: 2026-05
+        done:
+          type: integer
+          format: int32
+          description: Число выполненных действий ухода за месяц.
+          example: 42
+        overdue:
+          type: integer
+          format: int32
+          description: Число действий, выполненных с опозданием (`onTime = false`).
+          example: 5
+        byType:
+          type: object
+          description: |
+            Разбивка `done` по типам ухода. Ключи — имена enum `TaskType`
+            (`WATERING`, `MISTING`, `FERTILIZING`, `SOIL_CHECK`); присутствуют
+            все четыре, отсутствующие — `0`.
+          additionalProperties:
+            type: integer
+            format: int32
+          example:
+            WATERING: 20
+            MISTING: 15
+            FERTILIZING: 5
+            SOIL_CHECK: 2
+        streak:
+          type: integer
+          format: int32
+          description: Текущий стрик пользователя (дней подряд) на момент запроса.
+          example: 12
+        healthTrend:
+          type: array
+          description: Понедельные бакеты качества для ISO-недель, пересекающих месяц.
+          items:
+            $ref: '#/components/schemas/WeeklyHealthBucket'
+    WeeklyHealthBucket:
+      type: object
+      description: Качество ухода за одну ISO-неделю.
+      required:
+        - week
+        - done
+        - onTimePct
+      properties:
+        week:
+          type: string
+          description: ISO-8601 неделя в формате `YYYY-Www` (например, `2026-W18`).
+          example: 2026-W18
+        done:
+          type: integer
+          format: int32
+          description: Число выполненных действий за неделю.
+          example: 12
+        onTimePct:
+          type: number
+          format: double
+          description: Доля on-time действий (`onTime/done`), округлённая до 2 знаков; `0.0` если `done == 0`.
+          example: 0.92
+    SpeciesSummaryDto:
+      type: object
+      description: Краткая карточка вида для списка.
+      required:
+        - id
+        - name
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+          example: Монстера
+        latinName:
+          type: string
+          nullable: true
+          example: Monstera deliciosa
+        wateringDays:
+          type: integer
+          format: int32
+          nullable: true
+          description: Рекомендуемый интервал полива в днях.
+        mistingDays:
+          type: integer
+          format: int32
+          nullable: true
+        fertilizingDays:
+          type: integer
+          format: int32
+          nullable: true
+        soilCheckDays:
+          type: integer
+          format: int32
+          nullable: true
+        careDifficulty:
+          type: string
+          nullable: true
+          description: Имя enum'а `CareDifficulty.name()`.
+          example: EASY
+        lightPreference:
+          type: string
+          nullable: true
+          description: Имя enum'а `LightPreference.name()`.
+          example: BRIGHT_INDIRECT
+        toxicToCats:
+          type: boolean
+          nullable: true
+          description: Токсично для кошек. null — данных нет.
+        toxicToDogs:
+          type: boolean
+          nullable: true
+          description: Токсично для собак. null — данных нет.
+        toxicToHumans:
+          type: boolean
+          nullable: true
+          description: Токсично для человека. null — данных нет.
+    SpeciesDetailDto:
+      type: object
+      description: |
+        Полная карточка вида. Все поля `SpeciesSummaryDto` плюс `description`.
+      required:
+        - id
+        - name
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        latinName:
+          type: string
+          nullable: true
+        wateringDays:
+          type: integer
+          format: int32
+          nullable: true
+        mistingDays:
+          type: integer
+          format: int32
+          nullable: true
+        fertilizingDays:
+          type: integer
+          format: int32
+          nullable: true
+        soilCheckDays:
+          type: integer
+          format: int32
+          nullable: true
+        careDifficulty:
+          type: string
+          nullable: true
+        lightPreference:
+          type: string
+          nullable: true
+        toxicToCats:
+          type: boolean
+          nullable: true
+          description: Токсично для кошек. null — данных нет.
+        toxicToDogs:
+          type: boolean
+          nullable: true
+          description: Токсично для собак. null — данных нет.
+        toxicToHumans:
+          type: boolean
+          nullable: true
+          description: Токсично для человека. null — данных нет.
+        description:
+          type: string
+          nullable: true
+          description: Длинное текстовое описание вида.
+        facts:
+          type: array
+          description: |
+            Энциклопедические факты о виде (ADR-011, issue #129), отсортированы
+            по категории, затем по `displayOrder`. Пустой массив, если фактов нет.
+          items:
+            $ref: '#/components/schemas/SpeciesFactDto'
+    PageResponseSpeciesSummaryDto:
+      type: object
+      description: |
+        Постраничный ответ со списком видов. Унифицирован под `{items, total,
+        offset, limit}` — отличается от прошлой реализации, где было
+        `{content, page, size, totalElements, totalPages}`. Это **breaking
+        change** для существующих клиентов `/api/v1/species`.
+      required:
+        - items
+        - total
+        - offset
+        - limit
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/SpeciesSummaryDto'
+        total:
+          type: integer
+          format: int64
+          description: Общее количество видов (с учётом фильтра `q`).
+        offset:
+          type: integer
+          format: int32
+        limit:
+          type: integer
+          format: int32
+    CareTypeDto:
+      type: object
+      description: Локализованная карточка типа ухода.
+      required:
+        - code
+        - displayName
+      properties:
+        code:
+          type: string
+          description: Машинное имя `TaskType.name()`.
+          enum:
+            - WATERING
+            - MISTING
+            - FERTILIZING
+            - SOIL_CHECK
+          example: WATERING
+        displayName:
+          type: string
+          description: Локализованное русское имя для UI.
+          example: Полив
+    CareScheduleDto:
+      type: object
+      description: Расписание ухода растения одного типа.
+      required:
+        - type
+        - every
+        - unit
+        - enabled
+      properties:
+        type:
+          type: string
+          enum:
+            - WATERING
+            - MISTING
+            - FERTILIZING
+            - SOIL_CHECK
+          example: WATERING
+        every:
+          type: integer
+          format: int32
+          description: Интервал в днях.
+          example: 7
+        unit:
+          type: string
+          enum:
+            - DAY
+          description: Единица интервала. Сейчас всегда DAY.
+          example: DAY
+        amountMl:
+          type: integer
+          format: int32
+          nullable: true
+          description: Объём полива в миллилитрах. Только для type=WATERING.
+          example: 250
+        enabled:
+          type: boolean
+          example: true
+        nextDueAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: Ближайшее срабатывание (UTC). Заполнено только если enabled=true.
+    CareScheduleUpdateRequest:
+      type: object
+      required:
+        - every
+        - unit
+        - enabled
+      properties:
+        every:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 365
+          example: 7
+        unit:
+          type: string
+          enum:
+            - DAY
+          example: DAY
+        amountMl:
+          type: integer
+          format: int32
+          nullable: true
+          minimum: 1
+          description: Объём полива в миллилитрах. Только для type=WATERING.
+          example: 250
+        enabled:
+          type: boolean
+          example: true
+    ShoppingItemDto:
+      type: object
+      description: Позиция персонального списка покупок.
+      required:
+        - id
+        - title
+        - checked
+      properties:
+        id:
+          type: integer
+          format: int64
+        title:
+          type: string
+          example: Грунт для суккулентов
+        checked:
+          type: boolean
+          description: Куплено ли уже.
+          example: false
+        createdAt:
+          type: string
+          format: date-time
+          nullable: true
+    ShoppingListResponse:
+      type: object
+      description: Обёртка над списком позиций покупок.
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ShoppingItemDto'
+    ShoppingItemCreateRequest:
+      type: object
+      required:
+        - title
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 160
+          example: Грунт для суккулентов
+    ShoppingItemUpdateRequest:
+      type: object
+      description: Все поля опциональны.
+      properties:
+        title:
+          type: string
+          maxLength: 160
+          nullable: true
+        checked:
+          type: boolean
+          nullable: true
+    MeResponse:
+      type: object
+      description: Профиль и настройки текущего пользователя (`GET /api/v1/me`).
+      required:
+        - name
+        - plantsTotal
+        - tasksToday
+        - notificationsUnread
+        - quietHoursStart
+        - quietHoursEnd
+        - timezone
+        - locale
+      properties:
+        name:
+          type: string
+          nullable: true
+          description: Отображаемое имя пользователя (из `users.username`). Может быть `null`.
+          example: Антон
+        avatar:
+          type: string
+          nullable: true
+          description: |
+            URL аватара пользователя. Плейсхолдер: на текущей схеме нет колонки
+            под аватар, поэтому поле всегда `null` до появления хранилища аватаров.
+        plantsTotal:
+          type: integer
+          format: int32
+          minimum: 0
+          description: Число неархивированных растений пользователя.
+          example: 12
+        tasksToday:
+          type: integer
+          format: int32
+          minimum: 0
+          description: |
+            Число невыполненных (pending) задач ухода на сегодня в таймзоне
+            пользователя: дедлайн до конца сегодняшнего дня, отметка «сделано»
+            ещё не проставлена. Это pending-подмножество `GET /api/v1/today`.
+          example: 3
+        notificationsUnread:
+          type: integer
+          format: int32
+          minimum: 0
+          description: |
+            Плейсхолдер: фид уведомлений (issue #183) ещё не влит, поэтому поле
+            всегда `0`. Будет считаться по-настоящему после появления фида.
+          example: 0
+        quietHoursStart:
+          type: string
+          pattern: ^([01]\d|2[0-3]):[0-5]\d$
+          description: Начало тихих часов, локальное время `HH:mm`.
+          example: '22:00'
+        quietHoursEnd:
+          type: string
+          pattern: ^([01]\d|2[0-3]):[0-5]\d$
+          description: Конец тихих часов, локальное время `HH:mm`.
+          example: '08:00'
+        timezone:
+          type: string
+          description: IANA-идентификатор таймзоны пользователя.
+          example: Europe/Moscow
+        locale:
+          type: string
+          enum:
+            - ru
+            - en
+          description: Язык интерфейса/уведомлений.
+          example: ru
+    MeUpdateRequest:
+      type: object
+      description: |
+        Частичное обновление настроек. Все поля опциональны — отсутствующие
+        остаются без изменений.
+      properties:
+        quietHoursStart:
+          type: string
+          pattern: ^([01]\d|2[0-3]):[0-5]\d$
+          nullable: true
+          description: Начало тихих часов, локальное время `HH:mm`.
+          example: '23:00'
+        quietHoursEnd:
+          type: string
+          pattern: ^([01]\d|2[0-3]):[0-5]\d$
+          nullable: true
+          description: Конец тихих часов, локальное время `HH:mm`.
+          example: '07:30'
+        timezone:
+          type: string
+          nullable: true
+          description: IANA-идентификатор таймзоны. Невалидный → `400`.
+          example: Europe/Belgrade
+        locale:
+          type: string
+          pattern: ^(ru|en)$
+          nullable: true
+          description: Язык интерфейса/уведомлений. Допустимые значения — `ru` или `en`.
+          example: en
+    NotificationDto:
+      type: object
+      description: Уведомление в ленте пользователя.
+      required:
+        - id
+        - type
+        - title
+        - body
+        - createdAt
+      properties:
+        id:
+          type: integer
+          format: int64
+          example: 101
+        type:
+          type: string
+          description: Тип уведомления.
+          enum:
+            - care
+            - alert
+            - award
+            - report
+            - system
+          example: care
+        title:
+          type: string
+          example: Монстера хочет пить
+        body:
+          type: string
+          example: Полей меня сегодня 💧
+        plantId:
+          type: integer
+          format: int64
+          nullable: true
+          description: Ссылка на растение для deep-link; null, если уведомление не привязано.
+          example: 25
+        createdAt:
+          type: string
+          format: date-time
+          description: Момент создания в UTC.
+          example: '2026-05-28T07:00:00Z'
+        readAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: Момент прочтения в UTC; null = непрочитано.
+    NotificationsResponse:
+      type: object
+      description: Лента уведомлений со счётчиком непрочитанных.
+      required:
+        - items
+        - unreadCount
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/NotificationDto'
+        unreadCount:
+          type: integer
+          format: int32
+          description: Количество непрочитанных уведомлений пользователя.
+          example: 2
+    ApiErrorResponse:
+      type: object
+      description: Стандартная обёртка над ошибкой REST API.
+      required:
+        - error
+      properties:
+        error:
+          $ref: '#/components/schemas/ApiError'
+    ApiError:
+      type: object
+      description: Тело ошибки.
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+          description: |
+            Стабильный машиночитаемый код. Значения:
+            `VALIDATION_ERROR`, `BAD_REQUEST`, `NOT_FOUND`, `ACCESS_DENIED`,
+            `CONFLICT`, `INTERNAL_ERROR`, `LOCATION_NOT_EMPTY`.
+          example: VALIDATION_ERROR
+        message:
+          type: string
+          example: Validation failed
+        details:
+          type: array
+          nullable: true
+          description: Список ошибок по полям. Заполняется только для `VALIDATION_ERROR`.
+          items:
+            $ref: '#/components/schemas/FieldError'
+    FieldError:
+      type: object
+      required:
+        - field
+        - message
+      properties:
+        field:
+          type: string
+          example: name
+        message:
+          type: string
+          example: must not be blank
+    PlantHealthDto:
+      type: object
+      description: |
+        Health-score растения (mobile gap G1). При `insufficientData = true`
+        поля `score` и `zone` равны `null`.
+      required:
+        - insufficientData
+      properties:
+        insufficientData:
+          type: boolean
+          description: |
+            `true` — данных мало (`< 3` активных записей ухода), балл не
+            вычислялся; `score`/`zone` будут `null`.
+        score:
+          type: integer
+          format: int32
+          minimum: 0
+          maximum: 100
+          nullable: true
+          description: Балл 0–100. `null`, если `insufficientData = true`.
+        zone:
+          type: string
+          enum:
+            - GREEN
+            - YELLOW
+            - RED
+          nullable: true
+          description: |
+            Цветовая зона по порогам (`GREEN`/`YELLOW`/`RED`). `null`, если
+            `insufficientData = true`.
+    WeatherSnapshotDto:
+      type: object
+      description: |
+        Снепшот влажности (mobile gap G4). При `available = false` остальные
+        поля равны `null` — погода у пользователя не настроена или источник
+        временно недоступен.
+      required:
+        - available
+      properties:
+        available:
+          type: boolean
+          description: |
+            `true` — данные о влажности получены; `false` — погода не настроена
+            (нет координат / выключена) или внешний источник недоступен.
+        humidityPercent:
+          type: integer
+          format: int32
+          minimum: 0
+          maximum: 100
+          nullable: true
+          description: Относительная влажность 0–100%. `null`, если `available = false`.
+        recommendation:
+          type: string
+          enum:
+            - DEFER_OK
+            - DO_NOT_DEFER
+            - NEUTRAL
+          nullable: true
+          description: |
+            Рекомендация по поливу: `DEFER_OK` (RH ≥ 80% — можно отложить),
+            `DO_NOT_DEFER` (RH ≤ 35% — лучше не откладывать), `NEUTRAL`.
+            `null`, если `available = false`.
+        fetchedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: Когда значение было получено из внешнего источника (UTC). `null`, если `available = false`.
+        fromCache:
+          type: boolean
+          nullable: true
+          description: |
+            `true` — значение взято из серверного кеша (60-мин окно), без
+            обращения к внешнему API. `null`, если `available = false`.
+    SpeciesFactDto:
+      type: object
+      description: Один энциклопедический факт о виде (ADR-011, issue
+      required:
+        - category
+        - body
+      properties:
+        category:
+          type: string
+          description: Категория факта.
+          enum:
+            - ORIGIN
+            - CARE
+            - TOXICITY
+            - CURIOSITY
+        title:
+          type: string
+          nullable: true
+          description: Опциональный заголовок факта.
+        body:
+          type: string
+          description: Текст факта.
+        source:
+          type: string
+          nullable: true
+          description: Опциональная ссылка/атрибуция источника.
