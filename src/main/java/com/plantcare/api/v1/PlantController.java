@@ -9,6 +9,7 @@ import com.plantcare.api.generated.model.PlantDiagnosisDto;
 import com.plantcare.api.generated.model.PlantDto;
 import com.plantcare.api.generated.model.PlantFamilyMemberDto;
 import com.plantcare.api.generated.model.PlantFamilyResponse;
+import com.plantcare.api.generated.model.PlantFamilyResponseParent;
 import com.plantcare.api.generated.model.PlantHealthDto;
 import com.plantcare.api.generated.model.PlantUpdateRequest;
 import com.plantcare.core.domain.Plant;
@@ -146,7 +147,7 @@ public class PlantController implements PlantsApi {
         PlantFamilyResponse response = new PlantFamilyResponse(children);
 
         if (family.parent() != null) {
-            response.parent(toFamilyMemberDto(family.parent()));
+            response.parent(toFamilyResponseParent(family.parent()));
         }
 
         return response;
@@ -176,6 +177,13 @@ public class PlantController implements PlantsApi {
 
     private static PlantFamilyMemberDto toFamilyMemberDto(Plant plant) {
         return new PlantFamilyMemberDto(
+                plant.getId(),
+                plant.getName()
+        );
+    }
+
+    private static PlantFamilyResponseParent toFamilyResponseParent(Plant plant) {
+        return new PlantFamilyResponseParent(
                 plant.getId(),
                 plant.getName()
         );
