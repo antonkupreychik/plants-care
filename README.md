@@ -170,14 +170,14 @@ echo 'testcontainers.reuse.enable=true' >> ~/.testcontainers.properties
 | `PATCH` | `/api/v1/shopping/{id}` | 200 | Частичное обновление: передаются только изменяемые поля (`checked`, `title`) |
 | `DELETE` | `/api/v1/shopping/{id}` | 204 | Удалить позицию |
 
-### Me (issue #182)
+### Me (issue #182, расширено #180)
 
 Профиль и настройки текущего пользователя. Скоуп — аутентифицированный пользователь.
 
 | Метод | Путь | Статус ответа | Описание |
 |---|---|---|---|
-| `GET` | `/api/v1/me` | 200 | Профиль: имя, аватар, счётчики для хедера (`plantsTotal`, `tasksToday`, `notificationsUnread`) и настройки (`quietHoursStart`, `quietHoursEnd`, `timezone`, `locale`). `tasksToday` — число невыполненных задач на сегодня в таймзоне пользователя. `avatar` — плейсхолдер (всегда `null`, колонки в схеме нет); `notificationsUnread` — плейсхолдер (всегда `0` до фида уведомлений, issue #183) |
-| `PATCH` | `/api/v1/me` | 200 | Частичное обновление настроек (`quietHoursStart`, `quietHoursEnd`, `timezone`, `locale`): меняются только переданные поля. Смена `timezone` пересчитывает активные расписания с сохранением локального времени дня. Невалидный IANA-`timezone` → 400 |
+| `GET` | `/api/v1/me` | 200 | Профиль: `id`, `email`, `emailVerified`, `createdAt` (UTC), имя, аватар, счётчики для хедера (`plantsTotal`, `tasksToday`, `notificationsUnread`), настройки (`quietHoursStart`, `quietHoursEnd`, `timezone`, `locale`, `seasonalEnabled`, `seasonalMode`, `weatherEnabled`), `featureFlags` и привязки входа (`appleLinked`, `googleLinked`, `emailLinked`, `telegramLinked`). `tasksToday` — число невыполненных задач на сегодня в таймзоне пользователя. `avatar` — плейсхолдер (всегда `null`, колонки в схеме нет); `notificationsUnread` — плейсхолдер (всегда `0` до фида уведомлений, issue #183) |
+| `PATCH` | `/api/v1/me` | 200 | Частичное обновление настроек (`quietHoursStart`, `quietHoursEnd`, `timezone`, `locale`, `seasonalEnabled`, `seasonalMode`, `weatherEnabled`): меняются только переданные поля. Смена `timezone` пересчитывает активные расписания с сохранением локального времени дня. Невалидный IANA-`timezone` → 400. Совпадение тихих часов (`quietHoursStart == quietHoursEnd`, с учётом текущего значения, если передано только одно поле) → 400 |
 ### Notifications (issue #183)
 
 Персистентный inbox уведомлений пользователя для мобильного клиента. Все эндпоинты user-scoped. Наполнение ленты добавят отдельные issue — текущая реализация даёт только чтение и отметку прочтения.

@@ -1,6 +1,7 @@
 package com.plantcare.core.service;
 
 import com.plantcare.core.domain.User;
+import com.plantcare.core.domain.enums.SeasonalMode;
 import com.plantcare.core.repository.PlantRepository;
 import com.plantcare.core.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
@@ -10,7 +11,10 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.DateTimeException;
 import java.time.LocalTime;
+import java.time.OffsetDateTime;
 import java.time.ZoneId;
+import java.time.ZoneOffset;
+import java.util.Map;
 
 /**
  * Профиль и настройки пользователя для REST API {@code /api/v1/me} (issue #182,
@@ -43,6 +47,10 @@ public class UserProfileService {
      * фид уведомлений (issue #183) ещё не влит в эту ветку.
      */
     public record Profile(
+            long id,
+            String email,
+            boolean emailVerified,
+            OffsetDateTime createdAt,
             String name,
             String avatar,
             int plantsTotal,
@@ -51,19 +59,32 @@ public class UserProfileService {
             LocalTime quietHoursStart,
             LocalTime quietHoursEnd,
             String timezone,
-            String locale
+            String locale,
+            boolean seasonalEnabled,
+            SeasonalMode seasonalMode,
+            boolean weatherEnabled,
+            Map<String, Object> featureFlags,
+            boolean appleLinked,
+            boolean googleLinked,
+            boolean emailLinked,
+            boolean telegramLinked
     ) {
     }
 
     /**
      * Частичный апдейт настроек: {@code null}-поле = «не менять».
      * {@code timezone} — IANA-идентификатор, {@code locale} — {@code ru}|{@code en}.
+     * {@code seasonalEnabled}/{@code seasonalMode}/{@code weatherEnabled} — простые
+     * тогглы (read-only для остальных полей профиля).
      */
     public record ProfileUpdate(
             LocalTime quietHoursStart,
             LocalTime quietHoursEnd,
             String timezone,
-            String locale
+            String locale,
+            Boolean seasonalEnabled,
+            SeasonalMode seasonalMode,
+            Boolean weatherEnabled
     ) {
     }
 
@@ -83,7 +104,16 @@ public class UserProfileService {
         // notificationsUnread — плейсхолдер: фид уведомлений (issue #183) ещё не влит.
         int notificationsUnread = 0;
 
+        // createdAt в БД — LocalDateTime в UTC wall-clock; отдаём наружу как UTC OffsetDateTime.
+        OffsetDateTime createdAt = user.getCreatedAt() == null
+                ? null
+                : user.getCreatedAt().atOffset(ZoneOffset.UTC);
+
         return new Profile(
+                user.getId(),
+                user.getEmail(),
+                user.isEmailVerified(),
+                createdAt,
                 user.getUsername(),
                 null, // avatar — плейсхолдер, колонки в схеме нет.
                 plantsTotal,
@@ -92,7 +122,15 @@ public class UserProfileService {
                 user.getQuietHoursStart(),
                 user.getQuietHoursEnd(),
                 user.getTimezone(),
-                user.getLocale()
+                user.getLocale(),
+                user.isSeasonalEnabled(),
+                user.getSeasonalMode(),
+                user.isWeatherEnabled(),
+                Map.copyOf(user.getFeatureFlags()),
+                user.getAppleSubject() != null,
+                user.getGoogleSubject() != null,
+                user.getEmail() != null,
+                user.getTelegramChatId() != null
         );
     }
 
@@ -104,6 +142,18 @@ public class UserProfileService {
      */
     @Transactional
     public Profile updateProfile(User user, ProfileUpdate update) {
+        // Тихие часы: эффективные значения с учётом текущих (если передано только одно поле).
+        // Совпадение начала и конца недопустимо (пустой/неоднозначный интервал) → 400.
+        LocalTime effectiveStart = update.quietHoursStart() != null
+                ? update.quietHoursStart() : user.getQuietHoursStart();
+        LocalTime effectiveEnd = update.quietHoursEnd() != null
+                ? update.quietHoursEnd() : user.getQuietHoursEnd();
+        if ((update.quietHoursStart() != null || update.quietHoursEnd() != null)
+                && effectiveStart.equals(effectiveEnd)) {
+            throw new IllegalArgumentException(
+                    "quietHoursStart must not equal quietHoursEnd: " + effectiveStart);
+        }
+
         if (update.quietHoursStart() != null) {
             userSettingsService.setQuietHoursStart(user, update.quietHoursStart());
         }
@@ -116,11 +166,25 @@ public class UserProfileService {
         }
         if (update.locale() != null) {
             user.setLocale(update.locale());
-            userRepository.save(user);
         }
+        // Сезонность/погода — простые тогглы, влияют только на ленивый расчёт next_due_at,
+        // пересчёт расписаний не нужен (в отличие от смены таймзоны).
+        if (update.seasonalEnabled() != null) {
+            user.setSeasonalEnabled(update.seasonalEnabled());
+        }
+        if (update.seasonalMode() != null) {
+            user.setSeasonalMode(update.seasonalMode());
+        }
+        if (update.weatherEnabled() != null) {
+            user.setWeatherEnabled(update.weatherEnabled());
+        }
+        userRepository.save(user);
 
-        log.info("PATCH /me applied: userId={}, tzChanged={}, localeChanged={}",
-                user.getId(), update.timezone() != null, update.locale() != null);
+        log.info("PATCH /me applied: userId={}, tzChanged={}, localeChanged={}, "
+                        + "seasonalEnabledChanged={}, seasonalModeChanged={}, weatherEnabledChanged={}",
+                user.getId(), update.timezone() != null, update.locale() != null,
+                update.seasonalEnabled() != null, update.seasonalMode() != null,
+                update.weatherEnabled() != null);
 
         return getProfile(user);
     }

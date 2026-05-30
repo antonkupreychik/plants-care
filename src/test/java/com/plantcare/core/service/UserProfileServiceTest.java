@@ -6,6 +6,7 @@ import com.plantcare.core.domain.CareSchedule;
 import com.plantcare.core.domain.Location;
 import com.plantcare.core.domain.Plant;
 import com.plantcare.core.domain.User;
+import com.plantcare.core.domain.enums.SeasonalMode;
 import com.plantcare.core.domain.enums.TaskType;
 import com.plantcare.core.repository.CareHistoryRepository;
 import com.plantcare.core.repository.CareScheduleRepository;
@@ -30,6 +31,7 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -49,7 +51,7 @@ import static org.assertj.core.api.SoftAssertions.assertSoftly;
  * в профиле; TZ-кейс на границе суток (tasksToday в зоне юзера, не UTC); невалидный
  * IANA-tz → IllegalArgumentException.
  */
-@DisplayName("UserProfileService — профиль и настройки /me (issue #182)")
+@DisplayName("UserProfileService — профиль и настройки /me (issue #182 + #180)")
 @Import(UserProfileServiceTest.FixedClockConfig.class)
 class UserProfileServiceTest extends IntegrationTestBase {
 
@@ -111,6 +113,49 @@ class UserProfileServiceTest extends IntegrationTestBase {
             softly.assertThat(profile.quietHoursEnd()).isEqualTo(LocalTime.of(8, 0));
             softly.assertThat(profile.timezone()).isEqualTo("UTC");
             softly.assertThat(profile.locale()).isEqualTo("ru");
+        });
+    }
+
+    @Test
+    @DisplayName("should_map_extended_profile_fields_and_linkage_booleans_when_building_profile")
+    void should_map_extended_profile_fields_and_linkage_booleans_when_building_profile() {
+        // arrange — AC #1 (#180): email + appleSubject заданы, googleSubject null,
+        // telegramChatId задан; featureFlags непустой; seasonalEnabled/mode/weatherEnabled заданы
+        User user = userRepository.save(User.builder()
+                .telegramChatId(8100L)
+                .username("Антон")
+                .email("anton@example.com")
+                .emailVerified(true)
+                .appleSubject("apple-sub-123")
+                .googleSubject(null)
+                .timezone("Europe/Moscow")
+                .quietHoursStart(LocalTime.of(22, 0))
+                .quietHoursEnd(LocalTime.of(8, 0))
+                .locale("ru")
+                .seasonalEnabled(true)
+                .seasonalMode(SeasonalMode.FIXED)
+                .weatherEnabled(true)
+                .featureFlags(Map.of("sharing", "true"))
+                .blocked(false)
+                .build());
+
+        // act
+        Profile profile = service.getProfile(user);
+
+        // assert — новые поля и linkage-booleans смаплены корректно
+        assertSoftly(softly -> {
+            softly.assertThat(profile.id()).isEqualTo(user.getId());
+            softly.assertThat(profile.email()).isEqualTo("anton@example.com");
+            softly.assertThat(profile.emailVerified()).isTrue();
+            softly.assertThat(profile.createdAt()).isNotNull();
+            softly.assertThat(profile.seasonalEnabled()).isTrue();
+            softly.assertThat(profile.seasonalMode()).isEqualTo(SeasonalMode.FIXED);
+            softly.assertThat(profile.weatherEnabled()).isTrue();
+            softly.assertThat(profile.featureFlags()).containsEntry("sharing", "true");
+            softly.assertThat(profile.appleLinked()).as("appleSubject задан").isTrue();
+            softly.assertThat(profile.googleLinked()).as("googleSubject null").isFalse();
+            softly.assertThat(profile.emailLinked()).as("email задан").isTrue();
+            softly.assertThat(profile.telegramLinked()).as("telegramChatId задан").isTrue();
         });
     }
 
@@ -215,7 +260,7 @@ class UserProfileServiceTest extends IntegrationTestBase {
 
         // act
         Profile updated = service.updateProfile(user,
-                new ProfileUpdate(null, null, null, "en"));
+                new ProfileUpdate(null, null, null, "en", null, null, null));
 
         // assert — locale изменился, остальное на месте
         assertSoftly(softly -> {
@@ -239,7 +284,7 @@ class UserProfileServiceTest extends IntegrationTestBase {
 
         // act
         Profile updated = service.updateProfile(user,
-                new ProfileUpdate(LocalTime.of(23, 0), LocalTime.of(7, 30), null, null));
+                new ProfileUpdate(LocalTime.of(23, 0), LocalTime.of(7, 30), null, null, null, null, null));
 
         // assert
         assertSoftly(softly -> {
@@ -265,7 +310,7 @@ class UserProfileServiceTest extends IntegrationTestBase {
 
         // act
         Profile updated = service.updateProfile(user,
-                new ProfileUpdate(null, null, null, null));
+                new ProfileUpdate(null, null, null, null, null, null, null));
 
         // assert
         assertSoftly(softly -> {
@@ -273,6 +318,37 @@ class UserProfileServiceTest extends IntegrationTestBase {
             softly.assertThat(updated.locale()).isEqualTo("en");
             softly.assertThat(updated.quietHoursStart()).isEqualTo(LocalTime.of(21, 0));
             softly.assertThat(updated.quietHoursEnd()).isEqualTo(LocalTime.of(6, 0));
+        });
+    }
+
+    @Test
+    @DisplayName("should_update_only_seasonal_and_weather_toggles_and_leave_others_untouched")
+    void should_update_only_seasonal_and_weather_toggles_and_leave_others_untouched() {
+        // arrange — AC #3 (#180): юзер с дефолтными тогглами (seasonal off, MULTIPLIER, weather off)
+        User user = savedUser(8012L, "Europe/Moscow", LocalTime.of(22, 0), LocalTime.of(8, 0), "ru");
+
+        // act — включаем seasonal+weather, режим FIXED; остальное не трогаем
+        Profile updated = service.updateProfile(user,
+                new ProfileUpdate(null, null, null, null, true, SeasonalMode.FIXED, true));
+
+        // assert — изменились только тогглы; tz/locale/quietHours без изменений
+        assertSoftly(softly -> {
+            softly.assertThat(updated.seasonalEnabled()).isTrue();
+            softly.assertThat(updated.seasonalMode()).isEqualTo(SeasonalMode.FIXED);
+            softly.assertThat(updated.weatherEnabled()).isTrue();
+            softly.assertThat(updated.timezone()).isEqualTo("Europe/Moscow");
+            softly.assertThat(updated.locale()).isEqualTo("ru");
+            softly.assertThat(updated.quietHoursStart()).isEqualTo(LocalTime.of(22, 0));
+            softly.assertThat(updated.quietHoursEnd()).isEqualTo(LocalTime.of(8, 0));
+        });
+
+        // assert — изменения реально записаны в БД
+        User reloaded = userRepository.findById(user.getId()).orElseThrow();
+        assertSoftly(softly -> {
+            softly.assertThat(reloaded.isSeasonalEnabled()).isTrue();
+            softly.assertThat(reloaded.getSeasonalMode()).isEqualTo(SeasonalMode.FIXED);
+            softly.assertThat(reloaded.isWeatherEnabled()).isTrue();
+            softly.assertThat(reloaded.getTimezone()).isEqualTo("Europe/Moscow");
         });
     }
 
@@ -286,7 +362,7 @@ class UserProfileServiceTest extends IntegrationTestBase {
 
         // act
         Profile updated = service.updateProfile(user,
-                new ProfileUpdate(null, null, "Asia/Almaty", null));
+                new ProfileUpdate(null, null, "Asia/Almaty", null, null, null, null));
 
         // assert
         assertThat(updated.timezone()).isEqualTo("Asia/Almaty");
@@ -304,9 +380,59 @@ class UserProfileServiceTest extends IntegrationTestBase {
 
         // act + assert
         assertThatThrownBy(() -> service.updateProfile(user,
-                new ProfileUpdate(null, null, "Mars/Phobos", null)))
+                new ProfileUpdate(null, null, "Mars/Phobos", null, null, null, null)))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Mars/Phobos");
+    }
+
+    @Test
+    @DisplayName("should_throw_when_both_quiet_hours_start_and_end_are_equal")
+    void should_throw_when_both_quiet_hours_start_and_end_are_equal() {
+        // arrange — AC #4(a): оба поля переданы и совпадают → пустой/неоднозначный интервал
+        User user = savedUser(8013L, "Europe/Moscow", LocalTime.of(22, 0), LocalTime.of(8, 0), "ru");
+
+        // act + assert
+        assertThatThrownBy(() -> service.updateProfile(user,
+                new ProfileUpdate(LocalTime.of(7, 0), LocalTime.of(7, 0), null, null, null, null, null)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("quietHoursStart");
+
+        // assert — ничего не записалось (значения остались исходными)
+        User reloaded = userRepository.findById(user.getId()).orElseThrow();
+        assertThat(reloaded.getQuietHoursStart()).isEqualTo(LocalTime.of(22, 0));
+        assertThat(reloaded.getQuietHoursEnd()).isEqualTo(LocalTime.of(8, 0));
+    }
+
+    @Test
+    @DisplayName("should_throw_when_only_start_passed_and_it_equals_current_end")
+    void should_throw_when_only_start_passed_and_it_equals_current_end() {
+        // arrange — AC #4(b): single-field кейс — передан только start, равный ТЕКУЩЕМУ end юзера.
+        // Эффективный интервал получается пустым → 400, хотя в теле всего одно поле.
+        User user = savedUser(8014L, "Europe/Moscow", LocalTime.of(22, 0), LocalTime.of(8, 0), "ru");
+
+        // act + assert — start = 08:00 совпадёт с текущим end = 08:00
+        assertThatThrownBy(() -> service.updateProfile(user,
+                new ProfileUpdate(LocalTime.of(8, 0), null, null, null, null, null, null)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("quietHoursStart");
+
+        User reloaded = userRepository.findById(user.getId()).orElseThrow();
+        assertThat(reloaded.getQuietHoursStart()).isEqualTo(LocalTime.of(22, 0));
+    }
+
+    @Test
+    @DisplayName("should_not_throw_when_quiet_hours_start_differs_from_end")
+    void should_not_throw_when_quiet_hours_start_differs_from_end() {
+        // arrange — AC #4(c): start != end → апдейт проходит
+        User user = savedUser(8015L, "Europe/Moscow", LocalTime.of(22, 0), LocalTime.of(8, 0), "ru");
+
+        // act
+        Profile updated = service.updateProfile(user,
+                new ProfileUpdate(LocalTime.of(23, 0), LocalTime.of(7, 0), null, null, null, null, null));
+
+        // assert
+        assertThat(updated.quietHoursStart()).isEqualTo(LocalTime.of(23, 0));
+        assertThat(updated.quietHoursEnd()).isEqualTo(LocalTime.of(7, 0));
     }
 
     // ===================== helpers =====================
