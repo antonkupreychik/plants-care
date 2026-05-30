@@ -47,6 +47,13 @@ public class CareSchedule extends BaseEntity {
     @Column(name = "interval_days", nullable = false)
     private Integer intervalDays;
 
+    /**
+     * Объём полива в миллилитрах (issue #185). Осмысленно только для
+     * {@code task_type = WATERING}; для остальных типов задач — {@code null}.
+     */
+    @Column(name = "amount_ml")
+    private Integer amountMl;
+
     @Column(name = "next_due_at", nullable = false)
     private LocalDateTime nextDueAt;
 

@@ -65,6 +65,11 @@ public class User extends BaseEntity {
     @Builder.Default
     private String timezone = "Europe/Minsk";
 
+    /** Язык интерфейса/уведомлений мобильного клиента: {@code ru} | {@code en} (issue #182, V34). */
+    @Column(nullable = false, length = 8)
+    @Builder.Default
+    private String locale = "ru";
+
     @Column(name = "quiet_hours_start", nullable = false)
     @Builder.Default
     private LocalTime quietHoursStart = LocalTime.of(22, 0);

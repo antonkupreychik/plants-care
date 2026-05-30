@@ -53,6 +53,10 @@ Authorization: Bearer {{token}}
 GET {{baseUrl}}/api/v1/calendar
 Authorization: Bearer {{token}}
 
+### Прогресс по дням (planned/done), диапазон ≤ 60 дней
+GET {{baseUrl}}/api/v1/calendar/progress?from=2026-05-01&to=2026-05-31
+Authorization: Bearer {{token}}
+
 ### Стрик растения
 GET {{baseUrl}}/api/v1/stats/streak?plantId=1
 Authorization: Bearer {{token}}
@@ -96,6 +100,24 @@ Authorization: Bearer {{token}}
 ### История ухода за растением
 GET {{baseUrl}}/api/v1/plants/1/history?offset=0&limit=20
 Authorization: Bearer {{token}}
+
+### --- Schedules (расписания ухода растения) ---
+
+### Все четыре расписания растения
+GET {{baseUrl}}/api/v1/plants/1/schedules
+Authorization: Bearer {{token}}
+
+### Изменить расписание (type: WATERING | MISTING | FERTILIZING | SOIL_CHECK; amountMl только для WATERING)
+PUT {{baseUrl}}/api/v1/plants/1/schedules/WATERING
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "every": 7,
+  "unit": "DAY",
+  "amountMl": 250,
+  "enabled": true
+}
 
 ### --- Locations ---
 

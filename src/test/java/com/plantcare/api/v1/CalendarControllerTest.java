@@ -23,6 +23,8 @@ import org.springframework.test.web.servlet.MvcResult;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -220,6 +222,99 @@ class CalendarControllerTest {
                         .param("from", "2026-01-01")
                         .param("to", "2026-03-02"))  // 60 дней
                 .andExpect(status().isOk());
+    }
+
+    // ===================== GET /api/v1/calendar/progress (#179) =====================
+
+    @Test
+    void should_return_200_with_progress_per_day_when_valid_range() throws Exception {
+        // arrange — два дня с прогрессом
+        User user = mockUserWithTimezone(7L, 7L, "UTC");
+        when(currentUserProvider.currentUser()).thenReturn(user);
+        when(calendarApiService.getProgress(anyLong(), any(LocalDate.class), any(LocalDate.class), anyString()))
+                .thenReturn(new TreeMap<>(Map.of(
+                        LocalDate.parse("2026-01-03"), new CalendarApiService.DayProgress(1, 1),
+                        LocalDate.parse("2026-01-05"), new CalendarApiService.DayProgress(2, 0))));
+
+        // act + assert
+        mockMvc.perform(get("/api/v1/calendar/progress")
+                        .param("from", "2026-01-01")
+                        .param("to", "2026-01-07"))
+                .andExpect(status().isOk())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+                .andExpect(jsonPath("$['2026-01-03'].planned").value(1))
+                .andExpect(jsonPath("$['2026-01-03'].done").value(1))
+                .andExpect(jsonPath("$['2026-01-05'].planned").value(2))
+                .andExpect(jsonPath("$['2026-01-05'].done").value(0));
+    }
+
+    @Test
+    void should_return_empty_map_when_no_progress_in_range() throws Exception {
+        // arrange — нет активности в диапазоне
+        User user = mockUserWithTimezone(8L, 8L, "UTC");
+        when(currentUserProvider.currentUser()).thenReturn(user);
+        when(calendarApiService.getProgress(anyLong(), any(LocalDate.class), any(LocalDate.class), anyString()))
+                .thenReturn(new TreeMap<>());
+
+        // act + assert
+        mockMvc.perform(get("/api/v1/calendar/progress")
+                        .param("from", "2026-01-01")
+                        .param("to", "2026-01-07"))
+                .andExpect(status().isOk())
+                .andExpect(result -> assertThat(result.getResponse().getContentAsString())
+                        .isEqualTo("{}"));
+    }
+
+    @Test
+    void should_return_400_when_progress_range_exceeds_60_days() throws Exception {
+        // arrange
+        User user = mockUserWithTimezone(9L, 9L, "UTC");
+        when(currentUserProvider.currentUser()).thenReturn(user);
+
+        // act + assert — тот же контракт ошибки, что у /calendar
+        mockMvc.perform(get("/api/v1/calendar/progress")
+                        .param("from", "2026-01-01")
+                        .param("to", "2026-03-03"))  // 61 день
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.code").value("BAD_REQUEST"))
+                .andExpect(result -> assertThat(result.getResponse().getContentAsString())
+                        .contains("60 days"));
+    }
+
+    @Test
+    void should_return_401_for_progress_when_no_authenticated_user() throws Exception {
+        // arrange
+        when(currentUserProvider.currentUser())
+                .thenThrow(AuthTokenException.invalid("No authenticated user in security context"));
+
+        // act + assert
+        mockMvc.perform(get("/api/v1/calendar/progress")
+                        .param("from", "2026-01-01")
+                        .param("to", "2026-01-07"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error.code").value("TOKEN_INVALID"));
+    }
+
+    @Test
+    void should_return_progress_dates_in_ascending_order() throws Exception {
+        // arrange — карта намеренно с обратным порядком вставки
+        User user = mockUserWithTimezone(10L, 10L, "UTC");
+        when(currentUserProvider.currentUser()).thenReturn(user);
+        when(calendarApiService.getProgress(anyLong(), any(LocalDate.class), any(LocalDate.class), anyString()))
+                .thenReturn(new TreeMap<>(Map.of(
+                        LocalDate.parse("2026-01-05"), new CalendarApiService.DayProgress(1, 0),
+                        LocalDate.parse("2026-01-02"), new CalendarApiService.DayProgress(0, 1))));
+
+        // act
+        MvcResult result = mockMvc.perform(get("/api/v1/calendar/progress")
+                        .param("from", "2026-01-01")
+                        .param("to", "2026-01-07"))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        // assert — TreeMap гарантирует возрастающий порядок ключей
+        String body = result.getResponse().getContentAsString();
+        assertThat(body.indexOf("2026-01-02")).isLessThan(body.indexOf("2026-01-05"));
     }
 
     // ===================== helpers =====================

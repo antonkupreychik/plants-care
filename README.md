@@ -80,6 +80,7 @@ echo 'testcontainers.reuse.enable=true' >> ~/.testcontainers.properties
 - **V28** — добавляет `plants.parent_id BIGINT NULL` — self-FK на `plants(id)` для родословной растений (ADR-012, issue #139). Растение-черенок ссылается на материнское; NULL = корень родословной. FK `ON DELETE SET NULL` (удаление родителя обрывает связь, потомок остаётся). btree-индекс `idx_plants_parent_id` под выборку потомков по родителю. Карточка показывает «🌱 Потомки: N» у родителя и кликабельную ссылку «⬅️ Родитель: …» у потомка
 - **V29** — сидинг энциклопедических фактов в `species_facts` (`ORIGIN`/`CARE`/`TOXICITY`/`CURIOSITY`) и простановка флагов токсичности `species.toxic_to_*` для топ-видов по популярности (issue #132). Это сидинг, обещанный в V22 (#129), и данные под флаги из V26 (#130). Чистый сид без DDL. Привязка к виду по `latin_name`, не по id. Идемпотентен: факты — `INSERT ... WHERE NOT EXISTS` по `(species_id, category, body)`, токсичность — `UPDATE`. Виды без достоверных данных ASPCA остаются с `NULL` («нет данных»)
 - **V30** — таблица `transplant_supply_suggestions` (issue #141): трекер идемпотентности подсказок расходников перед пересадкой. По строке на `(user_id, plant_id, source_event_id)`, где `source_event_id` — id записи TRANSPLANT в `plant_events`, от которой посчитана предстоящая пересадка. UNIQUE `(user_id, plant_id, source_event_id)` гарантирует один пуш на одно предстоящее событие (новая пересадка → новый `source_event_id` → можно подсказать снова). `status` (`SUGGESTED`/`ADDED`/`DISMISSED`, CHECK), `predicted_transplant_at`. FK на `users`/`plants`/`plant_events` `ON DELETE CASCADE`. Индексы `(user_id, status)` и по обоим FK
+- **V34** — добавляет `care_schedules.amount_ml INT NULL` (issue #185): объём полива в миллилитрах для расписаний типа `WATERING`. NULL = объём не задан; для остальных типов колонка не используется
 
 ## REST API
 
@@ -102,6 +103,7 @@ echo 'testcontainers.reuse.enable=true' >> ~/.testcontainers.properties
 | `/api/v1/plants/{id}/history` | `GET` | 200 | История ухода за растением с offset-пагинацией. Query params: `limit` [1–100], default 20; `offset`, default 0. Проверяет ownership растения |
 | `/api/v1/today` | `GET` | 200 | Задачи ухода на сегодня в таймзоне пользователя |
 | `/api/v1/calendar` | `GET` | 200 | Расписание за произвольный период. Query params: `from`, `to` (ISO date). Диапазон не более 60 дней. Дни без задач в ответ не включаются |
+| `/api/v1/calendar/progress` | `GET` | 200 | Прогресс выполнения по дням за период: карта `{ "YYYY-MM-DD": { "planned", "done" } }`, где `planned` — запланированные occurrence'ы расписаний, `done` — выполненные (не отменённые) записи ухода за этот локальный день в таймзоне пользователя. Query params: `from`, `to` (ISO date), диапазон не более 60 дней. Дни без планов и без выполнений не включаются |
 | `/api/v1/stats/streak` | `GET` | 200 | Текущий стрик растения (последовательные выполнения без пропусков). Query param: `plantId` |
 | `/api/v1/reports/monthly` | `GET` | 200 | Сводный отчёт по уходу за месяц текущего пользователя: `done`, `overdue` (выполнено с опозданием), `byType` (по всем типам ухода), `streak`, `healthTrend` (понедельные ISO-бакеты качества). Query param `month` обязателен, формат `YYYY-MM`. Границы месяца считаются в таймзоне пользователя. Невалидный `month` → 400 |
 
@@ -116,6 +118,25 @@ echo 'testcontainers.reuse.enable=true' >> ~/.testcontainers.properties
 | `POST` | `/api/v1/plants` | Создать растение (без расписания полива) |
 | `PUT` | `/api/v1/plants/{id}` | Обновить растение. PATCH-семантика: обновляются только переданные поля (`name`, `notes`, `locationId`) |
 | `DELETE` | `/api/v1/plants/{id}` | Soft-delete: выставляет `archivedAt`, из выборок не возвращается |
+
+При создании растения через REST засеваются все четыре расписания ухода (`WATERING`/`MISTING`/`FERTILIZING`/`SOIL_CHECK`) из дефолтов вида; включён по умолчанию только `WATERING`.
+
+### Schedules (issue #185)
+
+Расписания ухода конкретного растения. У каждого растения ровно четыре расписания по числу типов ухода. Все эндпоинты user-scoped (JWT).
+
+| Метод | Путь | Описание |
+|---|---|---|
+| `GET` | `/api/v1/plants/{id}/schedules` | Все четыре расписания в фиксированном порядке. Если расписание ещё не настроено — отдаётся дефолтный интервал вида с `enabled=false` |
+| `PUT` | `/api/v1/plants/{id}/schedules/{type}` | Создать/обновить расписание типа `{type}`; пересчитывает `nextDueAt` |
+
+`type` ∈ `WATERING` / `MISTING` / `FERTILIZING` / `SOIL_CHECK`. Тело `PUT`: `{ "every", "unit", "amountMl?", "enabled" }`. Элемент ответа:
+
+```json
+{ "type": "WATERING", "every": 7, "unit": "DAY", "amountMl": 250, "enabled": true, "nextDueAt": "2026-06-05T08:00:00Z" }
+```
+
+`unit` сейчас всегда `DAY`. `amountMl` осмыслен только для `WATERING` (для остальных типов игнорируется). `nextDueAt` (UTC) заполнен только при `enabled=true`, иначе `null`.
 
 ### Locations
 
@@ -137,6 +158,23 @@ echo 'testcontainers.reuse.enable=true' >> ~/.testcontainers.properties
 | `POST` | `/api/v1/shopping` | 201 | Добавить позицию. Тело: `{ "title" }` |
 | `PATCH` | `/api/v1/shopping/{id}` | 200 | Частичное обновление: передаются только изменяемые поля (`checked`, `title`) |
 | `DELETE` | `/api/v1/shopping/{id}` | 204 | Удалить позицию |
+
+### Me (issue #182)
+
+Профиль и настройки текущего пользователя. Скоуп — аутентифицированный пользователь.
+
+| Метод | Путь | Статус ответа | Описание |
+|---|---|---|---|
+| `GET` | `/api/v1/me` | 200 | Профиль: имя, аватар, счётчики для хедера (`plantsTotal`, `tasksToday`, `notificationsUnread`) и настройки (`quietHoursStart`, `quietHoursEnd`, `timezone`, `locale`). `tasksToday` — число невыполненных задач на сегодня в таймзоне пользователя. `avatar` — плейсхолдер (всегда `null`, колонки в схеме нет); `notificationsUnread` — плейсхолдер (всегда `0` до фида уведомлений, issue #183) |
+| `PATCH` | `/api/v1/me` | 200 | Частичное обновление настроек (`quietHoursStart`, `quietHoursEnd`, `timezone`, `locale`): меняются только переданные поля. Смена `timezone` пересчитывает активные расписания с сохранением локального времени дня. Невалидный IANA-`timezone` → 400 |
+### Notifications (issue #183)
+
+Персистентный inbox уведомлений пользователя для мобильного клиента. Все эндпоинты user-scoped. Наполнение ленты добавят отдельные issue — текущая реализация даёт только чтение и отметку прочтения.
+
+| Метод | Путь | Статус ответа | Описание |
+|---|---|---|---|
+| `GET` | `/api/v1/notifications` | 200 | Лента уведомлений (новые сверху, `createdAt` DESC) и счётчик непрочитанных `unreadCount`. Offset-пагинация: `limit` [1–100], default 20; `offset` ≥ 0, default 0. Значение вне диапазона → 400. Тип уведомления (`care`/`alert`/`award`/`report`/`system`) и опциональный `plantId` для deep-link |
+| `POST` | `/api/v1/notifications/{id}/read` | 204 | Идемпотентная отметка прочтения: повторный вызов — no-op, момент первого прочтения не перезаписывается. Чужое или несуществующее уведомление → 404 |
 
 ### Формат ошибок
 

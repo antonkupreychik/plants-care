@@ -1,0 +1,129 @@
+# Персистентный inbox уведомлений пользователя (issue #183, mobile gap G17).
+
+paths:
+  Collection:
+    get:
+      tags: [Notifications]
+      operationId: listNotifications
+      summary: Лента уведомлений пользователя
+      description: |
+        Возвращает страницу уведомлений текущего пользователя (`sub` из
+        bearer-токена), новые сверху (по `createdAt` DESC), плюс счётчик
+        непрочитанных `unreadCount`.
+
+        `createdAt`/`readAt` — UTC (`date-time`); клиент группирует по дням в
+        таймзоне пользователя. Пагинация — `offset`/`limit`:
+        * `limit` — в диапазоне **[1, 100]**; значение вне диапазона → `400`;
+        * `offset` — **≥ 0**; отрицательное значение → `400`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: offset
+          in: query
+          required: false
+          description: Сдвиг от начала выборки (≥ 0). Отрицательное значение → 400.
+          schema:
+            type: integer
+            format: int32
+            default: 0
+            minimum: 0
+            example: 0
+        - name: limit
+          in: query
+          required: false
+          description: Размер страницы, [1, 100]. Значение вне диапазона → 400.
+          schema:
+            type: integer
+            format: int32
+            default: 20
+            minimum: 1
+            maximum: 100
+            example: 20
+      responses:
+        '200':
+          description: Лента уведомлений со счётчиком непрочитанных.
+          content:
+            application/json:
+              schema:
+                $ref: '#/schemas/NotificationsResponse'
+        '400':
+          $ref: '../_common/responses.yaml#/BadRequest'
+
+  Item:
+    post:
+      tags: [Notifications]
+      operationId: markNotificationRead
+      summary: Пометить уведомление прочитанным
+      description: |
+        Идемпотентно помечает уведомление прочитанным. Повторный вызов
+        безопасен (no-op, момент первого прочтения не перезаписывается).
+        Чужое или несуществующее уведомление — 404.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Идентификатор уведомления.
+          schema:
+            type: integer
+            format: int64
+            example: 101
+      responses:
+        '204':
+          description: Уведомление помечено прочитанным.
+        '404':
+          $ref: '../_common/responses.yaml#/NotFound'
+
+schemas:
+  NotificationDto:
+    type: object
+    description: Уведомление в ленте пользователя.
+    required: [id, type, title, body, createdAt]
+    properties:
+      id:
+        type: integer
+        format: int64
+        example: 101
+      type:
+        type: string
+        description: Тип уведомления.
+        enum: [care, alert, award, report, system]
+        example: care
+      title:
+        type: string
+        example: Монстера хочет пить
+      body:
+        type: string
+        example: Полей меня сегодня 💧
+      plantId:
+        type: integer
+        format: int64
+        nullable: true
+        description: Ссылка на растение для deep-link; null, если уведомление не привязано.
+        example: 25
+      createdAt:
+        type: string
+        format: date-time
+        description: Момент создания в UTC.
+        example: '2026-05-28T07:00:00Z'
+      readAt:
+        type: string
+        format: date-time
+        nullable: true
+        description: Момент прочтения в UTC; null = непрочитано.
+
+  NotificationsResponse:
+    type: object
+    description: Лента уведомлений со счётчиком непрочитанных.
+    required: [items, unreadCount]
+    properties:
+      items:
+        type: array
+        items:
+          $ref: '#/schemas/NotificationDto'
+      unreadCount:
+        type: integer
+        format: int32
+        description: Количество непрочитанных уведомлений пользователя.
+        example: 2

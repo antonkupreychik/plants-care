@@ -158,6 +158,146 @@ public class PlantService {
         return saved;
     }
 
+    // =================================================================
+    // REST API: чтение/редактирование расписаний ухода (issue #185, G19/G14)
+    // =================================================================
+
+    /**
+     * Проекция расписания ухода для REST API. Возвращается всегда по всем четырём
+     * типам задач, даже если строки в БД ещё нет — тогда отдаём дефолтный интервал
+     * и {@code enabled=false}. {@code nextDueAt} наружу отдаём только для активных
+     * расписаний (для выключенных в колонке лежит placeholder, но он не имеет смысла).
+     */
+    public record ScheduleView(
+            TaskType type,
+            int every,
+            Integer amountMl,
+            boolean enabled,
+            LocalDateTime nextDueAt
+    ) {}
+
+    /**
+     * Фиксированный порядок выдачи расписаний в REST-ответе.
+     */
+    private static final List<TaskType> SCHEDULE_ORDER = List.of(
+            TaskType.WATERING, TaskType.MISTING, TaskType.FERTILIZING, TaskType.SOIL_CHECK);
+
+    /**
+     * Все четыре расписания ухода растения для REST API (issue #185).
+     * Ownership/архив проверяются в {@link #getPlantOrThrow} (чужое/архив → 404).
+     */
+    @Transactional(readOnly = true)
+    public List<ScheduleView> getSchedules(Long userId, Long plantId) {
+        Plant plant = getPlantOrThrow(userId, plantId);
+
+        java.util.Map<TaskType, CareSchedule> existing = careScheduleRepository
+                .findAllByPlantId(plant.getId()).stream()
+                .collect(java.util.stream.Collectors.toMap(CareSchedule::getTaskType, s -> s));
+
+        return SCHEDULE_ORDER.stream()
+                .map(type -> {
+                    CareSchedule row = existing.get(type);
+                    if (row != null) {
+                        boolean enabled = row.isActive();
+                        return new ScheduleView(
+                                type,
+                                row.getIntervalDays(),
+                                row.getAmountMl(),
+                                enabled,
+                                enabled ? row.getNextDueAt() : null);
+                    }
+                    return new ScheduleView(type, defaultIntervalFor(plant, type), null, false, null);
+                })
+                .toList();
+    }
+
+    /**
+     * Создать/обновить одно расписание ухода из REST API (issue #185).
+     * {@code amountMl} осмыслен только для WATERING — для прочих типов сбрасывается в null.
+     * {@code nextDueAt} наружу отдаём только если расписание активно.
+     */
+    @Transactional
+    public ScheduleView updateSchedule(
+            Long userId, Long plantId, TaskType type, int every, Integer amountMl, boolean enabled) {
+        if (!isValidInterval(every)) {
+            throw new IllegalArgumentException("Интервал должен быть от 1 до 365 дней");
+        }
+        Integer effectiveAmount = (type == TaskType.WATERING) ? amountMl : null;
+        if (effectiveAmount != null && effectiveAmount <= 0) {
+            throw new IllegalArgumentException("Объём должен быть положительным");
+        }
+
+        Plant plant = getPlantOrThrow(userId, plantId);
+
+        int effectiveInterval = seasonalIntervalService.effectiveIntervalDays(
+                plant, plant.getUser(), every);
+        LocalDateTime now = LocalDateTime.now();
+
+        CareSchedule schedule = careScheduleRepository
+                .findByPlantIdAndTaskType(plant.getId(), type)
+                .orElse(null);
+
+        if (schedule != null) {
+            schedule.setIntervalDays(every);
+            schedule.setAmountMl(effectiveAmount);
+            schedule.setActive(enabled);
+            if (enabled) {
+                schedule.rescheduleFrom(now, effectiveInterval);
+            }
+            // disabled: nextDueAt оставляем как есть — колонка NOT NULL, а наружу не отдаём.
+        } else {
+            schedule = CareSchedule.builder()
+                    .plant(plant)
+                    .taskType(type)
+                    .intervalDays(every)
+                    .amountMl(effectiveAmount)
+                    // placeholder даже для disabled — колонка NOT NULL.
+                    .nextDueAt(now.plusDays(effectiveInterval))
+                    .active(enabled)
+                    .build();
+        }
+        CareSchedule saved = careScheduleRepository.save(schedule);
+
+        log.info("Updated {} schedule for plant {} (every={}, amountMl={}, enabled={}, user {})",
+                type, plantId, every, effectiveAmount, enabled, userId);
+
+        return new ScheduleView(type, every, effectiveAmount, enabled,
+                enabled ? saved.getNextDueAt() : null);
+    }
+
+    /**
+     * Создать растение из REST API и сразу засеять все четыре расписания ухода
+     * (issue #185, G14). Включено только WATERING; остальные типы создаются
+     * неактивными, чтобы пользователь мог включить их одним PUT. Telegram-flow
+     * ({@link #createPlantWithWateringSchedule}) этим методом не затрагивается.
+     */
+    @Transactional
+    public Plant createPlantWithDefaultSchedules(
+            User user, String name, String notes, Long locationId, Long speciesId) {
+        Plant plant = createPlant(user, name, notes, locationId, speciesId);
+
+        LocalDateTime now = LocalDateTime.now();
+        for (TaskType type : SCHEDULE_ORDER) {
+            int interval = defaultIntervalFor(plant, type);
+            boolean active = (type == TaskType.WATERING);
+            LocalDateTime nextDueAt = active
+                    ? now.plusDays(seasonalIntervalService.effectiveIntervalDays(plant, user, interval))
+                    : now.plusDays(interval); // placeholder для неактивных — колонка NOT NULL.
+
+            CareSchedule schedule = CareSchedule.builder()
+                    .plant(plant)
+                    .taskType(type)
+                    .intervalDays(interval)
+                    .nextDueAt(nextDueAt)
+                    .active(active)
+                    .build();
+            careScheduleRepository.save(schedule);
+        }
+
+        log.info("Seeded default schedules for plant {} (user {})", plant.getId(), user.getId());
+        return plant;
+    }
+
     @Transactional(readOnly = true)
     public PlantFamily getPlantFamily(Long userId, Long plantId) {
         Plant plant = getPlantOrThrow(userId, plantId);
@@ -288,7 +428,7 @@ public class PlantService {
 
     /**
      * Создать новое растение с расписанием полива и конкретной локацией.
-     * <p>
+     *
      * Этот метод пригодится позже, когда в Telegram-flow добавишь выбор комнаты.
      */
     @Transactional

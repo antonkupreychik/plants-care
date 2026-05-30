@@ -75,6 +75,8 @@ public class PlantController implements PlantsApi {
                 request.getParentPlantId()
         );
 
+        Plant plant = plantService.createPlantWithDefaultSchedules(
+                user, request.getName(), request.getNotes(), request.getLocationId(), request.getSpeciesId());
         return toDto(plant);
     }
 
