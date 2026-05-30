@@ -8,19 +8,19 @@ import com.plantcare.core.domain.Plant;
 import com.plantcare.core.domain.Species;
 import com.plantcare.core.domain.User;
 import com.plantcare.core.domain.enums.HealthZone;
-import jakarta.persistence.EntityNotFoundException;
-import org.springframework.security.access.AccessDeniedException;
 import com.plantcare.core.service.HealthScoreService;
 import com.plantcare.core.service.LocationService;
 import com.plantcare.core.service.PlantDiagnosisReportService;
 import com.plantcare.core.service.PlantService;
 import com.plantcare.core.service.UserService;
+import jakarta.persistence.EntityNotFoundException;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -40,9 +40,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 /**
  * @WebMvcTest for {@link PlantController} — covers all CRUD endpoints, validation,
- * ownership checks, and soft-delete semantics (issue #85).
+ * ownership checks, and soft-delete semantics.
  *
- * <p>Filters disabled so {@link org.springframework.security.access.AccessDeniedException}
+ * <p>Filters disabled so {@link AccessDeniedException}
  * reaches the {@link ApiExceptionHandler} advice instead of being intercepted by
  * Spring Security's {@code ExceptionTranslationFilter}.
  */
@@ -71,16 +71,9 @@ class PlantControllerTest {
 
     @org.junit.jupiter.api.BeforeEach
     void stubCurrentUser() {
-        // По умолчанию аутентифицированный пользователь — userId=1 (как в прежних X-User-Id=1).
         when(currentUserProvider.currentUserId()).thenReturn(1L);
     }
 
-    // ------------------------------------------------------------------ helpers
-
-    /**
-     * Builds a Plant mock where {@code plant.getUser().getId()} returns {@code userId}
-     * and the plant is not archived (archivedAt == null).
-     */
     private Plant mockPlant(long plantId, long userId, String name) {
         User user = mock(User.class);
         when(user.getId()).thenReturn(userId);
@@ -104,11 +97,8 @@ class PlantControllerTest {
         return plant;
     }
 
-    // ------------------------------------------------------------------ tests
-
     @Test
     void should_return_plants_page_when_listing_all() throws Exception {
-        // arrange
         Plant p1 = mockPlant(1L, 1L, "Ficus");
         Plant p2 = mockPlant(2L, 1L, "Monstera");
 
@@ -116,7 +106,6 @@ class PlantControllerTest {
                 .thenReturn(List.of(p1, p2));
         when(plantService.countPlants(1L, null)).thenReturn(2L);
 
-        // act + assert
         mockMvc.perform(get("/api/v1/plants"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.items").isArray())
@@ -128,14 +117,12 @@ class PlantControllerTest {
 
     @Test
     void should_return_plants_filtered_by_location() throws Exception {
-        // arrange
         Plant p = mockPlant(1L, 1L, "Ficus");
 
         when(plantService.listPlants(eq(1L), eq(5L), eq(0), eq(20)))
                 .thenReturn(List.of(p));
         when(plantService.countPlants(1L, 5L)).thenReturn(1L);
 
-        // act + assert
         mockMvc.perform(get("/api/v1/plants?locationId=5"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.items.length()").value(1))
@@ -144,12 +131,10 @@ class PlantControllerTest {
 
     @Test
     void should_return_plant_when_found() throws Exception {
-        // arrange
         Plant plant = mockPlant(1L, 1L, "Ficus");
 
         when(plantService.getPlantOrThrow(1L, 1L)).thenReturn(plant);
 
-        // act + assert
         mockMvc.perform(get("/api/v1/plants/1"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id").value(1))
@@ -158,11 +143,9 @@ class PlantControllerTest {
 
     @Test
     void should_return_404_when_plant_not_found() throws Exception {
-        // arrange — service throws EntityNotFoundException → handler maps to 404
         when(plantService.getPlantOrThrow(1L, 999L))
                 .thenThrow(new EntityNotFoundException("Plant not found: 999"));
 
-        // act + assert
         mockMvc.perform(get("/api/v1/plants/999"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.error.code").value("NOT_FOUND"));
@@ -170,19 +153,23 @@ class PlantControllerTest {
 
     @Test
     void should_create_plant() throws Exception {
-        // arrange
         User user = User.builder().telegramChatId(1L).build();
         Plant plant = mockPlant(10L, 1L, "Ficus");
 
         when(userService.getByIdOrThrow(1L)).thenReturn(user);
-        when(plantService.createPlantWithDefaultSchedules(eq(user), eq("Ficus"), isNull(), isNull(), isNull()))
-                .thenReturn(plant);
+        when(plantService.createPlant(
+                eq(user),
+                eq("Ficus"),
+                isNull(),
+                isNull(),
+                isNull(),
+                isNull()
+        )).thenReturn(plant);
 
         String body = """
                 {"name": "Ficus"}
                 """;
 
-        // act + assert
         mockMvc.perform(post("/api/v1/plants")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(body))
@@ -193,23 +180,28 @@ class PlantControllerTest {
 
     @Test
     void should_create_plant_with_speciesId() throws Exception {
-        // arrange — клиент передаёт speciesId (mobile gap G13)
         User user = User.builder().telegramChatId(1L).build();
         Plant plant = mockPlant(11L, 1L, "Монстера");
+
         Species species = mock(Species.class);
         when(species.getId()).thenReturn(7L);
         when(species.getName()).thenReturn("Monstera deliciosa");
         when(plant.getSpecies()).thenReturn(species);
 
         when(userService.getByIdOrThrow(1L)).thenReturn(user);
-        when(plantService.createPlantWithDefaultSchedules(eq(user), eq("Монстера"), isNull(), isNull(), eq(7L)))
-                .thenReturn(plant);
+        when(plantService.createPlant(
+                eq(user),
+                eq("Монстера"),
+                isNull(),
+                isNull(),
+                eq(7L),
+                isNull()
+        )).thenReturn(plant);
 
         String body = """
                 {"name": "Монстера", "speciesId": 7}
                 """;
 
-        // act + assert
         mockMvc.perform(post("/api/v1/plants")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(body))
@@ -220,13 +212,38 @@ class PlantControllerTest {
     }
 
     @Test
+    void should_create_plant_with_parentPlantId() throws Exception {
+        User user = User.builder().telegramChatId(1L).build();
+        Plant plant = mockPlant(12L, 1L, "Отводок");
+
+        when(userService.getByIdOrThrow(1L)).thenReturn(user);
+        when(plantService.createPlant(
+                eq(user),
+                eq("Отводок"),
+                isNull(),
+                isNull(),
+                isNull(),
+                eq(10L)
+        )).thenReturn(plant);
+
+        String body = """
+                {"name": "Отводок", "parentPlantId": 10}
+                """;
+
+        mockMvc.perform(post("/api/v1/plants")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.id").value(12))
+                .andExpect(jsonPath("$.name").value("Отводок"));
+    }
+
+    @Test
     void should_return_400_when_name_blank() throws Exception {
-        // arrange
         String body = """
                 {"name": ""}
                 """;
 
-        // act + assert
         mockMvc.perform(post("/api/v1/plants")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(body))
@@ -237,10 +254,8 @@ class PlantControllerTest {
 
     @Test
     void should_return_400_when_name_missing() throws Exception {
-        // arrange — no "name" field in body at all
         String body = "{}";
 
-        // act + assert
         mockMvc.perform(post("/api/v1/plants")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(body))
@@ -250,11 +265,9 @@ class PlantControllerTest {
 
     @Test
     void should_return_400_when_name_too_long() throws Exception {
-        // arrange — name exceeds @Size(max = 100)
         String longName = "X".repeat(101);
         String body = objectMapper.writeValueAsString(java.util.Map.of("name", longName));
 
-        // act + assert
         mockMvc.perform(post("/api/v1/plants")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(body))
@@ -264,7 +277,6 @@ class PlantControllerTest {
 
     @Test
     void should_update_plant() throws Exception {
-        // arrange
         Plant updated = mockPlant(1L, 1L, "Updated");
 
         when(plantService.updatePlant(eq(1L), eq(1L), eq("Updated"), isNull(), isNull()))
@@ -274,7 +286,6 @@ class PlantControllerTest {
                 {"name": "Updated"}
                 """;
 
-        // act + assert
         mockMvc.perform(put("/api/v1/plants/1")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(body))
@@ -284,35 +295,65 @@ class PlantControllerTest {
 
     @Test
     void should_delete_plant_and_return_204() throws Exception {
-        // arrange
         doNothing().when(plantService).archivePlant(1L, 1L);
 
-        // act + assert
         mockMvc.perform(delete("/api/v1/plants/1"))
                 .andExpect(status().isNoContent());
     }
 
     @Test
     void should_return_403_when_plant_belongs_to_other_user() throws Exception {
-        // arrange — service throws AccessDeniedException when plant belongs to another user
         when(plantService.getPlantOrThrow(1L, 1L))
                 .thenThrow(new AccessDeniedException("Access denied"));
 
-        // act + assert
         mockMvc.perform(get("/api/v1/plants/1"))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.error.code").value("ACCESS_DENIED"));
     }
 
-    // ------------------------------------------------------------- health (G1)
+    @Test
+    void should_return_plant_family_with_children() throws Exception {
+        Plant child = mockPlant(25L, 1L, "Отводок 1");
+
+        when(plantService.getPlantFamily(1L, 10L))
+                .thenReturn(new PlantService.PlantFamily(null, List.of(child)));
+
+        mockMvc.perform(get("/api/v1/plants/10/family"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.children.length()").value(1))
+                .andExpect(jsonPath("$.children[0].id").value(25))
+                .andExpect(jsonPath("$.children[0].name").value("Отводок 1"));
+    }
+
+    @Test
+    void should_return_parent_for_child_family() throws Exception {
+        Plant parent = mockPlant(10L, 1L, "Монстера мама");
+
+        when(plantService.getPlantFamily(1L, 25L))
+                .thenReturn(new PlantService.PlantFamily(parent, List.of()));
+
+        mockMvc.perform(get("/api/v1/plants/25/family"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.parent.id").value(10))
+                .andExpect(jsonPath("$.parent.name").value("Монстера мама"))
+                .andExpect(jsonPath("$.children.length()").value(0));
+    }
+
+    @Test
+    void should_return_404_for_family_of_missing_plant() throws Exception {
+        when(plantService.getPlantFamily(1L, 999L))
+                .thenThrow(new EntityNotFoundException("Plant not found: 999"));
+
+        mockMvc.perform(get("/api/v1/plants/999/family"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.error.code").value("NOT_FOUND"));
+    }
 
     @Test
     void should_return_health_score_when_sufficient_data() throws Exception {
-        // arrange
         when(plantService.getPlantHealth(1L, 1L))
                 .thenReturn(HealthScoreService.HealthScore.of(82, HealthZone.GREEN));
 
-        // act + assert
         mockMvc.perform(get("/api/v1/plants/1/health"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.insufficientData").value(false))
@@ -322,11 +363,9 @@ class PlantControllerTest {
 
     @Test
     void should_return_insufficient_health_when_little_data() throws Exception {
-        // arrange — данных мало → score/zone null
         when(plantService.getPlantHealth(1L, 1L))
                 .thenReturn(HealthScoreService.HealthScore.insufficient());
 
-        // act + assert
         mockMvc.perform(get("/api/v1/plants/1/health"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.insufficientData").value(true))
@@ -336,21 +375,16 @@ class PlantControllerTest {
 
     @Test
     void should_return_404_for_health_of_missing_plant() throws Exception {
-        // arrange — ownership/not-found пробрасывается из сервиса
         when(plantService.getPlantHealth(1L, 999L))
                 .thenThrow(new EntityNotFoundException("Plant not found: 999"));
 
-        // act + assert
         mockMvc.perform(get("/api/v1/plants/999/health"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.error.code").value("NOT_FOUND"));
     }
 
-    // ---------------------------------------------------- diagnosis (#193)
-
     @Test
     void should_return_diagnosis_json_shape_when_plant_has_issues() throws Exception {
-        // arrange — отчёт с двумя проблемами (HIGH первой) и deduped-рекомендациями
         var issues = List.of(
                 new PlantDiagnosisReportService.Issue(
                         "UNDERWATERED",
@@ -364,12 +398,15 @@ class PlantControllerTest {
                         List.of("Подкорми растение по графику")));
         var report = new PlantDiagnosisReportService.DiagnosisReport(
                 issues,
-                List.of("Полей растение сегодня", "Проверь, не пересох ли грунт",
-                        "Подкорми растение по графику"));
+                List.of(
+                        "Полей растение сегодня",
+                        "Проверь, не пересох ли грунт",
+                        "Подкорми растение по графику"
+                )
+        );
 
         when(plantService.getPlantDiagnosis(1L, 1L)).thenReturn(report);
 
-        // act + assert
         mockMvc.perform(get("/api/v1/plants/1/diagnosis"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.issues.length()").value(2))
@@ -385,11 +422,9 @@ class PlantControllerTest {
 
     @Test
     void should_return_404_for_diagnosis_of_missing_plant() throws Exception {
-        // arrange — чужое/архивное растение → not-found пробрасывается из сервиса
         when(plantService.getPlantDiagnosis(1L, 999L))
                 .thenThrow(new EntityNotFoundException("Plant not found: 999"));
 
-        // act + assert
         mockMvc.perform(get("/api/v1/plants/999/diagnosis"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.error.code").value("NOT_FOUND"));

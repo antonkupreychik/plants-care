@@ -203,4 +203,9 @@ public interface PlantRepository extends JpaRepository<Plant, Long> {
             @Param("userId") Long userId,
             org.springframework.data.domain.Limit limit
     );
+
+    List<Plant> findAllByUserIdAndParentIdAndArchivedAtIsNullOrderByNameAsc(
+            Long userId,
+            Long parentId
+    );
 }

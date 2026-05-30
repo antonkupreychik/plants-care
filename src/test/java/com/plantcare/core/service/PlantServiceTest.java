@@ -165,7 +165,7 @@ class PlantServiceTest extends IntegrationTestBase {
     @DisplayName("createPlant с speciesId связывает растение с видом и НЕ создаёт расписаний")
     void createPlantViaApi_withSpecies_linksSpeciesAndNoSchedule() {
         Plant plant = plantService.createPlant(
-                testUser, "Монстера у окна", "заметка", null, monstera.getId());
+                testUser, "Монстера у окна", "заметка", null, monstera.getId(),null);
 
         assertThat(plant.getId()).isNotNull();
         assertThat(plant.getSpecies()).isNotNull();
@@ -178,7 +178,7 @@ class PlantServiceTest extends IntegrationTestBase {
     @DisplayName("createPlant без speciesId оставляет species = NULL")
     void createPlantViaApi_withoutSpecies_speciesNull() {
         Plant plant = plantService.createPlant(
-                testUser, "Безымянное", null, null, null);
+                testUser, "Безымянное", null, null, null,null);
 
         assertThat(plant.getSpecies()).isNull();
     }
@@ -187,7 +187,7 @@ class PlantServiceTest extends IntegrationTestBase {
     @DisplayName("createPlant с несуществующим speciesId → EntityNotFoundException (404)")
     void createPlantViaApi_withUnknownSpecies_throwsNotFound() {
         assertThatThrownBy(() -> plantService.createPlant(
-                testUser, "Растение", null, null, 999_999L))
+                testUser, "Растение", null, null, 999_999L,null))
                 .isInstanceOf(EntityNotFoundException.class)
                 .hasMessageContaining("999999");
 
@@ -202,7 +202,7 @@ class PlantServiceTest extends IntegrationTestBase {
     @DisplayName("getPlantHealth: для растения без истории ухода → insufficientData")
     void getPlantHealth_insufficientForPlantWithoutHistory() {
         Plant plant = plantService.createPlant(
-                testUser, "Свежее растение", null, null, null);
+                testUser, "Свежее растение", null, null, null,null);
 
         HealthScoreService.HealthScore health = plantService.getPlantHealth(
                 testUser.getId(), plant.getId());
@@ -214,7 +214,7 @@ class PlantServiceTest extends IntegrationTestBase {
     @DisplayName("getPlantHealth: чужое растение → AccessDeniedException (как getPlantOrThrow)")
     void getPlantHealth_foreignPlant_throwsAccessDenied() {
         Plant plant = plantService.createPlant(
-                testUser, "Моё растение", null, null, null);
+                testUser, "Моё растение", null, null, null,null);
 
         User otherUser = userRepository.save(User.builder()
                 .telegramChatId(801L)

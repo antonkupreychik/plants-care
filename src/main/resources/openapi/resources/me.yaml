@@ -85,7 +85,6 @@ schemas:
         description: |
           URL аватара пользователя. Плейсхолдер: на текущей схеме нет колонки
           под аватар, поэтому поле всегда `null` до появления хранилища аватаров.
-        example: null
       plantsTotal:
         type: integer
         format: int32

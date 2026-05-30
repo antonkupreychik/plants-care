@@ -13,12 +13,12 @@ import com.plantcare.core.repository.PlantRepository;
 import com.plantcare.core.repository.SpeciesRepository;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
-import org.springframework.security.access.AccessDeniedException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Limit;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -41,44 +41,35 @@ public class PlantService {
     private final HealthScoreService healthScoreService;
     private final PlantDiagnosisReportService plantDiagnosisReportService;
 
-    // =================================================================
-    // REST API CRUD (issue #85)
-    // =================================================================
-
     @Transactional(readOnly = true)
     public List<Plant> listPlants(Long userId, Long locationId, int offset, int limit) {
         int safeLimit = Math.max(1, Math.min(limit, 100));
         int safeOffset = Math.max(0, offset);
+
         if (safeOffset % safeLimit != 0) {
             throw new IllegalArgumentException("offset must be a multiple of limit");
         }
+
         int page = safeOffset / safeLimit;
         Pageable pageable = PageRequest.of(page, safeLimit, Sort.by("name").ascending());
+
         if (locationId != null) {
             return plantRepository.findAllByUserIdAndLocationIdAndArchivedAtIsNullOrderByNameAsc(
-                    userId, locationId, pageable);
+                    userId,
+                    locationId,
+                    pageable
+            );
         }
+
         return plantRepository.findAllByUserIdAndArchivedAtIsNullOrderByNameAsc(userId, pageable);
     }
 
-    /**
-     * Health-score растения для REST API (mobile gap G1, issue #138).
-     * Ownership/архив-проверки — те же, что в {@link #getPlantOrThrow}. Расчёт
-     * идёт в этой же read-only транзакции, поэтому lazy {@code plant.user}
-     * (нужен для TZ) инициализируется без LazyInitializationException.
-     */
     @Transactional(readOnly = true)
     public HealthScoreService.HealthScore getPlantHealth(Long userId, Long plantId) {
         Plant plant = getPlantOrThrow(userId, plantId);
         return healthScoreService.computeForPlant(plant);
     }
 
-    /**
-     * Пассивная диагностика растения для REST API (mobile screen 15, issue #193).
-     * Ownership/архив-проверки те же, что в {@link #getPlantOrThrow}. Расчёт идёт
-     * в этой же read-only транзакции — lazy {@code plant.user} (TZ) и расписания
-     * инициализируются без LazyInitializationException.
-     */
     @Transactional(readOnly = true)
     public PlantDiagnosisReportService.DiagnosisReport getPlantDiagnosis(Long userId, Long plantId) {
         Plant plant = getPlantOrThrow(userId, plantId);
@@ -89,12 +80,15 @@ public class PlantService {
     public Plant getPlantOrThrow(Long userId, Long plantId) {
         Plant plant = plantRepository.findByIdWithLocationAndSpecies(plantId)
                 .orElseThrow(() -> new EntityNotFoundException("Plant not found: " + plantId));
+
         if (!plant.getUser().getId().equals(userId)) {
             throw new AccessDeniedException("Access denied");
         }
+
         if (plant.isArchived()) {
             throw new EntityNotFoundException("Plant not found: " + plantId);
         }
+
         return plant;
     }
 
@@ -103,100 +97,140 @@ public class PlantService {
         if (locationId != null) {
             return plantRepository.countByUserIdAndLocationIdAndArchivedAtIsNull(userId, locationId);
         }
+
         return plantRepository.countByUserIdAndArchivedAtIsNull(userId);
     }
 
+    public record PlantFamily(Plant parent, List<Plant> children) {
+    }
+
     @Transactional
-    public Plant createPlant(User user, String name, String notes, Long locationId, Long speciesId) {
+    public Plant createPlant(
+            User user,
+            String name,
+            String notes,
+            Long locationId,
+            Long speciesId,
+            Long parentPlantId
+    ) {
         Location location;
         if (locationId != null) {
             location = locationService.getUserLocationOrThrow(user.getId(), locationId);
         } else {
             location = locationService.getOrCreateDefaultLocation(user);
         }
+
         Species species = null;
         if (speciesId != null) {
             species = speciesRepository.findById(speciesId)
                     .orElseThrow(() -> new EntityNotFoundException("Species not found: " + speciesId));
         }
+
+        Plant parent = null;
+        if (parentPlantId != null) {
+            parent = plantRepository.findByUserIdAndIdAndArchivedAtIsNull(user.getId(), parentPlantId)
+                    .orElseThrow(() -> new EntityNotFoundException("Parent plant not found: " + parentPlantId));
+        }
+
         Plant plant = Plant.builder()
                 .user(user)
                 .location(location)
                 .name(name)
                 .notes(notes)
                 .species(species)
+                .parent(parent)
                 .build();
+
         Plant saved = plantRepository.save(plant);
-        log.info("Created plant '{}' (id={}, speciesId={}) via REST API for user {}",
-                name, saved.getId(), speciesId, user.getId());
+
+        log.info(
+                "Created plant '{}' (id={}, speciesId={}, parentPlantId={}) via REST API for user {}",
+                name,
+                saved.getId(),
+                speciesId,
+                parentPlantId,
+                user.getId()
+        );
+
         return saved;
     }
+    @Transactional
+    public Plant createPlant(
+            User user,
+            String name,
+            String notes,
+            Long locationId,
+            Long speciesId
+    ) {
+        return createPlant(user, name, notes, locationId, speciesId, null);
+    }
 
-    // =================================================================
-    // REST API: чтение/редактирование расписаний ухода (issue #185, G19/G14)
-    // =================================================================
-
-    /**
-     * Проекция расписания ухода для REST API. Возвращается всегда по всем четырём
-     * типам задач, даже если строки в БД ещё нет — тогда отдаём дефолтный интервал
-     * и {@code enabled=false}. {@code nextDueAt} наружу отдаём только для активных
-     * расписаний (для выключенных в колонке лежит placeholder, но он не имеет смысла).
-     */
     public record ScheduleView(
             TaskType type,
             int every,
             Integer amountMl,
             boolean enabled,
             LocalDateTime nextDueAt
-    ) {}
+    ) {
+    }
 
-    /**
-     * Фиксированный порядок выдачи расписаний в REST-ответе.
-     */
     private static final List<TaskType> SCHEDULE_ORDER = List.of(
-            TaskType.WATERING, TaskType.MISTING, TaskType.FERTILIZING, TaskType.SOIL_CHECK);
+            TaskType.WATERING,
+            TaskType.MISTING,
+            TaskType.FERTILIZING,
+            TaskType.SOIL_CHECK
+    );
 
-    /**
-     * Все четыре расписания ухода растения для REST API (issue #185).
-     * Ownership/архив проверяются в {@link #getPlantOrThrow} (чужое/архив → 404).
-     */
     @Transactional(readOnly = true)
     public List<ScheduleView> getSchedules(Long userId, Long plantId) {
         Plant plant = getPlantOrThrow(userId, plantId);
 
         java.util.Map<TaskType, CareSchedule> existing = careScheduleRepository
-                .findAllByPlantId(plant.getId()).stream()
-                .collect(java.util.stream.Collectors.toMap(CareSchedule::getTaskType, s -> s));
+                .findAllByPlantId(plant.getId())
+                .stream()
+                .collect(java.util.stream.Collectors.toMap(CareSchedule::getTaskType, schedule -> schedule));
 
         return SCHEDULE_ORDER.stream()
                 .map(type -> {
                     CareSchedule row = existing.get(type);
+
                     if (row != null) {
                         boolean enabled = row.isActive();
+
                         return new ScheduleView(
                                 type,
                                 row.getIntervalDays(),
                                 row.getAmountMl(),
                                 enabled,
-                                enabled ? row.getNextDueAt() : null);
+                                enabled ? row.getNextDueAt() : null
+                        );
                     }
-                    return new ScheduleView(type, defaultIntervalFor(plant, type), null, false, null);
+
+                    return new ScheduleView(
+                            type,
+                            defaultIntervalFor(plant, type),
+                            null,
+                            false,
+                            null
+                    );
                 })
                 .toList();
     }
 
-    /**
-     * Создать/обновить одно расписание ухода из REST API (issue #185).
-     * {@code amountMl} осмыслен только для WATERING — для прочих типов сбрасывается в null.
-     * {@code nextDueAt} наружу отдаём только если расписание активно.
-     */
     @Transactional
     public ScheduleView updateSchedule(
-            Long userId, Long plantId, TaskType type, int every, Integer amountMl, boolean enabled) {
+            Long userId,
+            Long plantId,
+            TaskType type,
+            int every,
+            Integer amountMl,
+            boolean enabled
+    ) {
         if (!isValidInterval(every)) {
             throw new IllegalArgumentException("Интервал должен быть от 1 до 365 дней");
         }
-        Integer effectiveAmount = (type == TaskType.WATERING) ? amountMl : null;
+
+        Integer effectiveAmount = type == TaskType.WATERING ? amountMl : null;
         if (effectiveAmount != null && effectiveAmount <= 0) {
             throw new IllegalArgumentException("Объём должен быть положительным");
         }
@@ -204,7 +238,11 @@ public class PlantService {
         Plant plant = getPlantOrThrow(userId, plantId);
 
         int effectiveInterval = seasonalIntervalService.effectiveIntervalDays(
-                plant, plant.getUser(), every);
+                plant,
+                plant.getUser(),
+                every
+        );
+
         LocalDateTime now = LocalDateTime.now();
 
         CareSchedule schedule = careScheduleRepository
@@ -215,48 +253,61 @@ public class PlantService {
             schedule.setIntervalDays(every);
             schedule.setAmountMl(effectiveAmount);
             schedule.setActive(enabled);
+
             if (enabled) {
                 schedule.rescheduleFrom(now, effectiveInterval);
             }
-            // disabled: nextDueAt оставляем как есть — колонка NOT NULL, а наружу не отдаём.
         } else {
             schedule = CareSchedule.builder()
                     .plant(plant)
                     .taskType(type)
                     .intervalDays(every)
                     .amountMl(effectiveAmount)
-                    // placeholder даже для disabled — колонка NOT NULL.
                     .nextDueAt(now.plusDays(effectiveInterval))
                     .active(enabled)
                     .build();
         }
+
         CareSchedule saved = careScheduleRepository.save(schedule);
 
-        log.info("Updated {} schedule for plant {} (every={}, amountMl={}, enabled={}, user {})",
-                type, plantId, every, effectiveAmount, enabled, userId);
+        log.info(
+                "Updated {} schedule for plant {} (every={}, amountMl={}, enabled={}, user {})",
+                type,
+                plantId,
+                every,
+                effectiveAmount,
+                enabled,
+                userId
+        );
 
-        return new ScheduleView(type, every, effectiveAmount, enabled,
-                enabled ? saved.getNextDueAt() : null);
+        return new ScheduleView(
+                type,
+                every,
+                effectiveAmount,
+                enabled,
+                enabled ? saved.getNextDueAt() : null
+        );
     }
 
-    /**
-     * Создать растение из REST API и сразу засеять все четыре расписания ухода
-     * (issue #185, G14). Включено только WATERING; остальные типы создаются
-     * неактивными, чтобы пользователь мог включить их одним PUT. Telegram-flow
-     * ({@link #createPlantWithWateringSchedule}) этим методом не затрагивается.
-     */
     @Transactional
     public Plant createPlantWithDefaultSchedules(
-            User user, String name, String notes, Long locationId, Long speciesId) {
-        Plant plant = createPlant(user, name, notes, locationId, speciesId);
+            User user,
+            String name,
+            String notes,
+            Long locationId,
+            Long speciesId
+    ) {
+        Plant plant = createPlant(user, name, notes, locationId, speciesId, null);
 
         LocalDateTime now = LocalDateTime.now();
+
         for (TaskType type : SCHEDULE_ORDER) {
             int interval = defaultIntervalFor(plant, type);
-            boolean active = (type == TaskType.WATERING);
+            boolean active = type == TaskType.WATERING;
+
             LocalDateTime nextDueAt = active
                     ? now.plusDays(seasonalIntervalService.effectiveIntervalDays(plant, user, interval))
-                    : now.plusDays(interval); // placeholder для неактивных — колонка NOT NULL.
+                    : now.plusDays(interval);
 
             CareSchedule schedule = CareSchedule.builder()
                     .plant(plant)
@@ -265,70 +316,76 @@ public class PlantService {
                     .nextDueAt(nextDueAt)
                     .active(active)
                     .build();
+
             careScheduleRepository.save(schedule);
         }
 
         log.info("Seeded default schedules for plant {} (user {})", plant.getId(), user.getId());
+
         return plant;
+    }
+
+    @Transactional(readOnly = true)
+    public PlantFamily getPlantFamily(Long userId, Long plantId) {
+        Plant plant = getPlantOrThrow(userId, plantId);
+
+        Plant parent = null;
+        if (plant.getParent() != null) {
+            Long parentId = plant.getParent().getId();
+
+            parent = plantRepository
+                    .findByUserIdAndIdAndArchivedAtIsNull(userId, parentId)
+                    .orElse(null);
+        }
+
+        List<Plant> children = plantRepository
+                .findAllByUserIdAndParentIdAndArchivedAtIsNullOrderByNameAsc(
+                        userId,
+                        plant.getId()
+                );
+
+        return new PlantFamily(parent, children);
     }
 
     @Transactional
     public Plant updatePlant(Long userId, Long plantId, String name, String notes, Long locationId) {
         Plant plant = getPlantOrThrow(userId, plantId);
+
         if (name != null) {
             plant.setName(name);
         }
+
         if (notes != null) {
             plant.setNotes(notes);
         }
+
         if (locationId != null) {
             Location location = locationService.getUserLocationOrThrow(userId, locationId);
             plant.setLocation(location);
         }
+
         Plant saved = plantRepository.save(plant);
+
         log.info("Updated plant {} via REST API (user {})", plantId, userId);
+
         return saved;
     }
 
-    /**
-     * Получить топ популярных видов для отображения на первом экране.
-     */
     @Transactional(readOnly = true)
     public List<Species> getPopularSpecies(int limit) {
-        return speciesRepository.findAllByOrderByPopularityDesc(
-                Limit.of(limit)
-        );
+        return speciesRepository.findAllByOrderByPopularityDesc(Limit.of(limit));
     }
 
-    /**
-     * Поиск видов по названию или тегам.
-     */
     @Transactional(readOnly = true)
     public List<Species> searchSpecies(String query, int limit) {
         return speciesRepository.searchByQuery(query, limit);
     }
 
-    /**
-     * Получить вид по ID.
-     */
     @Transactional(readOnly = true)
     public Optional<Species> getSpeciesById(Long speciesId) {
         return speciesRepository.findById(speciesId);
     }
 
-    /**
-     * Создать новое растение с расписанием полива.
-     *
-     * Если локация не выбрана явно, растение попадает в дефолтную локацию пользователя:
-     * "Мои растения".
-     *
-     * @param user         юзер-владелец
-     * @param speciesId    ID вида, может быть null для своего растения
-     * @param name         имя растения
-     * @param intervalDays интервал полива в днях
-     * @param nextDueAt    когда следующий полив
-     * @return сохранённое растение с расписанием
-     */
     @Transactional
     public Plant createPlantWithWateringSchedule(
             User user,
@@ -379,11 +436,6 @@ public class PlantService {
         return plant;
     }
 
-    /**
-     * Создать новое растение с расписанием полива и конкретной локацией.
-     *
-     * Этот метод пригодится позже, когда в Telegram-flow добавишь выбор комнаты.
-     */
     @Transactional
     public Plant createPlantWithWateringSchedule(
             User user,
@@ -394,14 +446,16 @@ public class PlantService {
             Long locationId
     ) {
         return createPlantWithWateringSchedule(
-                user, speciesId, name, intervalDays, nextDueAt, locationId, null);
+                user,
+                speciesId,
+                name,
+                intervalDays,
+                nextDueAt,
+                locationId,
+                null
+        );
     }
 
-    /**
-     * Создать новое растение с расписанием полива, конкретной локацией и
-     * датой «когда юзер завёл растение» (issue #117).
-     * {@code acquiredAt} = {@code null} — юзер пропустил шаг или ввёл некорректные данные.
-     */
     @Transactional
     public Plant createPlantWithWateringSchedule(
             User user,
@@ -457,17 +511,6 @@ public class PlantService {
         return plant;
     }
 
-    /**
-     * Добавляет расписание ухода (MISTING или FERTILIZING) к существующему растению.
-     * WATERING уже создаётся при создании растения.
-     * Если расписание данного типа уже есть — активирует его с новым интервалом.
-     *
-     * @param plant       растение
-     * @param taskType    тип задачи (MISTING или FERTILIZING)
-     * @param intervalDays интервал в днях
-     * @param nextDueAt   время следующего события
-     * @return сохранённое расписание
-     */
     @Transactional
     public CareSchedule addCareSchedule(
             Plant plant,
@@ -475,16 +518,22 @@ public class PlantService {
             Integer intervalDays,
             LocalDateTime nextDueAt
     ) {
-        // Если расписание уже существует — обновляем, не создаём дубль
         return careScheduleRepository
                 .findByPlantIdAndTaskType(plant.getId(), taskType)
                 .map(existing -> {
                     existing.setIntervalDays(intervalDays);
                     existing.setNextDueAt(nextDueAt);
                     existing.setActive(true);
+
                     CareSchedule saved = careScheduleRepository.save(existing);
-                    log.info("Updated {} schedule for plant {} (nextDueAt={})",
-                            taskType, plant.getId(), nextDueAt);
+
+                    log.info(
+                            "Updated {} schedule for plant {} (nextDueAt={})",
+                            taskType,
+                            plant.getId(),
+                            nextDueAt
+                    );
+
                     return saved;
                 })
                 .orElseGet(() -> {
@@ -495,17 +544,20 @@ public class PlantService {
                             .nextDueAt(nextDueAt)
                             .active(true)
                             .build();
+
                     CareSchedule saved = careScheduleRepository.save(schedule);
-                    log.info("Created {} schedule for plant {} (nextDueAt={})",
-                            taskType, plant.getId(), nextDueAt);
+
+                    log.info(
+                            "Created {} schedule for plant {} (nextDueAt={})",
+                            taskType,
+                            plant.getId(),
+                            nextDueAt
+                    );
+
                     return saved;
                 });
     }
 
-    /**
-     * Деактивирует расписание заданного типа для растения.
-     * Используется при отключении MISTING/FERTILIZING тумблером в карточке.
-     */
     @Transactional
     public void deactivateCareSchedule(Plant plant, TaskType taskType) {
         careScheduleRepository
@@ -513,67 +565,43 @@ public class PlantService {
                 .ifPresent(schedule -> {
                     schedule.setActive(false);
                     careScheduleRepository.save(schedule);
+
                     log.info("Deactivated {} schedule for plant {}", taskType, plant.getId());
                 });
     }
 
-    /**
-     * Получить все активные расписания растения.
-     * Используется в карточке растения для отображения трёх таймеров.
-     */
     @Transactional(readOnly = true)
     public List<CareSchedule> getActiveSchedules(Long plantId) {
-        return careScheduleRepository.findAllByPlantId(plantId).stream()
+        return careScheduleRepository.findAllByPlantId(plantId)
+                .stream()
                 .filter(CareSchedule::isActive)
                 .toList();
     }
 
-    /**
-     * Получить все расписания растения (включая неактивные).
-     * Используется на экране управления типами ухода — пользователь видит,
-     * какие расписания вообще существуют, чтобы их включить/выключить.
-     */
     @Transactional(readOnly = true)
     public List<CareSchedule> getAllSchedules(Long plantId) {
         return careScheduleRepository.findAllByPlantId(plantId);
     }
 
-    /**
-     * Получить растение пользователя (не архивное) для нужд UI-сервисов:
-     * например, чтобы показать текущую заметку в промпте редактирования.
-     * Также инициализирует lazy-ассоциации, которые могут понадобиться вне транзакции.
-     */
     @Transactional(readOnly = true)
     public Optional<Plant> getPlantForUser(Long userId, Long plantId) {
         Optional<Plant> opt = plantRepository.findByUserIdAndIdAndArchivedAtIsNull(userId, plantId);
+
         opt.ifPresent(plant -> {
-            // Touch lazy fields to avoid LazyInitException downstream.
             if (plant.getLocation() != null) {
                 plant.getLocation().getName();
                 plant.getLocation().getEmoji();
             }
         });
+
         return opt;
     }
 
-    /**
-     * Переместить растение в другую локацию.
-     */
     @Transactional
     public Plant movePlantToLocation(Long userId, Long plantId, Long locationId) {
         return locationService.movePlant(userId, plantId, locationId);
     }
 
-    /**
-     * Сохранить telegram file_id фото растения.
-     * Сами файлы на сервер не скачиваем — Telegram хранит фото у себя,
-     * нам достаточно file_id для последующих sendPhoto.
-     *
-     * @param userId  владелец растения (защита от обращения к чужому растению)
-     * @param plantId ID растения
-     * @param fileId  file_id из Telegram API (берём самый большой PhotoSize)
-     * @return обновлённое растение
-     */
     @Transactional
     public Plant updatePhotoFileId(Long userId, Long plantId, String fileId) {
         Plant plant = plantRepository.findByUserIdAndIdAndArchivedAtIsNull(userId, plantId)
@@ -582,6 +610,7 @@ public class PlantService {
                 ));
 
         plant.setPhotoFileId(fileId);
+
         Plant saved = plantRepository.save(plant);
 
         log.info("Updated photo_file_id for plant {} (user {})", plantId, userId);
@@ -589,64 +618,57 @@ public class PlantService {
         return saved;
     }
 
-    // =================================================================
-    // Edit mode (issue #27): rename / note / archive / schedule edits
-    // =================================================================
-
-    /**
-     * Лимит длины заметки. Колонка plants.notes — TEXT, ограничение чисто UX-овое.
-     */
     public static final int NOTE_MAX_LENGTH = 2000;
 
-    /**
-     * Переименование растения. Имя валидируется тем же правилом, что и при создании.
-     */
     @Transactional
     public Plant renamePlant(Long userId, Long plantId, String newName) {
         if (!isValidPlantName(newName)) {
-            throw new IllegalArgumentException(
-                    "Имя должно быть от 1 до 100 символов и не пустым");
+            throw new IllegalArgumentException("Имя должно быть от 1 до 100 символов и не пустым");
         }
 
         Plant plant = plantRepository.findByUserIdAndIdAndArchivedAtIsNull(userId, plantId)
                 .orElseThrow(() -> new IllegalArgumentException("Растение не найдено"));
 
         plant.setName(newName.trim());
+
         Plant saved = plantRepository.save(plant);
 
         log.info("Renamed plant {} to '{}' (user {})", plantId, newName, userId);
+
         return saved;
     }
 
-    /**
-     * Обновить заметку. null/blank → очистить.
-     */
     @Transactional
     public Plant updateNotes(Long userId, Long plantId, String notes) {
         String normalized = notes == null ? null : notes.trim();
+
         if (normalized != null && normalized.isEmpty()) {
             normalized = null;
         }
+
         if (normalized != null && normalized.length() > NOTE_MAX_LENGTH) {
             throw new IllegalArgumentException(
-                    "Заметка не может быть длиннее " + NOTE_MAX_LENGTH + " символов");
+                    "Заметка не может быть длиннее " + NOTE_MAX_LENGTH + " символов"
+            );
         }
 
         Plant plant = plantRepository.findByUserIdAndIdAndArchivedAtIsNull(userId, plantId)
                 .orElseThrow(() -> new IllegalArgumentException("Растение не найдено"));
 
         plant.setNotes(normalized);
+
         Plant saved = plantRepository.save(plant);
 
-        log.info("Updated notes for plant {} (user {}, cleared={})",
-                plantId, userId, normalized == null);
+        log.info(
+                "Updated notes for plant {} (user {}, cleared={})",
+                plantId,
+                userId,
+                normalized == null
+        );
+
         return saved;
     }
 
-    /**
-     * Архивирует растение (soft-delete). История ухода остаётся для статистики.
-     * Используется как из Telegram-бота, так и из REST API (issue #85).
-     */
     @Transactional
     public void archivePlant(Long userId, Long plantId) {
         Plant plant = getPlantOrThrow(userId, plantId);
@@ -657,17 +679,15 @@ public class PlantService {
         log.info("Archived plant {} (user {})", plantId, userId);
     }
 
-    /**
-     * Изменить интервал расписания. Пересчёта nextDueAt НЕ делаем —
-     * пользователь обычно хочет отдельно перенести ближайшее напоминание.
-     */
     @Transactional
     public CareSchedule updateScheduleInterval(
-            Long userId, Long plantId, TaskType taskType, int intervalDays
+            Long userId,
+            Long plantId,
+            TaskType taskType,
+            int intervalDays
     ) {
         if (!isValidInterval(intervalDays)) {
-            throw new IllegalArgumentException(
-                    "Интервал должен быть от 1 до 365 дней");
+            throw new IllegalArgumentException("Интервал должен быть от 1 до 365 дней");
         }
 
         Plant plant = plantRepository.findByUserIdAndIdAndArchivedAtIsNull(userId, plantId)
@@ -676,22 +696,30 @@ public class PlantService {
         CareSchedule schedule = careScheduleRepository
                 .findByPlantIdAndTaskType(plant.getId(), taskType)
                 .orElseThrow(() -> new IllegalArgumentException(
-                        "Расписание " + taskType + " не настроено"));
+                        "Расписание " + taskType + " не настроено"
+                ));
 
         schedule.setIntervalDays(intervalDays);
+
         CareSchedule saved = careScheduleRepository.save(schedule);
 
-        log.info("Updated {} interval to {} for plant {} (user {})",
-                taskType, intervalDays, plantId, userId);
+        log.info(
+                "Updated {} interval to {} for plant {} (user {})",
+                taskType,
+                intervalDays,
+                plantId,
+                userId
+        );
+
         return saved;
     }
 
-    /**
-     * Перенести ближайшее срабатывание расписания на новое время.
-     */
     @Transactional
     public CareSchedule rescheduleSchedule(
-            Long userId, Long plantId, TaskType taskType, LocalDateTime nextDueAt
+            Long userId,
+            Long plantId,
+            TaskType taskType,
+            LocalDateTime nextDueAt
     ) {
         if (nextDueAt == null) {
             throw new IllegalArgumentException("nextDueAt не задан");
@@ -703,25 +731,24 @@ public class PlantService {
         CareSchedule schedule = careScheduleRepository
                 .findByPlantIdAndTaskType(plant.getId(), taskType)
                 .orElseThrow(() -> new IllegalArgumentException(
-                        "Расписание " + taskType + " не настроено"));
+                        "Расписание " + taskType + " не настроено"
+                ));
 
         schedule.setNextDueAt(nextDueAt);
+
         CareSchedule saved = careScheduleRepository.save(schedule);
 
-        log.info("Rescheduled {} for plant {} to {} (user {})",
-                taskType, plantId, nextDueAt, userId);
+        log.info(
+                "Rescheduled {} for plant {} to {} (user {})",
+                taskType,
+                plantId,
+                nextDueAt,
+                userId
+        );
+
         return saved;
     }
 
-    /**
-     * Переключить активность расписания типа ухода:
-     *   - если расписание есть и активно — выключаем (active=false);
-     *   - если расписание есть и отключено — включаем (active=true);
-     *   - если расписания нет — создаём новое с дефолтным интервалом и nextDueAt = today + interval.
-     *
-     * Дефолтные интервалы берём из вида (Species). Если для данного вида не задан или null —
-     * используем разумные хардкоды: WATERING=7, MISTING=3, FERTILIZING=14.
-     */
     @Transactional
     public CareSchedule toggleSchedule(Long userId, Long plantId, TaskType taskType) {
         Plant plant = plantRepository.findByUserIdAndIdAndArchivedAtIsNull(userId, plantId)
@@ -733,25 +760,39 @@ public class PlantService {
 
         if (existing != null) {
             existing.setActive(!existing.isActive());
-            // Если включили заново и nextDueAt в прошлом — сдвигаем на сегодня + интервал,
-            // чтобы у пользователя не висело "просрочено на 100 дней".
-            if (existing.isActive() && existing.getNextDueAt() != null
+
+            if (existing.isActive()
+                    && existing.getNextDueAt() != null
                     && existing.getNextDueAt().isBefore(LocalDateTime.now())) {
                 int effective = seasonalIntervalService.effectiveIntervalDays(
-                        plant, plant.getUser(), existing.getIntervalDays());
+                        plant,
+                        plant.getUser(),
+                        existing.getIntervalDays()
+                );
+
                 existing.rescheduleFrom(LocalDateTime.now(), effective);
             }
+
             CareSchedule saved = careScheduleRepository.save(existing);
-            log.info("Toggled {} for plant {} → active={} (user {})",
-                    taskType, plantId, saved.isActive(), userId);
+
+            log.info(
+                    "Toggled {} for plant {} → active={} (user {})",
+                    taskType,
+                    plantId,
+                    saved.isActive(),
+                    userId
+            );
+
             return saved;
         }
 
         int defaultInterval = defaultIntervalFor(plant, taskType);
-        // Сезонная корректировка нового schedule (issue #67) — если сезон сейчас,
-        // допустим, зима, то «следующий полив через 14 дней» вместо 10.
         int effectiveInterval = seasonalIntervalService.effectiveIntervalDays(
-                plant, plant.getUser(), defaultInterval);
+                plant,
+                plant.getUser(),
+                defaultInterval
+        );
+
         LocalDateTime nextDueAt = LocalDateTime.now().plusDays(effectiveInterval);
 
         CareSchedule fresh = CareSchedule.builder()
@@ -761,16 +802,25 @@ public class PlantService {
                 .nextDueAt(nextDueAt)
                 .active(true)
                 .build();
+
         CareSchedule saved = careScheduleRepository.save(fresh);
 
-        log.info("Created {} schedule for plant {} (interval={}, nextDueAt={}, user {})",
-                taskType, plantId, defaultInterval, nextDueAt, userId);
+        log.info(
+                "Created {} schedule for plant {} (interval={}, nextDueAt={}, user {})",
+                taskType,
+                plantId,
+                defaultInterval,
+                nextDueAt,
+                userId
+        );
+
         return saved;
     }
 
     private int defaultIntervalFor(Plant plant, TaskType taskType) {
         Integer fromSpecies = null;
         Species species = plant.getSpecies();
+
         if (species != null) {
             fromSpecies = switch (taskType) {
                 case WATERING -> species.getWateringDays();
@@ -779,9 +829,11 @@ public class PlantService {
                 case SOIL_CHECK -> species.getSoilCheckDays();
             };
         }
+
         if (fromSpecies != null && isValidInterval(fromSpecies)) {
             return fromSpecies;
         }
+
         return switch (taskType) {
             case WATERING -> 7;
             case MISTING -> 3;
@@ -790,9 +842,6 @@ public class PlantService {
         };
     }
 
-    /**
-     * Валидация имени растения.
-     */
     public static boolean isValidPlantName(String name) {
         if (name == null) {
             return false;
@@ -803,54 +852,21 @@ public class PlantService {
         return !trimmed.isEmpty() && trimmed.length() <= 100;
     }
 
-    /**
-     * Валидация интервала полива.
-     */
     public static boolean isValidInterval(int days) {
         return days >= 1 && days <= 365;
     }
 
-    /**
-     * Антидубль для отметки "сделано": если в течение DEDUP_SECONDS уже была запись
-     * такого же типа — игнорируем повторное нажатие. Совпадает с правилом в
-     * {@link NotificationCallbackService}, чтобы дребезг кнопок из карточки
-     * и из уведомления вёл себя одинаково.
-     */
     private static final int CARE_DEDUP_SECONDS = 60;
-
-    /**
-     * Льготный период "вовремя": done считается on_time, если выполнено
-     * не позже nextDueAt + GRACE_PERIOD_HOURS.
-     */
     private static final int CARE_GRACE_PERIOD_HOURS = 24;
 
-    /**
-     * Результат отметки выполнения. Возвращаем простой объект, чтобы вызывающий
-     * код мог решить, что показать пользователю (новая дата, "уже отмечено", и т.п.).
-     */
     public record MarkCareDoneResult(
             boolean wasDuplicate,
             CareSchedule schedule,
             CareHistory history,
             LocalDateTime doneAt
-    ) {}
+    ) {
+    }
 
-    /**
-     * Отметить уход выполненным из карточки растения.
-     *
-     * Дублирует поведение {@link NotificationCallbackService} ("done"-действие)
-     * для случая, когда юзер сам открыл карточку и нажал кнопку быстрого ухода:
-     *   1. Если активного расписания этого типа у растения нет — возвращаем null.
-     *   2. Если за последние {@value #CARE_DEDUP_SECONDS} сек уже было "сделано" —
-     *      возвращаем wasDuplicate=true, в БД ничего не пишем.
-     *   3. Иначе пишем запись в care_history (с флагом on_time) и сдвигаем
-     *      next_due_at на интервал от фактического времени выполнения.
-     *
-     * @param userId   владелец растения (защита от чужого растения)
-     * @param plantId  ID растения
-     * @param taskType тип задачи (WATERING/MISTING/FERTILIZING)
-     * @return результат отметки или null, если расписание не найдено
-     */
     @Transactional
     public MarkCareDoneResult markCareDone(Long userId, Long plantId, TaskType taskType) {
         Plant plant = plantRepository.findByUserIdAndIdAndArchivedAtIsNull(userId, plantId)
@@ -870,7 +886,6 @@ public class PlantService {
 
         LocalDateTime now = LocalDateTime.now();
 
-        // Дедуп — чтобы двойной тап по кнопке не создавал две записи
         Optional<CareHistory> lastEntry = careHistoryRepository
                 .findFirstByPlantIdAndTaskTypeOrderByDoneAtDesc(plant.getId(), taskType);
 
@@ -890,55 +905,29 @@ public class PlantService {
                 .doneAt(now)
                 .onTime(wasOnTime)
                 .build();
+
         history = careHistoryRepository.save(history);
 
         schedule.rescheduleFrom(now);
         schedule = careScheduleRepository.save(schedule);
 
-        log.info("Plant {} {} marked as done from card (on_time={}, next due at {})",
-                plant.getId(), taskType, wasOnTime, schedule.getNextDueAt());
+        log.info(
+                "Plant {} {} marked as done from card (on_time={}, next due at {})",
+                plant.getId(),
+                taskType,
+                wasOnTime,
+                schedule.getNextDueAt()
+        );
 
         return new MarkCareDoneResult(false, schedule, history, now);
     }
 
-    // =================================================================
-    // Массовый уход для всей локации (issue #19)
-    // =================================================================
-
-    /**
-     * Результат массовой отметки. Делим обновлённые и пропущенные (deduped) — UI
-     * на их основе решает, что показать: «Готово, обновил для X растений»,
-     * «Уже полито» или «Нечего поливать».
-     *
-     * @param updated      сколько растений реально обновили
-     * @param deduped      сколько пропустили из-за свежей записи (≤ DEDUP_SECONDS назад)
-     * @param locationName имя локации для итогового сообщения
-     */
     public record BulkCareDoneResult(int updated, int deduped, String locationName) {
         public int total() {
             return updated + deduped;
         }
     }
 
-    /**
-     * Массовая отметка ухода для всех активных растений в локации одного типа задач.
-     * Используется кнопкой «💧 Полить все растения здесь» в карточке локации.
-     *
-     * Каждое растение обрабатывается индивидуально:
-     *   - проверяется дедуп ({@link #CARE_DEDUP_SECONDS} сек) — если недавно уже было
-     *     «сделано», то для этого растения пропускаем, но другие в локации
-     *     продолжаем обрабатывать (мягкий, а не all-or-none);
-     *   - пишем CareHistory с onTime по тому же 24h grace-правилу;
-     *   - двигаем next_due_at от now на интервал расписания (каждое растение
-     *     получает свой интервал, по полю plant.interval_days).
-     *
-     * Вся операция в одной транзакции — либо все обновления применятся,
-     * либо ни одно (ТЗ #19).
-     *
-     * @param userId     владелец (для ownership-safety в запросе)
-     * @param locationId id комнаты
-     * @param taskType   обычно WATERING, но метод обобщён на любой тип
-     */
     @Transactional
     public BulkCareDoneResult markBulkCareDone(Long userId, Long locationId, TaskType taskType) {
         List<CareSchedule> schedules = careScheduleRepository
@@ -948,8 +937,6 @@ public class PlantService {
             return new BulkCareDoneResult(0, 0, null);
         }
 
-        // Все растения в выборке гарантированно из одной локации (фильтр в запросе),
-        // поэтому имя локации можно взять у первого.
         String locationName = schedules.get(0).getPlant().getLocation().getDisplayName();
 
         LocalDateTime now = LocalDateTime.now();
@@ -961,6 +948,7 @@ public class PlantService {
 
             Optional<CareHistory> last = careHistoryRepository
                     .findFirstByPlantIdAndTaskTypeOrderByDoneAtDesc(plant.getId(), taskType);
+
             if (last.isPresent()
                     && last.get().getDoneAt().plusSeconds(CARE_DEDUP_SECONDS).isAfter(now)) {
                 deduped++;
@@ -976,15 +964,23 @@ public class PlantService {
                     .doneAt(now)
                     .onTime(wasOnTime)
                     .build();
+
             careHistoryRepository.save(history);
 
             schedule.rescheduleFrom(now);
             careScheduleRepository.save(schedule);
+
             updated++;
         }
 
-        log.info("Bulk care done: user={}, location={}, taskType={}, updated={}, deduped={}",
-                userId, locationId, taskType, updated, deduped);
+        log.info(
+                "Bulk care done: user={}, location={}, taskType={}, updated={}, deduped={}",
+                userId,
+                locationId,
+                taskType,
+                updated,
+                deduped
+        );
 
         return new BulkCareDoneResult(updated, deduped, locationName);
     }
