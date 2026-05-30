@@ -4,6 +4,7 @@ import com.plantcare.api.auth.exception.AuthTokenException;
 import com.plantcare.api.auth.exception.RateLimitExceededException;
 import com.plantcare.api.auth.ratelimit.MagicLinkRateLimiter;
 import com.plantcare.api.auth.service.AuthService;
+import com.plantcare.api.auth.service.LogoutService;
 import com.plantcare.api.auth.service.MagicLinkService;
 import com.plantcare.api.auth.service.RefreshService;
 import com.plantcare.api.auth.service.TokenPair;
@@ -12,6 +13,7 @@ import com.plantcare.api.auth.verifier.AppleTokenVerifier;
 import com.plantcare.api.auth.verifier.ExternalIdentity;
 import com.plantcare.api.auth.verifier.GoogleTokenVerifier;
 import com.plantcare.api.ApiExceptionHandler;
+import com.plantcare.api.CurrentUserProvider;
 import com.plantcare.core.domain.User;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -27,6 +29,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -66,6 +69,12 @@ class AuthControllerTest {
 
     @MockitoBean
     private MagicLinkService magicLinkService;
+
+    @MockitoBean
+    private LogoutService logoutService;
+
+    @MockitoBean
+    private CurrentUserProvider currentUserProvider;
 
     @MockitoBean
     private MagicLinkRateLimiter rateLimiter;
@@ -306,5 +315,64 @@ class AuthControllerTest {
                         .content("{\"refreshToken\": \"reused-refresh\"}"))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.error.code").value("TOKEN_REVOKED"));
+    }
+
+    // ===================== POST /auth/logout (issue #178) =====================
+
+    @Test
+    void should_return_204_and_delegate_to_service_when_logout_called() throws Exception {
+        // arrange — текущий юзер резолвится из контекста, сервис отзывает токен
+        when(currentUserProvider.currentUserId()).thenReturn(42L);
+
+        // act + assert — 204 No Content, тело пустое
+        mockMvc.perform(post("/api/v1/auth/logout")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"refreshToken\": \"some-refresh\"}"))
+                .andExpect(status().isNoContent());
+
+        // отзыв делегирован сервису с парой (currentUserId, предъявленный токен)
+        verify(logoutService).logout(42L, "some-refresh");
+    }
+
+    @Test
+    void should_return_204_when_logout_called_twice_with_same_token() throws Exception {
+        // arrange — идемпотентность: сервис не бросает на повторный logout
+        when(currentUserProvider.currentUserId()).thenReturn(7L);
+
+        // act + assert — оба вызова 204
+        for (int i = 0; i < 2; i++) {
+            mockMvc.perform(post("/api/v1/auth/logout")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"refreshToken\": \"repeat-refresh\"}"))
+                    .andExpect(status().isNoContent());
+        }
+
+        verify(logoutService, times(2)).logout(7L, "repeat-refresh");
+    }
+
+    @Test
+    void should_return_400_when_logout_body_missing_refresh_token() throws Exception {
+        // act + assert — refreshToken обязателен (@NotBlank в сгенерированной модели) → 400
+        mockMvc.perform(post("/api/v1/auth/logout")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.code").value("VALIDATION_ERROR"));
+
+        verify(logoutService, never()).logout(any(), anyString());
+    }
+
+    // ===================== POST /auth/logout-all (issue #178) =====================
+
+    @Test
+    void should_return_204_and_bump_epoch_when_logout_all_called() throws Exception {
+        // arrange
+        when(currentUserProvider.currentUserId()).thenReturn(99L);
+
+        // act + assert — 204, делегирование с currentUserId
+        mockMvc.perform(post("/api/v1/auth/logout-all"))
+                .andExpect(status().isNoContent());
+
+        verify(logoutService).logoutAll(99L);
     }
 }

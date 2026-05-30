@@ -4,6 +4,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.annotation.Order;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
@@ -40,6 +41,11 @@ public class ApiSecurityConfig {
         return http
                 .securityMatcher("/api/v1/**")
                 .authorizeHttpRequests(auth -> auth
+                        // logout/logout-all требуют bearer-токен (issue #178) — должны
+                        // идти ДО общего permitAll на /api/v1/auth/** (первое совпадение
+                        // выигрывает).
+                        .requestMatchers(HttpMethod.POST,
+                                "/api/v1/auth/logout", "/api/v1/auth/logout-all").authenticated()
                         .requestMatchers("/api/v1/auth/**").permitAll()
                         .requestMatchers("/api/v1/species/**", "/api/v1/care-types/**").permitAll()
                         .requestMatchers("/api/v1/health").permitAll()

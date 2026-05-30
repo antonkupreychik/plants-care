@@ -16,6 +16,7 @@ import lombok.Setter;
 import org.hibernate.annotations.Type;
 import org.hibernate.annotations.UpdateTimestamp;
 
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.temporal.ChronoUnit;
@@ -60,6 +61,15 @@ public class User extends BaseEntity {
     /** Стабильный subject (sub) из Google ID token. NULL если Google не привязан. */
     @Column(name = "google_subject", length = 255)
     private String googleSubject;
+
+    /**
+     * Эпоха валидности refresh-токенов (issue #178, V37). Refresh с
+     * {@code iat < tokens_valid_from} считается невалидным (logout-all).
+     * NULL = эпоха не задана, проверка пропускается (backward-compat).
+     * Тип Instant — сравнивается с JWT {@code iat}.
+     */
+    @Column(name = "tokens_valid_from")
+    private Instant tokensValidFrom;
 
     @Column(nullable = false, length = 64)
     @Builder.Default

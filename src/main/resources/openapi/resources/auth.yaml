@@ -140,6 +140,48 @@ paths:
         '401':
           $ref: '../_common/responses.yaml#/Unauthorized'
 
+  Logout:
+    post:
+      tags: [Auth]
+      operationId: logout
+      summary: Выйти из текущей сессии (отозвать refresh-токен)
+      description: |
+        Отзывает предъявленный refresh-токен текущего пользователя. Толерантен
+        и идемпотентен: повторный logout того же токена, а также невалидный/
+        просроченный/чужой токен возвращают `204` без ошибки.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/schemas/LogoutRequest'
+      responses:
+        '204':
+          description: Сессия завершена (refresh отозван либо уже был невалиден).
+        '400':
+          $ref: '../_common/responses.yaml#/BadRequest'
+        '401':
+          $ref: '../_common/responses.yaml#/Unauthorized'
+
+  LogoutAll:
+    post:
+      tags: [Auth]
+      operationId: logoutAll
+      summary: Выйти со всех устройств (инвалидировать все refresh-токены)
+      description: |
+        Выставляет эпоху валидности токенов пользователя в текущий момент,
+        одномоментно инвалидируя все ранее выданные refresh-токены. На следующей
+        ротации старый refresh получит `401 TOKEN_REVOKED`.
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Все refresh-токены пользователя инвалидированы.
+        '401':
+          $ref: '../_common/responses.yaml#/Unauthorized'
+
 schemas:
   AppleAuthRequest:
     type: object
@@ -192,6 +234,16 @@ schemas:
         type: string
         minLength: 1
         description: Refresh-токен, полученный при предыдущем входе/ротации.
+
+  LogoutRequest:
+    type: object
+    description: Тело POST /api/v1/auth/logout.
+    required: [refreshToken]
+    properties:
+      refreshToken:
+        type: string
+        minLength: 1
+        description: Refresh-токен текущей сессии, который нужно отозвать.
 
   TokenPairResponse:
     type: object

@@ -126,5 +126,16 @@ public interface UserRepository extends JpaRepository<User, Long> {
     @Modifying
     @Query("UPDATE User u SET u.pausedUntil = NULL WHERE u.id = :id AND u.pausedUntil IS NOT NULL")
     int clearPausedUntilIfActive(@Param("id") Long id);
+
+    // ===== Logout-all / token epoch (issue #178) =====
+
+    /**
+     * Атомарно выставляет эпоху валидности refresh-токенов (logout-all):
+     * все refresh с {@code iat < now} перестают проходить ротацию. Делаем
+     * через UPDATE, чтобы не читать-модифицировать-писать с гонкой.
+     */
+    @Modifying
+    @Query("UPDATE User u SET u.tokensValidFrom = :now WHERE u.id = :id")
+    int updateTokensValidFrom(@Param("id") Long id, @Param("now") java.time.Instant now);
 }
 

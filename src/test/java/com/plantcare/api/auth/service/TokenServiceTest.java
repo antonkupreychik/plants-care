@@ -86,9 +86,17 @@ class TokenServiceTest {
 
     private static User userWithId(long id) {
         // id назначается БД и не имеет сеттера (BaseEntity @Getter-only) — мок оправдан,
-        // нам нужен предсказуемый id без поднятия контейнера.
+        // нам нужен предсказуемый id без поднятия контейнера. tokensValidFrom = null
+        // (мок по умолчанию) — backward-compat ветка без tvf claim.
         User user = org.mockito.Mockito.mock(User.class);
         org.mockito.Mockito.when(user.getId()).thenReturn(id);
+        return user;
+    }
+
+    private static User userWithTokensValidFrom(long id, Instant tokensValidFrom) {
+        User user = org.mockito.Mockito.mock(User.class);
+        org.mockito.Mockito.when(user.getId()).thenReturn(id);
+        org.mockito.Mockito.when(user.getTokensValidFrom()).thenReturn(tokensValidFrom);
         return user;
     }
 
@@ -137,6 +145,43 @@ class TokenServiceTest {
         String firstJti = decoder.decode(first.refreshToken()).getId();
         String secondJti = decoder.decode(second.refreshToken()).getId();
         assertThat(firstJti).isNotEqualTo(secondJti);
+    }
+
+    // ===================== tvf claim (issue #178) =====================
+
+    @Test
+    void should_carry_tvf_claim_as_epoch_seconds_when_tokens_valid_from_set() {
+        // arrange — эпоха задана (logout-all уже был); ожидаем claim tvf = epoch-сек
+        Instant epoch = Instant.parse("2099-05-22T09:00:00Z");
+        TokenService service = tokenServiceAt(fixedUtc(FIXED_NOW));
+        JwtDecoder decoder = decoder();
+
+        // act
+        TokenPair pair = service.issuePair(userWithTokensValidFrom(11L, epoch));
+
+        // assert — tvf присутствует и равен epoch-секундам, и на access, и на refresh
+        var access = decoder.decode(pair.accessToken());
+        var refresh = decoder.decode(pair.refreshToken());
+        Object accessTvf = access.getClaim("tvf");
+        Object refreshTvf = refresh.getClaim("tvf");
+        assertThat(accessTvf).isEqualTo(epoch.getEpochSecond());
+        assertThat(refreshTvf).isEqualTo(epoch.getEpochSecond());
+    }
+
+    @Test
+    void should_omit_tvf_claim_when_tokens_valid_from_null() {
+        // arrange — старый юзер без эпохи (backward-compat) → claim tvf не должен попасть в токен
+        TokenService service = tokenServiceAt(fixedUtc(FIXED_NOW));
+        JwtDecoder decoder = decoder();
+
+        // act
+        TokenPair pair = service.issuePair(userWithId(12L));
+
+        // assert
+        Object accessTvf = decoder.decode(pair.accessToken()).getClaim("tvf");
+        Object refreshTvf = decoder.decode(pair.refreshToken()).getClaim("tvf");
+        assertThat(accessTvf).isNull();
+        assertThat(refreshTvf).isNull();
     }
 
     // ===================== parseRefresh =====================
