@@ -125,6 +125,18 @@ schemas:
         nullable: true
         description: Имя enum'а `LightPreference.name()`.
         example: BRIGHT_INDIRECT
+      toxicToCats:
+        type: boolean
+        nullable: true
+        description: Токсично для кошек. null — данных нет.
+      toxicToDogs:
+        type: boolean
+        nullable: true
+        description: Токсично для собак. null — данных нет.
+      toxicToHumans:
+        type: boolean
+        nullable: true
+        description: Токсично для человека. null — данных нет.
 
   SpeciesDetailDto:
     type: object
@@ -162,10 +174,50 @@ schemas:
       lightPreference:
         type: string
         nullable: true
+      toxicToCats:
+        type: boolean
+        nullable: true
+        description: Токсично для кошек. null — данных нет.
+      toxicToDogs:
+        type: boolean
+        nullable: true
+        description: Токсично для собак. null — данных нет.
+      toxicToHumans:
+        type: boolean
+        nullable: true
+        description: Токсично для человека. null — данных нет.
       description:
         type: string
         nullable: true
         description: Длинное текстовое описание вида.
+      facts:
+        type: array
+        description: |
+          Энциклопедические факты о виде (ADR-011, issue #129), отсортированы
+          по категории, затем по `displayOrder`. Пустой массив, если фактов нет.
+        items:
+          $ref: '#/schemas/SpeciesFactDto'
+
+  SpeciesFactDto:
+    type: object
+    description: Один энциклопедический факт о виде (ADR-011, issue #129).
+    required: [category, body]
+    properties:
+      category:
+        type: string
+        description: Категория факта.
+        enum: [ORIGIN, CARE, TOXICITY, CURIOSITY]
+      title:
+        type: string
+        nullable: true
+        description: Опциональный заголовок факта.
+      body:
+        type: string
+        description: Текст факта.
+      source:
+        type: string
+        nullable: true
+        description: Опциональная ссылка/атрибуция источника.
 
   PageResponseSpeciesSummaryDto:
     type: object

@@ -1,11 +1,13 @@
 package com.plantcare.bot.state.impl;
 
-import com.plantcare.bot.domain.PlantTemplate;
-import com.plantcare.bot.domain.User;
-import com.plantcare.bot.domain.enums.ConversationState;
-import com.plantcare.bot.service.PlantService;
-import com.plantcare.bot.service.PlantTemplateService;
-import com.plantcare.bot.service.UserService;
+import com.plantcare.bot.service.SpeciesPreviewText;
+import com.plantcare.core.domain.PlantTemplate;
+import com.plantcare.core.domain.Species;
+import com.plantcare.core.domain.User;
+import com.plantcare.core.domain.enums.ConversationState;
+import com.plantcare.core.service.PlantService;
+import com.plantcare.core.service.PlantTemplateService;
+import com.plantcare.core.service.UserService;
 import com.plantcare.bot.state.interfaces.StateHandler;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -85,7 +87,7 @@ public class AwaitingPlantSpeciesChoiceStateHandler implements StateHandler {
                 species -> {
                     Integer interval = species.getWateringDays() != null ? species.getWateringDays() : 7;
                     userService.setStateData(user, "interval_days", interval.toString());
-                    showPreview(user, species.getName(), species.getWateringDays(), client);
+                    showPreview(user, species, client);
                 },
                 () -> sendError(user, client)
         );
@@ -128,21 +130,12 @@ public class AwaitingPlantSpeciesChoiceStateHandler implements StateHandler {
         }
     }
 
-    private void showPreview(User user, String speciesName, Integer wateringDays, TelegramClient client) {
-        String wateringText = wateringDays != null
-                ? String.format("Полив: раз в %d дней", wateringDays)
-                : "Полив: по необходимости";
-
+    private void showPreview(User user, Species species, TelegramClient client) {
         SendMessage message = SendMessage.builder()
                 .chatId(user.getTelegramChatId().toString())
-                .text(String.format(
-                        "✨ *%s*\n\n" +
-                                "%s\n\n" +
-                                "Тебе подходит?",
-                        speciesName, wateringText
-                ))
+                .text(SpeciesPreviewText.build(species.getName(), species.getWateringDays(), species.getLightPreference()))
                 .parseMode("Markdown")
-                .replyMarkup(buildPreviewKeyboard(wateringDays))
+                .replyMarkup(buildPreviewKeyboard(species.getWateringDays()))
                 .build();
         userService.updateState(user, ConversationState.AWAITING_PLANT_WATERING_INTERVAL);
         try {

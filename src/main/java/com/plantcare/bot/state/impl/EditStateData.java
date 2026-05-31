@@ -1,7 +1,7 @@
 package com.plantcare.bot.state.impl;
 
 import com.plantcare.bot.service.PlantCardService;
-import com.plantcare.bot.domain.enums.TaskType;
+import com.plantcare.core.domain.enums.TaskType;
 
 import java.util.Map;
 

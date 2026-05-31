@@ -1,11 +1,17 @@
 package com.plantcare.bot.service;
 
-import com.plantcare.bot.domain.CareSchedule;
-import com.plantcare.bot.domain.Plant;
-import com.plantcare.bot.domain.User;
-import com.plantcare.bot.domain.enums.ConversationState;
-import com.plantcare.bot.domain.enums.TaskType;
-import com.plantcare.bot.util.TimezoneSupport;
+import com.plantcare.core.metrics.MetricsService;
+import com.plantcare.core.metrics.MetricsService.CallbackOutcome;
+import com.plantcare.core.service.BackdatedCareService;
+import com.plantcare.core.service.PlantService;
+import com.plantcare.core.service.UserService;
+
+import com.plantcare.core.domain.CareSchedule;
+import com.plantcare.core.domain.Plant;
+import com.plantcare.core.domain.User;
+import com.plantcare.core.domain.enums.ConversationState;
+import com.plantcare.core.domain.enums.TaskType;
+import com.plantcare.core.util.TimezoneSupport;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -71,6 +77,7 @@ public class BackdatedCareCallbackService {
     private final PlantService plantService;
     private final UserService userService;
     private final BackdatedCareService backdatedCareService;
+    private final MetricsService metricsService;
     private final Clock clock;
 
     /**
@@ -98,6 +105,7 @@ public class BackdatedCareCallbackService {
     ) {
         if (parts.length != 3) {
             answerCallback(client, callbackId, "❌ Неверный формат");
+            metricsService.recordCallback("back_care", CallbackOutcome.ERROR);
             return;
         }
         Long plantId;
@@ -105,18 +113,21 @@ public class BackdatedCareCallbackService {
             plantId = Long.parseLong(parts[2]);
         } catch (NumberFormatException e) {
             answerCallback(client, callbackId, "❌ Неверный ID");
+            metricsService.recordCallback("back_care", CallbackOutcome.ERROR);
             return;
         }
 
         User user = userService.findByChatId(chatId).orElse(null);
         if (user == null) {
             answerCallback(client, callbackId, "❌ Сначала /start");
+            metricsService.recordCallback("back_care", CallbackOutcome.ERROR);
             return;
         }
 
         Plant plant = plantService.getPlantForUser(user.getId(), plantId).orElse(null);
         if (plant == null) {
             answerCallback(client, callbackId, "❌ Растение не найдено");
+            metricsService.recordCallback("back_care", CallbackOutcome.ERROR);
             return;
         }
 
@@ -125,6 +136,8 @@ public class BackdatedCareCallbackService {
             editMessage(client, chatId, messageId,
                     "У этого растения нет активных задач ухода — отмечать нечего.");
             answerCallback(client, callbackId, "");
+            // Клик корректно обработан, просто отмечать нечего — это не ошибка.
+            metricsService.recordCallback("back_care", CallbackOutcome.OK);
             return;
         }
 
@@ -134,6 +147,7 @@ public class BackdatedCareCallbackService {
             showTaskTypeChoice(plantId, careTypes, chatId, messageId, client);
         }
         answerCallback(client, callbackId, "");
+        metricsService.recordCallback("back_care", CallbackOutcome.OK);
     }
 
     /**
@@ -212,6 +226,7 @@ public class BackdatedCareCallbackService {
     ) {
         if (parts.length != 5) {
             answerCallback(client, callbackId, "❌ Неверный формат");
+            metricsService.recordCallback("back_pick", CallbackOutcome.ERROR);
             return;
         }
         Long plantId;
@@ -223,17 +238,20 @@ public class BackdatedCareCallbackService {
             daysAgo = Integer.parseInt(parts[4]);
         } catch (IllegalArgumentException e) {
             answerCallback(client, callbackId, "❌ Неверные параметры");
+            metricsService.recordCallback("back_pick", CallbackOutcome.ERROR);
             return;
         }
 
         User user = userService.findByChatId(chatId).orElse(null);
         if (user == null) {
             answerCallback(client, callbackId, "❌ Сначала /start");
+            metricsService.recordCallback("back_pick", CallbackOutcome.ERROR);
             return;
         }
         Plant plant = plantService.getPlantForUser(user.getId(), plantId).orElse(null);
         if (plant == null) {
             answerCallback(client, callbackId, "❌ Растение не найдено");
+            metricsService.recordCallback("back_pick", CallbackOutcome.ERROR);
             return;
         }
 
@@ -241,10 +259,13 @@ public class BackdatedCareCallbackService {
         if (daysAgo < 0) {
             showDateChoice(plantId, taskType, chatId, messageId, client);
             answerCallback(client, callbackId, "");
+            // Навигация (показали выбор даты) — клик корректно обработан.
+            metricsService.recordCallback("back_pick", CallbackOutcome.OK);
             return;
         }
         if (daysAgo > BackdatedCareService.MAX_BACKDATE_DAYS) {
             answerCallback(client, callbackId, "❌ Слишком давно");
+            metricsService.recordCallback("back_pick", CallbackOutcome.ERROR);
             return;
         }
 
@@ -252,7 +273,22 @@ public class BackdatedCareCallbackService {
         LocalDate today = LocalDate.now(clock.withZone(zone));
         LocalDate doneDate = today.minusDays(daysAgo);
 
-        applyResult(user, plant, taskType, doneDate, chatId, messageId, callbackId, client);
+        BackdatedCareService.BackdatedCareResult result =
+                applyResult(user, plant, taskType, doneDate, chatId, messageId, callbackId, client);
+        metricsService.recordCallback("back_pick", outcomeOf(result.outcome()));
+    }
+
+    /**
+     * Маппинг доменного исхода ретро-отметки на {@link CallbackOutcome} метрики:
+     * созданная запись — OK, повтор за тот же день — идемпотентный no-op,
+     * слишком старая или будущая дата — ошибка ввода.
+     */
+    private CallbackOutcome outcomeOf(BackdatedCareService.Outcome outcome) {
+        return switch (outcome) {
+            case CREATED          -> CallbackOutcome.OK;
+            case ALREADY_RECORDED -> CallbackOutcome.IDEMPOTENT;
+            case TOO_OLD, IN_FUTURE -> CallbackOutcome.ERROR;
+        };
     }
 
     // ====================================================================
@@ -265,6 +301,7 @@ public class BackdatedCareCallbackService {
     ) {
         if (parts.length != 4) {
             answerCallback(client, callbackId, "❌ Неверный формат");
+            metricsService.recordCallback("back_custom", CallbackOutcome.ERROR);
             return;
         }
         Long plantId;
@@ -274,17 +311,20 @@ public class BackdatedCareCallbackService {
             taskType = TaskType.valueOf(parts[3]);
         } catch (IllegalArgumentException e) {
             answerCallback(client, callbackId, "❌ Неверные параметры");
+            metricsService.recordCallback("back_custom", CallbackOutcome.ERROR);
             return;
         }
 
         User user = userService.findByChatId(chatId).orElse(null);
         if (user == null) {
             answerCallback(client, callbackId, "❌ Сначала /start");
+            metricsService.recordCallback("back_custom", CallbackOutcome.ERROR);
             return;
         }
         Plant plant = plantService.getPlantForUser(user.getId(), plantId).orElse(null);
         if (plant == null) {
             answerCallback(client, callbackId, "❌ Растение не найдено");
+            metricsService.recordCallback("back_custom", CallbackOutcome.ERROR);
             return;
         }
 
@@ -298,6 +338,7 @@ public class BackdatedCareCallbackService {
                 + "Можно не больше " + BackdatedCareService.MAX_BACKDATE_DAYS + " дней назад.\n"
                 + "/cancel — отменить.");
         answerCallback(client, callbackId, "");
+        metricsService.recordCallback("back_custom", CallbackOutcome.OK);
     }
 
     // ====================================================================
@@ -312,9 +353,15 @@ public class BackdatedCareCallbackService {
      *
      * <p>Метод сам выбирает: editMessage (если есть messageId — кнопочный flow)
      * или sendMessage (если messageId == null — flow через текстовый ввод).
+     *
+     * <p>Возвращает доменный {@link BackdatedCareService.BackdatedCareResult},
+     * чтобы кнопочный вызыватель ({@link #handleBackPickPreset}) мог записать
+     * метрику callback'а по исходу. Текстовый flow
+     * ({@code AwaitingCareDateStateHandler}) возврат игнорирует — это не callback
+     * и в scope метрики #126 не входит.
      */
     @Transactional
-    public void applyResult(
+    public BackdatedCareService.BackdatedCareResult applyResult(
             User user, Plant plant, TaskType taskType, LocalDate doneDate,
             Long chatId, Integer messageId, String callbackId, TelegramClient client
     ) {
@@ -346,6 +393,7 @@ public class BackdatedCareCallbackService {
         if (callbackId != null) {
             answerCallback(client, callbackId, result.isCreated() ? "Записано" : "");
         }
+        return result;
     }
 
     // ====================================================================

@@ -1,0 +1,72 @@
+# Снепшот текущей влажности для текущего пользователя (mobile gap G4, issue #69).
+# Обёртка над WeatherService.getCurrentHumidity — наружу выставляется то, что
+# раньше использовалось только Telegram-ботом.
+
+paths:
+  Snapshot:
+    get:
+      tags: [Weather]
+      operationId: getWeatherSnapshot
+      summary: Снепшот погоды (влажность) для пользователя
+      description: |
+        Возвращает текущую относительную влажность и рекомендацию по поливу
+        для **текущего пользователя** (координаты и флаг погоды берутся из
+        профиля).
+
+        Если погода у пользователя не настроена (выключена или нет координат)
+        либо внешний источник недоступен — отвечает `200` с
+        `available = false` и пустыми полями (клиент просто скрывает строку
+        погоды, это не ошибка).
+
+        Значение кешируется на стороне сервера (~60 мин), повторные запросы в
+        пределах окна не ходят во внешний API (`fromCache = true`).
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Снепшот погоды (или `available = false`, если недоступно).
+          content:
+            application/json:
+              schema:
+                $ref: '#/schemas/WeatherSnapshotDto'
+
+schemas:
+  WeatherSnapshotDto:
+    type: object
+    description: |
+      Снепшот влажности (mobile gap G4). При `available = false` остальные
+      поля равны `null` — погода у пользователя не настроена или источник
+      временно недоступен.
+    required: [available]
+    properties:
+      available:
+        type: boolean
+        description: |
+          `true` — данные о влажности получены; `false` — погода не настроена
+          (нет координат / выключена) или внешний источник недоступен.
+      humidityPercent:
+        type: integer
+        format: int32
+        minimum: 0
+        maximum: 100
+        nullable: true
+        description: Относительная влажность 0–100%. `null`, если `available = false`.
+      recommendation:
+        type: string
+        enum: [DEFER_OK, DO_NOT_DEFER, NEUTRAL]
+        nullable: true
+        description: |
+          Рекомендация по поливу: `DEFER_OK` (RH ≥ 80% — можно отложить),
+          `DO_NOT_DEFER` (RH ≤ 35% — лучше не откладывать), `NEUTRAL`.
+          `null`, если `available = false`.
+      fetchedAt:
+        type: string
+        format: date-time
+        nullable: true
+        description: Когда значение было получено из внешнего источника (UTC). `null`, если `available = false`.
+      fromCache:
+        type: boolean
+        nullable: true
+        description: |
+          `true` — значение взято из серверного кеша (60-мин окно), без
+          обращения к внешнему API. `null`, если `available = false`.

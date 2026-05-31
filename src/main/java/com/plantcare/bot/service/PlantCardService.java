@@ -1,16 +1,26 @@
 package com.plantcare.bot.service;
 
-import com.plantcare.bot.domain.CareHistory;
-import com.plantcare.bot.domain.CareSchedule;
-import com.plantcare.bot.domain.Location;
-import com.plantcare.bot.domain.Plant;
-import com.plantcare.bot.domain.PlantEvent;
-import com.plantcare.bot.domain.User;
-import com.plantcare.bot.domain.enums.ConversationState;
-import com.plantcare.bot.domain.enums.PlantEventType;
-import com.plantcare.bot.domain.enums.TaskType;
-import com.plantcare.bot.repository.PlantRepository;
-import com.plantcare.bot.util.TimezoneSupport;
+import com.plantcare.core.service.CareHistoryService;
+import com.plantcare.core.service.HealthScoreService;
+import com.plantcare.core.service.PlantAcclimationService;
+import com.plantcare.core.service.PlantEventService;
+import com.plantcare.core.service.PlantService;
+import com.plantcare.core.service.SpeciesFactDto;
+import com.plantcare.core.service.SpeciesFactService;
+import com.plantcare.core.service.UserService;
+
+import com.plantcare.core.domain.CareHistory;
+import com.plantcare.core.domain.CareSchedule;
+import com.plantcare.core.domain.Location;
+import com.plantcare.core.domain.Plant;
+import com.plantcare.core.domain.PlantEvent;
+import com.plantcare.core.domain.User;
+import com.plantcare.core.domain.enums.ConversationState;
+import com.plantcare.core.domain.enums.PlantEventType;
+import com.plantcare.core.domain.enums.TaskType;
+import com.plantcare.core.repository.CareScheduleRepository;
+import com.plantcare.core.repository.PlantRepository;
+import com.plantcare.core.util.TimezoneSupport;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
@@ -80,16 +90,88 @@ public class PlantCardService {
 
     private final PlantService plantService;
     private final PlantRepository plantRepository;
+    private final CareScheduleRepository careScheduleRepository;
     private final MainMenuService mainMenuService;
     private final UserService userService;
     private final CareHistoryService careHistoryService;
+    private final HealthScoreService healthScoreService;
     private final PlantEventService plantEventService;
-    private final com.plantcare.bot.seasonal.service.SeasonalIntervalService seasonalIntervalService;
+    private final SpeciesFactService speciesFactService;
+    private final com.plantcare.core.seasonal.service.SeasonalIntervalService seasonalIntervalService;
 
     // =================================================================
     // 1) Карточка "только что создано" — используется визардом создания
     // =================================================================
 
+
+    /**
+     * Создаёт растение-потомок (черенок) от материнского растения (issue #139, ADR-012).
+     *
+     * <p>Копирует как ШАБЛОН (ADR-005 — копирование значений, не ссылка на чужие
+     * расписания): вид (species), локацию (location) и интервалы активных расписаний
+     * ухода. Для каждого активного расписания родителя создаётся НОВОЕ
+     * {@link CareSchedule} с тем же {@code intervalDays}; {@code nextDueAt}
+     * отсчитывается от текущего момента + интервал (с учётом сезонной корректировки,
+     * issue #67), потому что у нового растения свой график.
+     *
+     * <p>Проставляет {@code parent_id} (ссылку на родителя) и денормализованный
+     * {@code user_id} — берётся от родителя/текущего юзера (ADR-010). Каскадной
+     * архивации/удаления потомков нет (ADR-009).
+     *
+     * @param user       владелец (он же владелец родителя — проверяется при загрузке)
+     * @param parentId   ID материнского растения
+     * @param cuttingName имя нового растения-черенка
+     * @return сохранённый потомок с расписаниями
+     * @throws IllegalArgumentException если родитель не найден / не принадлежит юзеру / в архиве
+     */
+    @Transactional
+    public Plant createCutting(User user, Long parentId, String cuttingName) {
+        String name = cuttingName == null ? "" : cuttingName.trim();
+        if (name.isBlank()) {
+            throw new IllegalArgumentException("Имя растения не может быть пустым");
+        }
+
+        Plant parent = plantRepository.findByUserIdAndIdAndArchivedAtIsNull(user.getId(), parentId)
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Материнское растение не найдено"));
+
+        // Активные расписания родителя — копируем только их интервалы (отключённые
+        // тумблером не переносим, как и при сохранении шаблона из растения).
+        List<CareSchedule> parentSchedules = careScheduleRepository
+                .findAllByPlantId(parent.getId()).stream()
+                .filter(CareSchedule::isActive)
+                .toList();
+
+        Plant cutting = Plant.builder()
+                .user(user)
+                .species(parent.getSpecies())
+                .location(parent.getLocation())
+                .parent(parent)
+                .name(name)
+                .build();
+        cutting = plantRepository.save(cutting);
+
+        // Копируем интервалы как новые расписания. nextDueAt считаем от now,
+        // потому что у черенка собственный график ухода.
+        LocalDateTime now = LocalDateTime.now();
+        for (CareSchedule parentSchedule : parentSchedules) {
+            int interval = parentSchedule.getIntervalDays();
+            int effective = seasonalIntervalService.effectiveIntervalDays(cutting, user, interval);
+            CareSchedule copy = CareSchedule.builder()
+                    .plant(cutting)
+                    .taskType(parentSchedule.getTaskType())
+                    .intervalDays(interval)
+                    .nextDueAt(now.plusDays(effective))
+                    .active(true)
+                    .build();
+            careScheduleRepository.save(copy);
+        }
+
+        log.info("Created cutting '{}' (id={}) from parent {} for user {} ({} schedules copied)",
+                name, cutting.getId(), parent.getId(), user.getId(), parentSchedules.size());
+
+        return cutting;
+    }
 
     /**
      * Финальный шаг создания растения. Теперь блокирующий: вместо немедленного
@@ -287,8 +369,30 @@ public class PlantCardService {
 
         List<CareSchedule> schedules = plantService.getActiveSchedules(plant.getId());
 
-        String text = buildDetailedCardText(plant, schedules);
-        InlineKeyboardMarkup keyboard = buildDetailedCardKeyboard(plant, schedules, backTarget);
+        // issue #130: инициализируем lazy-вид, чтобы прочитать флаги токсичности
+        // в buildDetailedCardText (иначе LazyInitializationException вне транзакции).
+        if (plant.getSpecies() != null) {
+            plant.getSpecies().getName();
+        }
+
+        // issue #129: показываем кнопку «О виде» только если у вида есть факты.
+        // Пустой/неизвестный вид кнопку не получает.
+        boolean hasSpeciesFacts = plant.getSpecies() != null
+                && speciesFactService.hasFactsForSpecies(plant.getSpecies().getId());
+
+        // issue #139: родословная. Счётчик потомков для строки «🌱 Потомки: N» и
+        // ссылка на родителя (кликабельная кнопка) для потомка. parent — lazy,
+        // инициализируем имя/архивность здесь, внутри read-only транзакции.
+        long childrenCount = plantRepository.countByParentId(plant.getId());
+        Plant parent = plant.getParent();
+        if (parent != null) {
+            parent.getName();
+            parent.getArchivedAt();
+        }
+
+        String text = buildDetailedCardText(plant, schedules, childrenCount);
+        InlineKeyboardMarkup keyboard =
+                buildDetailedCardKeyboard(plant, schedules, backTarget, hasSpeciesFacts, parent);
 
         sendOrEditText(user.getTelegramChatId(), messageId, text, keyboard, client);
     }
@@ -796,6 +900,109 @@ public class PlantCardService {
     }
 
     // =================================================================
+    // 2d) Экран «🌍 О виде» — энциклопедия фактов (issue #129)
+    // =================================================================
+
+    /**
+     * Экран энциклопедических фактов вида (issue #129). Показывает факты,
+     * сгруппированные по категориям, с человекочитаемыми заголовками.
+     * Если у вида нет фактов (или вид не задан) — сообщаем об этом и
+     * предлагаем вернуться к карточке; кнопка «О виде» в норме сюда не ведёт,
+     * если фактов нет, но проверку дублируем на случай гонки/удаления контента.
+     */
+    @Transactional(readOnly = true)
+    public void showSpeciesFactsScreen(
+            User user,
+            Long plantId,
+            Integer messageId,
+            String backTarget,
+            TelegramClient client
+    ) {
+        Plant plant = plantRepository.findByUserIdAndIdAndArchivedAtIsNull(user.getId(), plantId)
+                .orElse(null);
+        if (plant == null) {
+            sendTextMessage(user.getTelegramChatId(), "❌ Растение не найдено.", client);
+            return;
+        }
+
+        java.util.Map<com.plantcare.core.domain.enums.FactCategory, List<SpeciesFactDto>> factsByCategory =
+                plant.getSpecies() == null
+                        ? java.util.Map.of()
+                        : speciesFactService.getFactsBySpecies(plant.getSpecies().getId(), null);
+
+        String text = buildSpeciesFactsText(plant, factsByCategory);
+        InlineKeyboardMarkup keyboard = InlineKeyboardMarkup.builder()
+                .keyboardRow(new InlineKeyboardRow(List.of(
+                        InlineKeyboardButton.builder()
+                                .text("⬅️ К карточке")
+                                .callbackData(plantCardCallback(plant.getId(), backTarget))
+                                .build()
+                )))
+                .build();
+
+        sendOrEditText(user.getTelegramChatId(), messageId, text, keyboard, client);
+    }
+
+    private String buildSpeciesFactsText(
+            Plant plant,
+            java.util.Map<com.plantcare.core.domain.enums.FactCategory, List<SpeciesFactDto>> factsByCategory
+    ) {
+        StringBuilder sb = new StringBuilder();
+
+        String speciesName = plant.getSpecies() != null ? plant.getSpecies().getName() : plant.getName();
+        sb.append("🌍 *О виде — ").append(escapeMd(speciesName)).append("*\n");
+
+        if (factsByCategory.isEmpty()) {
+            sb.append("\nПока нет фактов об этом виде.");
+            return sb.toString();
+        }
+
+        // Фиксированный порядок категорий для предсказуемого вида карточки.
+        for (com.plantcare.core.domain.enums.FactCategory category :
+                com.plantcare.core.domain.enums.FactCategory.values()) {
+            List<SpeciesFactDto> facts = factsByCategory.get(category);
+            if (facts == null || facts.isEmpty()) {
+                continue;
+            }
+
+            sb.append("\n").append(factCategoryEmoji(category)).append(" *")
+                    .append(factCategoryTitle(category)).append("*\n");
+
+            for (SpeciesFactDto fact : facts) {
+                sb.append("• ");
+                if (fact.title() != null && !fact.title().isBlank()) {
+                    sb.append("*").append(escapeMd(fact.title())).append("* — ");
+                }
+                sb.append(escapeMd(fact.body()));
+                if (fact.source() != null && !fact.source().isBlank()) {
+                    sb.append("\n  _Источник: ").append(escapeMd(fact.source())).append("_");
+                }
+                sb.append("\n");
+            }
+        }
+
+        return sb.toString();
+    }
+
+    private String factCategoryTitle(com.plantcare.core.domain.enums.FactCategory category) {
+        return switch (category) {
+            case ORIGIN    -> "Происхождение";
+            case CARE      -> "Уход";
+            case TOXICITY  -> "Токсичность";
+            case CURIOSITY -> "Интересное";
+        };
+    }
+
+    private String factCategoryEmoji(com.plantcare.core.domain.enums.FactCategory category) {
+        return switch (category) {
+            case ORIGIN    -> "🗺";
+            case CARE      -> "🪴";
+            case TOXICITY  -> "⚠️";
+            case CURIOSITY -> "✨";
+        };
+    }
+
+    // =================================================================
     // 3) Экран «📜 История» (issue #51)
     // =================================================================
 
@@ -1178,7 +1385,7 @@ public class PlantCardService {
     // Рендер карточки
     // =================================================================
 
-    private String buildDetailedCardText(Plant plant, List<CareSchedule> schedules) {
+    private String buildDetailedCardText(Plant plant, List<CareSchedule> schedules, long childrenCount) {
         StringBuilder sb = new StringBuilder();
 
         sb.append("🌿 *").append(escapeMd(plant.getName())).append("*\n");
@@ -1186,6 +1393,16 @@ public class PlantCardService {
         if (plant.getLocation() != null) {
             sb.append("📍 ").append(escapeMd(plant.getLocation().getDisplayName())).append("\n");
         }
+
+        // issue #139: счётчик потомков. Показываем строку только если есть хотя бы
+        // один черенок — для растений без потомков строку не печатаем (как другие
+        // условные строки карточки).
+        if (childrenCount > 0) {
+            sb.append("🌱 Потомки: ").append(childrenCount).append("\n");
+        }
+
+        // issue #138: health-score после локации/потомков, до «С тобой с …».
+        appendHealthScoreLine(sb, plant);
 
         // issue #117: «С тобой с …» — после имени/локации, до фото/баннеров.
         appendAcquiredAtLine(sb, plant);
@@ -1204,6 +1421,12 @@ public class PlantCardService {
         if (plant.getNotes() != null && !plant.getNotes().isBlank()) {
             sb.append("\n📝 _").append(escapeMd(plant.getNotes().trim())).append("_\n");
         }
+
+        // issue #135: рекомендация по освещению вида.
+        appendLightLine(sb, plant.getSpecies());
+
+        // issue #130: блок токсичности вида. Показываем только флаги == true.
+        appendToxicityBlock(sb, plant.getSpecies());
 
         if (schedules.isEmpty()) {
             sb.append("\n📅 Расписание ухода не настроено.");
@@ -1245,10 +1468,57 @@ public class PlantCardService {
         return sb.toString();
     }
 
+    /**
+     * Дописывает строку освещения вида (issue #135). Показывается только если у вида
+     * задан {@code lightPreference}; для {@code null} строка отсутствует.
+     */
+    private void appendLightLine(StringBuilder sb, com.plantcare.core.domain.Species species) {
+        if (species == null) {
+            return;
+        }
+        String lightPhrase = LightPreferenceText.phrase(species.getLightPreference());
+        if (lightPhrase.isBlank()) {
+            return;
+        }
+        sb.append("\n☀️ Освещение: ").append(lightPhrase).append("\n");
+    }
+
+    /**
+     * Дописывает блок токсичности вида (issue #130). Бейдж выводится только для
+     * флагов со значением {@code true}; {@code false} и {@code null} (нет данных)
+     * не показываются. Если ни один флаг не {@code true} — блок отсутствует целиком.
+     */
+    private void appendToxicityBlock(StringBuilder sb, com.plantcare.core.domain.Species species) {
+        if (species == null) {
+            return;
+        }
+
+        boolean toCats = Boolean.TRUE.equals(species.getToxicToCats());
+        boolean toDogs = Boolean.TRUE.equals(species.getToxicToDogs());
+        boolean toHumans = Boolean.TRUE.equals(species.getToxicToHumans());
+
+        if (!toCats && !toDogs && !toHumans) {
+            return;
+        }
+
+        sb.append("\n");
+        if (toCats) {
+            sb.append("⚠️ токсично для кошек\n");
+        }
+        if (toDogs) {
+            sb.append("⚠️ токсично для собак\n");
+        }
+        if (toHumans) {
+            sb.append("⚠️ токсично для детей\n");
+        }
+    }
+
     private InlineKeyboardMarkup buildDetailedCardKeyboard(
             Plant plant,
             List<CareSchedule> schedules,
-            String backTarget
+            String backTarget,
+            boolean hasSpeciesFacts,
+            Plant parent
     ) {
         List<InlineKeyboardRow> rows = new ArrayList<>();
 
@@ -1302,13 +1572,28 @@ public class PlantCardService {
 
         rows.add(auxRow);
 
-        // 2a) Диагностика растения (issue #73).
+        // 2a) Диагностика растения (issue #73) + взять черенок (issue #139).
         InlineKeyboardRow diagnosisRow = new InlineKeyboardRow();
         diagnosisRow.add(InlineKeyboardButton.builder()
                 .text("🩺 Диагностика")
                 .callbackData("PLANT:DIAG:START:" + plant.getId())
                 .build());
+        diagnosisRow.add(InlineKeyboardButton.builder()
+                .text("🌱 Взять черенок")
+                .callbackData("PLANT:CUTTING:" + plant.getId())
+                .build());
         rows.add(diagnosisRow);
+
+        // 2a') «О виде» (issue #129): энциклопедические факты вида. Кнопку
+        // показываем только если у вида реально есть факты (hasSpeciesFacts).
+        if (hasSpeciesFacts) {
+            rows.add(new InlineKeyboardRow(List.of(
+                    InlineKeyboardButton.builder()
+                            .text("🌍 О виде")
+                            .callbackData("PLANT:SPECIES_FACTS:" + plant.getId() + backSuffix(backTarget))
+                            .build()
+            )));
+        }
 
         // 2b) Журнал событий (issue #76): добавить событие + просмотр журнала.
         // Отдельный ряд, чтобы не смешивать с регулярным уходом и не перегружать auxRow.
@@ -1342,6 +1627,24 @@ public class PlantCardService {
                     InlineKeyboardButton.builder()
                             .text("🛑 Выключить акклиматизацию")
                             .callbackData("PLANT:ACCL:DISABLE:" + plant.getId() + backSuffix(backTarget))
+                            .build()
+            )));
+        }
+
+        // 2d) Ссылка на материнское растение (issue #139), если это черенок.
+        // Кликабельная: ведёт на карточку родителя. Архивный родитель помечается
+        // «(в архиве)» и ведёт на ARCHIVE:VIEW — ссылка сохраняется (ADR-009).
+        if (parent != null) {
+            boolean parentArchived = parent.getArchivedAt() != null;
+            String label = "⬅️ Родитель: " + parent.getName()
+                    + (parentArchived ? " (в архиве)" : "");
+            String callback = parentArchived
+                    ? "ARCHIVE:VIEW:" + parent.getId()
+                    : "PLANT:VIEW:" + parent.getId();
+            rows.add(new InlineKeyboardRow(List.of(
+                    InlineKeyboardButton.builder()
+                            .text(label)
+                            .callbackData(callback)
                             .build()
             )));
         }
@@ -1541,6 +1844,23 @@ public class PlantCardService {
     }
 
     /**
+     * Добавляет в карточку строку health-score (issue #138):
+     * «Health: 82 🟢» либо «Health: Пока мало данных», если действий &lt; 3.
+     */
+    private void appendHealthScoreLine(StringBuilder sb, Plant plant) {
+        HealthScoreService.HealthScore health = healthScoreService.computeForPlant(plant);
+        if (health.insufficientData()) {
+            sb.append("❤️ Health: Пока мало данных\n");
+        } else {
+            sb.append("❤️ Health: ")
+                    .append(health.score())
+                    .append(" ")
+                    .append(health.zone().emoji())
+                    .append("\n");
+        }
+    }
+
+    /**
      * Добавляет в текст карточки строку «🌱 С тобой с DD MMMM YYYY (возраст)»,
      * если у растения проставлен {@code acquiredAt} (issue #117).
      * Возраст печатается до архивации — для активного растения «сегодня»,
@@ -1645,8 +1965,8 @@ public class PlantCardService {
      * Подпись для кнопки «🍂 Сезонность» в edit-menu растения (issue #67).
      */
     private static String formatSeasonalOverride(Plant plant) {
-        com.plantcare.bot.domain.enums.SeasonalOverride o = plant.getSeasonalOverride();
-        if (o == null) o = com.plantcare.bot.domain.enums.SeasonalOverride.INHERIT;
+        com.plantcare.core.domain.enums.SeasonalOverride o = plant.getSeasonalOverride();
+        if (o == null) o = com.plantcare.core.domain.enums.SeasonalOverride.INHERIT;
         return switch (o) {
             case INHERIT -> "Наследовать";
             case ON      -> "Включена";
@@ -1671,12 +1991,12 @@ public class PlantCardService {
                     plantId, user.getId());
             return;
         }
-        com.plantcare.bot.domain.enums.SeasonalOverride cur = plant.getSeasonalOverride();
-        if (cur == null) cur = com.plantcare.bot.domain.enums.SeasonalOverride.INHERIT;
-        com.plantcare.bot.domain.enums.SeasonalOverride next = switch (cur) {
-            case INHERIT -> com.plantcare.bot.domain.enums.SeasonalOverride.ON;
-            case ON      -> com.plantcare.bot.domain.enums.SeasonalOverride.OFF;
-            case OFF     -> com.plantcare.bot.domain.enums.SeasonalOverride.INHERIT;
+        com.plantcare.core.domain.enums.SeasonalOverride cur = plant.getSeasonalOverride();
+        if (cur == null) cur = com.plantcare.core.domain.enums.SeasonalOverride.INHERIT;
+        com.plantcare.core.domain.enums.SeasonalOverride next = switch (cur) {
+            case INHERIT -> com.plantcare.core.domain.enums.SeasonalOverride.ON;
+            case ON      -> com.plantcare.core.domain.enums.SeasonalOverride.OFF;
+            case OFF     -> com.plantcare.core.domain.enums.SeasonalOverride.INHERIT;
         };
         plant.setSeasonalOverride(next);
         plantRepository.save(plant);

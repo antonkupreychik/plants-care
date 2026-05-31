@@ -1,17 +1,32 @@
 package com.plantcare.bot.service;
 
+import com.plantcare.core.service.CalendarExportService;
+import com.plantcare.core.service.LocationService;
+import com.plantcare.core.service.PhotoProgressService;
+import com.plantcare.core.service.PlantAcclimationService;
+import com.plantcare.core.service.PlantArchiveService;
+import com.plantcare.core.service.PlantEventService;
+import com.plantcare.core.service.PlantService;
+import com.plantcare.core.service.PlantTemplateService;
+import com.plantcare.core.service.ShoppingListService;
+import com.plantcare.core.service.UserService;
+import com.plantcare.core.service.UserSettingsService;
+
 import com.plantcare.bot.diagnosis.PlantDiagnosisService;
-import com.plantcare.bot.domain.CareSchedule;
-import com.plantcare.bot.domain.Plant;
-import com.plantcare.bot.domain.PlantTemplate;
-import com.plantcare.bot.domain.Species;
-import com.plantcare.bot.domain.User;
-import com.plantcare.bot.domain.enums.ConversationState;
-import com.plantcare.bot.domain.enums.PhotoProgressFrequency;
-import com.plantcare.bot.domain.enums.PlantEventType;
-import com.plantcare.bot.domain.enums.TaskType;
+import com.plantcare.core.domain.CareSchedule;
+import com.plantcare.core.domain.Plant;
+import com.plantcare.core.domain.PlantTemplate;
+import com.plantcare.core.domain.Species;
+import com.plantcare.core.domain.User;
+import com.plantcare.core.domain.enums.ConversationState;
+import com.plantcare.core.domain.enums.PhotoProgressFrequency;
+import com.plantcare.core.domain.enums.PlantEventType;
+import com.plantcare.core.domain.enums.Season;
+import com.plantcare.core.domain.enums.SeasonalMode;
+import com.plantcare.core.domain.enums.TaskType;
+import com.plantcare.bot.seasonal.service.SeasonalMenuService;
 import com.plantcare.bot.state.impl.AwaitingProgressPhotoStateHandler;
-import com.plantcare.bot.util.TimezoneSupport;
+import com.plantcare.core.util.TimezoneSupport;
 import com.plantcare.bot.weather.service.WeatherMenuService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -41,6 +56,7 @@ import java.util.List;
 public class MenuCallbackService {
 
     private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("dd.MM");
+    private static final DateTimeFormatter QUIET_TIME_FMT = DateTimeFormatter.ofPattern("HH:mm");
 
     private static final EnumSet<ConversationState> EDIT_MODE_STATES = EnumSet.of(
             ConversationState.AWAITING_PLANT_RENAME,
@@ -69,6 +85,11 @@ public class MenuCallbackService {
     private final WeatherMenuService weatherMenuService;
     private final PlantArchiveService plantArchiveService;
     private final PlantArchiveMenuService plantArchiveMenuService;
+    private final ShoppingListService shoppingListService;
+    private final ShoppingListMenuService shoppingListMenuService;
+    private final DiseaseMenuService diseaseMenuService;
+    private final SeasonalMenuService seasonalMenuService;
+    private final UserSettingsService userSettingsService;
 
     private record LocationPreset(String name, String emoji) {
     }
@@ -111,6 +132,12 @@ public class MenuCallbackService {
             return;
         }
 
+        // Справочник болезней (issue #140).
+        if (data.startsWith("DISEASE:")) {
+            handleDiseaseCallback(data, callbackId, client, user);
+            return;
+        }
+
         if (data.startsWith("TPL_")) {
             handleTemplateCallback(data, callbackId, client, user);
             return;
@@ -126,7 +153,91 @@ public class MenuCallbackService {
             return;
         }
 
+        // Список покупок (issue #136).
+        if (data.startsWith("SHOPPING:")) {
+            handleShoppingCallback(data, callbackId, client, user);
+            return;
+        }
+
+        // Сезонные интервалы (issue #67) — экран глобальных настроек сезонности.
+        if (data.startsWith("SEASON:")) {
+            handleSeasonalCallback(data, callbackId, messageId, client, user);
+            return;
+        }
+
         answerCallback(client, callbackId, "❌ Неизвестная команда");
+    }
+
+    /**
+     * Сезонные интервалы (issue #67). Разбирает callback'и экрана
+     * {@link SeasonalMenuService}: {@code SEASON:TOGGLE}, {@code SEASON:MODE:<MODE>},
+     * {@code SEASON:MUL:<SEASON>}, {@code SEASON:INT:<SEASON>} и
+     * {@code SEASON:INT:<SEASON>:CLEAR}.
+     */
+    private void handleSeasonalCallback(
+            String data,
+            String callbackId,
+            Integer messageId,
+            TelegramClient client,
+            User user
+    ) {
+        String action = data.substring("SEASON:".length());
+
+        if ("TOGGLE".equals(action)) {
+            seasonalMenuService.toggleEnabled(user, messageId, client);
+            answerCallback(client, callbackId, "");
+            return;
+        }
+
+        if (action.startsWith("MODE:")) {
+            String modeName = action.substring("MODE:".length());
+            try {
+                seasonalMenuService.setMode(user, SeasonalMode.valueOf(modeName), messageId, client);
+                answerCallback(client, callbackId, "");
+            } catch (IllegalArgumentException e) {
+                answerCallback(client, callbackId, "❌ Неизвестный режим");
+            }
+            return;
+        }
+
+        if (action.startsWith("MUL:")) {
+            Season season = parseSeasonToken(action.substring("MUL:".length()));
+            if (season == null) {
+                answerCallback(client, callbackId, "❌ Неизвестный сезон");
+                return;
+            }
+            seasonalMenuService.cycleMultiplier(user, season, messageId, client);
+            answerCallback(client, callbackId, "");
+            return;
+        }
+
+        if (action.startsWith("INT:")) {
+            String rest = action.substring("INT:".length());
+            boolean clear = rest.endsWith(":CLEAR");
+            String seasonToken = clear ? rest.substring(0, rest.length() - ":CLEAR".length()) : rest;
+            Season season = parseSeasonToken(seasonToken);
+            if (season == null) {
+                answerCallback(client, callbackId, "❌ Неизвестный сезон");
+                return;
+            }
+            if (clear) {
+                seasonalMenuService.clearInterval(user, season, messageId, client);
+            } else {
+                seasonalMenuService.cycleInterval(user, season, messageId, client);
+            }
+            answerCallback(client, callbackId, "");
+            return;
+        }
+
+        answerCallback(client, callbackId, "❌ Неизвестная команда");
+    }
+
+    private static Season parseSeasonToken(String token) {
+        return switch (token) {
+            case "SUMMER" -> Season.SUMMER;
+            case "WINTER" -> Season.WINTER;
+            default -> null;
+        };
     }
 
     private void handleWeatherCallback(
@@ -209,6 +320,10 @@ public class MenuCallbackService {
                 weatherMenuService.sendWeatherScreen(user, messageId, client);
                 answerCallback(client, callbackId, "");
             }
+            case "SEASONAL" -> {
+                seasonalMenuService.sendScreen(user, messageId, client);
+                answerCallback(client, callbackId, "");
+            }
             case "BACK" -> {
                 mainMenuService.sendMainMenu(user, client);
                 answerCallback(client, callbackId, "");
@@ -221,8 +336,16 @@ public class MenuCallbackService {
                 calendarMenuService.sendCalendar(user, client);
                 answerCallback(client, callbackId, "");
             }
+            case "DISEASES" -> {
+                diseaseMenuService.sendList(user, client);
+                answerCallback(client, callbackId, "");
+            }
             case "SETTINGS" -> {
                 sendSettingsMenu(user, client);
+                answerCallback(client, callbackId, "");
+            }
+            case "SHOPPING_LIST" -> {
+                shoppingListMenuService.sendShoppingList(user, client);
                 answerCallback(client, callbackId, "");
             }
             case "MY_TEMPLATES" -> {
@@ -232,6 +355,28 @@ public class MenuCallbackService {
             case "CHANGE_TZ" -> {
                 userService.updateState(user, ConversationState.AWAITING_TIMEZONE);
                 sendTimezonePrompt(user, client);
+                answerCallback(client, callbackId, "");
+            }
+
+            // ===== Тихие часы (issue #116) =====
+            case "QUIET_HOURS" -> {
+                sendQuietHoursMenu(user, client);
+                answerCallback(client, callbackId, "");
+            }
+            case "QUIET_START" -> {
+                userService.updateState(user, ConversationState.AWAITING_QUIET_START);
+                sendText(user, client, "Введи время начала тихих часов в формате ЧЧ:ММ (например 22:00):");
+                answerCallback(client, callbackId, "");
+            }
+            case "QUIET_END" -> {
+                userService.updateState(user, ConversationState.AWAITING_QUIET_END);
+                sendText(user, client, "Введи время конца тихих часов в формате ЧЧ:ММ (например 09:00):");
+                answerCallback(client, callbackId, "");
+            }
+            case "QUIET_RESET" -> {
+                userSettingsService.resetQuietHours(user);
+                sendText(user, client, "🌙 Тихие часы сброшены: 22:00–09:00.");
+                sendQuietHoursMenu(user, client);
                 answerCallback(client, callbackId, "");
             }
 
@@ -451,6 +596,70 @@ public class MenuCallbackService {
         answerCallback(client, callbackId, "❌ Неизвестная команда");
     }
 
+    /**
+     * Список покупок (issue #136).
+     *
+     * <p>Поддерживаемые форматы:
+     * <ul>
+     *   <li>{@code SHOPPING:ADD} — перевод в AWAITING_SHOPPING_ITEM</li>
+     *   <li>{@code SHOPPING:CLEAR} — удалить отмеченные позиции</li>
+     *   <li>{@code SHOPPING:CHECK:{id}} — пометить купленной (target=true)</li>
+     *   <li>{@code SHOPPING:UNCHECK:{id}} — снять отметку (target=false)</li>
+     * </ul>
+     * Toggle принимает явный целевой статус, поэтому двойной тап идемпотентен.
+     */
+    private void handleShoppingCallback(
+            String data,
+            String callbackId,
+            TelegramClient client,
+            User user
+    ) {
+        if ("SHOPPING:ADD".equals(data)) {
+            userService.updateState(user, ConversationState.AWAITING_SHOPPING_ITEM);
+            sendText(user, client, "🛒 Что добавить в список покупок?");
+            answerCallback(client, callbackId, "");
+            return;
+        }
+
+        if ("SHOPPING:CLEAR".equals(data)) {
+            long removed = shoppingListService.clearChecked(user.getId());
+
+            if (removed == 0) {
+                answerCallback(client, callbackId, "Нечего убирать — нет отмеченных");
+                return;
+            }
+
+            shoppingListMenuService.sendShoppingList(user, client);
+            answerCallback(client, callbackId, "🗑 Убрано: " + removed);
+            return;
+        }
+
+        if (data.startsWith("SHOPPING:CHECK:") || data.startsWith("SHOPPING:UNCHECK:")) {
+            boolean targetChecked = data.startsWith("SHOPPING:CHECK:");
+            String prefix = targetChecked ? "SHOPPING:CHECK:" : "SHOPPING:UNCHECK:";
+
+            Long itemId = parseLong(data.substring(prefix.length()));
+
+            if (itemId == null) {
+                answerCallback(client, callbackId, "❌ Неверный ID");
+                return;
+            }
+
+            try {
+                shoppingListService.toggle(user.getId(), itemId, targetChecked);
+            } catch (IllegalArgumentException e) {
+                answerCallback(client, callbackId, "❌ " + e.getMessage());
+                return;
+            }
+
+            shoppingListMenuService.sendShoppingList(user, client);
+            answerCallback(client, callbackId, "");
+            return;
+        }
+
+        answerCallback(client, callbackId, "❌ Неизвестная команда");
+    }
+
     private void handlePlantCallback(
             String data,
             String callbackId,
@@ -632,6 +841,25 @@ public class MenuCallbackService {
             return;
         }
 
+        if (data.startsWith("PLANT:SPECIES_FACTS:")) {
+            String[] parts = data.substring("PLANT:SPECIES_FACTS:".length()).split(":");
+
+            Long plantId;
+
+            try {
+                plantId = Long.parseLong(parts[0]);
+            } catch (NumberFormatException e) {
+                answerCallback(client, callbackId, "❌ Неверный ID");
+                return;
+            }
+
+            String backTarget = parseBackTarget(parts, 1);
+
+            plantCardService.showSpeciesFactsScreen(user, plantId, messageId, backTarget, client);
+            answerCallback(client, callbackId, "");
+            return;
+        }
+
         if (data.startsWith("PLANT:EVENT:")) {
             handlePlantEventCallback(data, user, messageId, callbackId, client);
             return;
@@ -657,6 +885,68 @@ public class MenuCallbackService {
             String backTarget = parseBackTarget(parts, 1);
 
             plantCardService.showSettingsScreen(user, plantId, messageId, backTarget, client);
+            answerCallback(client, callbackId, "");
+            return;
+        }
+
+        // Per-plant сезонность (issue #67): INHERIT → ON → OFF по циклу.
+        if (data.startsWith("PLANT:SEASONAL:")) {
+            String[] parts = data.substring("PLANT:SEASONAL:".length()).split(":");
+
+            Long plantId;
+
+            try {
+                plantId = Long.parseLong(parts[0]);
+            } catch (NumberFormatException e) {
+                answerCallback(client, callbackId, "❌ Неверный ID");
+                return;
+            }
+
+            String backTarget = parseBackTarget(parts, 1);
+
+            plantCardService.cycleSeasonalOverride(user, plantId, messageId, backTarget, client);
+            answerCallback(client, callbackId, "");
+            return;
+        }
+
+        if (data.startsWith("PLANT:CUTTING:")) {
+            Long plantId;
+
+            try {
+                plantId = Long.parseLong(data.substring("PLANT:CUTTING:".length()));
+            } catch (NumberFormatException e) {
+                answerCallback(client, callbackId, "❌ Неверный ID");
+                return;
+            }
+
+            // Проверяем, что растение существует и принадлежит юзеру, прежде чем
+            // переводить в состояние ввода имени.
+            Plant parent = plantService.getPlantForUser(user.getId(), plantId).orElse(null);
+            if (parent == null) {
+                answerCallback(client, callbackId, "❌ Растение не найдено");
+                return;
+            }
+
+            userService.setStateData(user, "parent_plant_id", String.valueOf(plantId));
+            userService.updateState(user, ConversationState.AWAITING_CUTTING_NAME);
+
+            try {
+                client.execute(SendMessage.builder()
+                        .chatId(user.getTelegramChatId().toString())
+                        .text("""
+                                🌱 *Взять черенок*
+
+                                Введи имя нового растения. Скопирую вид, комнату и \
+                                интервалы ухода от «%s» и свяжу их в родословную.
+
+                                _От 1 до 100 символов. /cancel — отменить._\
+                                """.formatted(parent.getName()))
+                        .parseMode("Markdown")
+                        .build());
+            } catch (TelegramApiException e) {
+                log.error("Failed to send cutting name prompt", e);
+            }
+
             answerCallback(client, callbackId, "");
             return;
         }
@@ -1239,7 +1529,7 @@ public class MenuCallbackService {
                 return;
             }
             try {
-                com.plantcare.bot.domain.Plant restored = plantArchiveService.restore(user.getId(), plantId);
+                com.plantcare.core.domain.Plant restored = plantArchiveService.restore(user.getId(), plantId);
                 answerCallback(client, callbackId, "♻️ Восстановлено");
                 sendText(user, client,
                         restored.getName() + " снова в твоём списке. "
@@ -1415,14 +1705,28 @@ public class MenuCallbackService {
                 )))
                 .keyboardRow(new InlineKeyboardRow(List.of(
                         InlineKeyboardButton.builder()
-                                .text("🌍 Изменить регион")
+                                .text("🌐 Таймзона: " + user.getTimezone())
                                 .callbackData("MENU:CHANGE_TZ")
+                                .build()
+                )))
+                .keyboardRow(new InlineKeyboardRow(List.of(
+                        InlineKeyboardButton.builder()
+                                .text("🌙 Тихие часы: "
+                                        + user.getQuietHoursStart().format(QUIET_TIME_FMT) + "–"
+                                        + user.getQuietHoursEnd().format(QUIET_TIME_FMT))
+                                .callbackData("MENU:QUIET_HOURS")
                                 .build()
                 )))
                 .keyboardRow(new InlineKeyboardRow(List.of(
                         InlineKeyboardButton.builder()
                                 .text("⛅ Учитывать погоду")
                                 .callbackData("MENU:WEATHER")
+                                .build()
+                )))
+                .keyboardRow(new InlineKeyboardRow(List.of(
+                        InlineKeyboardButton.builder()
+                                .text("🍂 Сезонные интервалы")
+                                .callbackData("MENU:SEASONAL")
                                 .build()
                 )))
                 .keyboardRow(new InlineKeyboardRow(List.of(
@@ -1461,6 +1765,59 @@ public class MenuCallbackService {
             client.execute(message);
         } catch (TelegramApiException e) {
             log.error("Failed to send settings menu", e);
+        }
+    }
+
+    /**
+     * Экран редактирования тихих часов (issue #116).
+     */
+    private void sendQuietHoursMenu(User user, TelegramClient client) {
+        String start = user.getQuietHoursStart().format(QUIET_TIME_FMT);
+        String end = user.getQuietHoursEnd().format(QUIET_TIME_FMT);
+
+        InlineKeyboardMarkup keyboard = InlineKeyboardMarkup.builder()
+                .keyboardRow(new InlineKeyboardRow(List.of(
+                        InlineKeyboardButton.builder()
+                                .text("Изменить начало")
+                                .callbackData("MENU:QUIET_START")
+                                .build()
+                )))
+                .keyboardRow(new InlineKeyboardRow(List.of(
+                        InlineKeyboardButton.builder()
+                                .text("Изменить конец")
+                                .callbackData("MENU:QUIET_END")
+                                .build()
+                )))
+                .keyboardRow(new InlineKeyboardRow(List.of(
+                        InlineKeyboardButton.builder()
+                                .text("Сбросить (22:00–09:00)")
+                                .callbackData("MENU:QUIET_RESET")
+                                .build()
+                )))
+                .keyboardRow(new InlineKeyboardRow(List.of(
+                        InlineKeyboardButton.builder()
+                                .text("⬅️ Назад")
+                                .callbackData("MENU:SETTINGS")
+                                .build()
+                )))
+                .build();
+
+        SendMessage message = SendMessage.builder()
+                .chatId(user.getTelegramChatId().toString())
+                .text("""
+                        🌙 Тихие часы
+
+                        Сейчас: %s–%s
+
+                        В это время бот не присылает напоминания.
+                        """.formatted(start, end))
+                .replyMarkup(keyboard)
+                .build();
+
+        try {
+            client.execute(message);
+        } catch (TelegramApiException e) {
+            log.error("Failed to send quiet hours menu", e);
         }
     }
 
@@ -1702,6 +2059,51 @@ public class MenuCallbackService {
         } catch (TelegramApiException e) {
             log.error("Failed to answer callback: {}", e.getMessage(), e);
         }
+    }
+
+    // =================================================================
+    // Справочник болезней (issue #140)
+    // =================================================================
+
+    /**
+     * Маршрутизация callback'ов префикса {@code DISEASE:}.
+     *
+     * <ul>
+     *   <li>{@code DISEASE:LIST} — список всех болезней</li>
+     *   <li>{@code DISEASE:SEARCH} — режим поиска по симптому/тексту</li>
+     *   <li>{@code DISEASE:VIEW:{id}} — карточка болезни</li>
+     * </ul>
+     */
+    private void handleDiseaseCallback(
+            String data,
+            String callbackId,
+            TelegramClient client,
+            User user
+    ) {
+        if (DiseaseMenuService.LIST_CALLBACK.equals(data)) {
+            diseaseMenuService.sendList(user, client);
+            answerCallback(client, callbackId, "");
+            return;
+        }
+
+        if (DiseaseMenuService.SEARCH_CALLBACK.equals(data)) {
+            diseaseMenuService.startSearch(user, client);
+            answerCallback(client, callbackId, "");
+            return;
+        }
+
+        if (data.startsWith(DiseaseMenuService.VIEW_PREFIX)) {
+            Long diseaseId = parseLong(data.substring(DiseaseMenuService.VIEW_PREFIX.length()));
+            if (diseaseId == null) {
+                answerCallback(client, callbackId, "❌ Неверный ID");
+                return;
+            }
+            diseaseMenuService.sendCard(user, diseaseId, client);
+            answerCallback(client, callbackId, "");
+            return;
+        }
+
+        answerCallback(client, callbackId, "❌ Неизвестная команда");
     }
 
     // =================================================================

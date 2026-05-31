@@ -1,13 +1,13 @@
 package com.plantcare.bot.service;
 
-import com.plantcare.bot.client.TelegramClientProvider;
-import com.plantcare.bot.domain.CareSchedule;
-import com.plantcare.bot.domain.User;
-import com.plantcare.bot.domain.enums.TaskType;
-import com.plantcare.bot.observability.SentryTags;
-import com.plantcare.bot.observability.SentryTags.Layer;
-import com.plantcare.bot.repository.CareScheduleRepository;
-import com.plantcare.bot.repository.UserRepository;
+import com.plantcare.core.domain.CareSchedule;
+import com.plantcare.core.domain.User;
+import com.plantcare.core.domain.enums.TaskType;
+import com.plantcare.core.observability.SentryTags;
+import com.plantcare.core.observability.SentryTags.Layer;
+import com.plantcare.core.repository.CareScheduleRepository;
+import com.plantcare.core.repository.UserRepository;
+import com.plantcare.bot.telegram.RateLimitedTelegramSender;
 import io.sentry.Sentry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -19,7 +19,6 @@ import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMarkup;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardButton;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardRow;
-import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -55,7 +54,7 @@ public class VacationSchedulerService {
 
     private final UserRepository userRepository;
     private final CareScheduleRepository careScheduleRepository;
-    private final TelegramClientProvider telegramClientProvider;
+    private final RateLimitedTelegramSender telegramSender;
     private final Clock clock;
     /**
      * Берём self из контекста, чтобы @Transactional-методы внутри одного бина
@@ -177,13 +176,10 @@ public class VacationSchedulerService {
                 .replyMarkup(keyboard)
                 .build();
 
-        try {
-            telegramClientProvider.getTelegramClient().execute(message);
-            log.info("Tomorrow-back vacation reminder sent to chat {}", chatId);
-        } catch (TelegramApiException e) {
-            log.error("Failed to send tomorrow-back reminder to {}: {}",
-                    chatId, e.getMessage(), e);
-        }
+        // Issue #29: fire-and-forget через rate-limited очередь. Bookkeeping тут нет —
+        // ошибки логируются и метрятся внутри очереди.
+        telegramSender.enqueue(message);
+        log.info("Tomorrow-back vacation reminder enqueued for chat {}", chatId);
     }
 
     private void sendWelcomeBackMessage(WelcomeBackPayload payload) {
@@ -192,14 +188,10 @@ public class VacationSchedulerService {
                 .text(buildWelcomeBackText(payload.overdue()))
                 .build();
 
-        try {
-            telegramClientProvider.getTelegramClient().execute(message);
-            log.info("Welcome-back sent to chat {} (overdue={})",
-                    payload.chatId(), payload.overdue().size());
-        } catch (TelegramApiException e) {
-            log.error("Failed to send welcome-back to {}: {}",
-                    payload.chatId(), e.getMessage(), e);
-        }
+        // Issue #29: fire-and-forget через rate-limited очередь.
+        telegramSender.enqueue(message);
+        log.info("Welcome-back enqueued for chat {} (overdue={})",
+                payload.chatId(), payload.overdue().size());
     }
 
     private String buildWelcomeBackText(List<OverdueItem> overdue) {

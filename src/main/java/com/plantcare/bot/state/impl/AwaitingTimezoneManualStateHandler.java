@@ -1,8 +1,10 @@
 package com.plantcare.bot.state.impl;
 
-import com.plantcare.bot.domain.User;
-import com.plantcare.bot.domain.enums.ConversationState;
-import com.plantcare.bot.service.UserService;
+import com.plantcare.core.domain.User;
+import com.plantcare.core.domain.enums.ConversationState;
+import com.plantcare.core.service.UserService;
+import com.plantcare.core.service.UserSettingsService;
+import com.plantcare.core.service.UserSettingsService.TimezoneChangeResult;
 import com.plantcare.bot.state.interfaces.StateHandler;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -14,14 +16,18 @@ import org.telegram.telegrambots.meta.api.objects.replykeyboard.ReplyKeyboardRem
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 import org.telegram.telegrambots.meta.generics.TelegramClient;
 
+import java.time.ZoneId;
+
 @Slf4j
 @Component
 @RequiredArgsConstructor
 public class AwaitingTimezoneManualStateHandler implements StateHandler {
 
     private static final String SET_TZ_PREFIX = "SET_TZ:";
+    private static final String SET_TZ_CUSTOM = "SET_TZ_CUSTOM";
 
     private final UserService userService;
+    private final UserSettingsService userSettingsService;
 
     @Override
     public ConversationState getSupportedState() {
@@ -42,6 +48,12 @@ public class AwaitingTimezoneManualStateHandler implements StateHandler {
 
     private void handleCallback(User user, Update update, TelegramClient client) {
         String callbackData = update.getCallbackQuery().getData();
+
+        if (SET_TZ_CUSTOM.equals(callbackData)) {
+            promptForCustomTimezone(user, client);
+            answerCallback(update.getCallbackQuery().getId(), client);
+            return;
+        }
 
         if (callbackData == null || !callbackData.startsWith(SET_TZ_PREFIX)) {
             answerCallback(update.getCallbackQuery().getId(), client);
@@ -78,21 +90,32 @@ public class AwaitingTimezoneManualStateHandler implements StateHandler {
         }
     }
 
-    private void saveAndFinish(User user, String timezoneId, TelegramClient client) {
-        user.setTimezone(timezoneId);
-        userService.updateState(user, ConversationState.IDLE);
-
-        log.info("Timezone set to {} for user {}", timezoneId, user.getTelegramChatId());
+    private void promptForCustomTimezone(User user, TelegramClient client) {
+        userService.updateState(user, ConversationState.AWAITING_TIMEZONE_CUSTOM);
 
         SendMessage message = SendMessage.builder()
                 .chatId(user.getTelegramChatId().toString())
-                .text("""
-                        ✅ Часовой пояс обновлён: %s
-                        
-                        Теперь напоминания будут приходить по выбранному времени.
-                        
-                        Напиши /menu, чтобы открыть главное меню.
-                        """.formatted(timezoneId))
+                .text("Введи название таймзоны в формате Region/City, например `Asia/Tbilisi`:")
+                .parseMode("Markdown")
+                .build();
+
+        try {
+            client.execute(message);
+        } catch (TelegramApiException e) {
+            log.error("Failed to send custom timezone prompt", e);
+        }
+    }
+
+    private void saveAndFinish(User user, String timezoneId, TelegramClient client) {
+        TimezoneChangeResult result = userSettingsService.changeTimezone(user, ZoneId.of(timezoneId));
+        userService.updateState(user, ConversationState.IDLE);
+
+        String text = UserSettingsService.buildTimezoneConfirmation(result, user.getQuietHoursEnd())
+                + "\n\nНапиши /menu, чтобы открыть главное меню.";
+
+        SendMessage message = SendMessage.builder()
+                .chatId(user.getTelegramChatId().toString())
+                .text(text)
                 .replyMarkup(new ReplyKeyboardRemove(true))
                 .build();
 

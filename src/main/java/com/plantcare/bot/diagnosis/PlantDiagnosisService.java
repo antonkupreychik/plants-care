@@ -1,8 +1,23 @@
 package com.plantcare.bot.diagnosis;
 
-import com.plantcare.bot.domain.Plant;
-import com.plantcare.bot.domain.User;
-import com.plantcare.bot.service.PlantService;
+import com.plantcare.core.diagnosis.DiagnosisAnswers;
+import com.plantcare.core.diagnosis.DiagnosisResult;
+import com.plantcare.core.diagnosis.DiagnosisRuleEngine;
+import com.plantcare.core.diagnosis.DiagnosisSessionService;
+import com.plantcare.core.diagnosis.DiagnosisStep;
+import com.plantcare.core.diagnosis.DiagnosisSymptom;
+import com.plantcare.core.diagnosis.DiagnosisTextFormatter;
+import com.plantcare.core.diagnosis.LightCondition;
+import com.plantcare.core.diagnosis.PestPresence;
+import com.plantcare.core.diagnosis.RecentChanges;
+import com.plantcare.core.diagnosis.SoilState;
+import com.plantcare.core.diagnosis.WateringFrequency;
+
+import com.plantcare.core.domain.Plant;
+import com.plantcare.core.domain.User;
+import com.plantcare.core.service.DiseaseCard;
+import com.plantcare.core.service.DiseaseService;
+import com.plantcare.core.service.PlantService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -14,6 +29,7 @@ import org.telegram.telegrambots.meta.api.objects.replykeyboard.ReplyKeyboard;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 import org.telegram.telegrambots.meta.generics.TelegramClient;
 
+import java.util.List;
 import java.util.Optional;
 
 @Slf4j
@@ -28,6 +44,7 @@ public class PlantDiagnosisService {
     private final DiagnosisRuleEngine ruleEngine;
     private final DiagnosisTextFormatter textFormatter;
     private final DiagnosisKeyboardFactory keyboardFactory;
+    private final DiseaseService diseaseService;
 
     public boolean supports(String callbackData) {
         return callbackData != null && callbackData.startsWith(PREFIX);
@@ -344,6 +361,29 @@ public class PlantDiagnosisService {
                 keyboardFactory.resultKeyboard(plant.getId()),
                 client
         );
+
+        sendDiseaseHint(user, answers, client);
+    }
+
+    /**
+     * Мягкая подсказка по справочнику болезней (issue #140, ADR-013): по симптому
+     * визарда подбираем вероятные болезни и шлём отдельным plain-сообщением.
+     * Rule engine (#73) при этом не трогается — это независимый блок поверх результата.
+     * Если совпадений нет — ничего не отправляем.
+     */
+    private void sendDiseaseHint(
+            User user,
+            DiagnosisAnswers answers,
+            TelegramClient client
+    ) {
+        List<DiseaseCard> matches = diseaseService.matchBySymptom(answers.symptom());
+
+        String hint = textFormatter.diseaseHint(matches);
+        if (hint == null) {
+            return;
+        }
+
+        sendText(user.getTelegramChatId(), hint, client);
     }
 
     private void saveDiagnosisToNotes(

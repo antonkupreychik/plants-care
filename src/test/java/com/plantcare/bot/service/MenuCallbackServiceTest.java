@@ -1,8 +1,14 @@
 package com.plantcare.bot.service;
 
-import com.plantcare.bot.domain.Species;
-import com.plantcare.bot.domain.User;
-import com.plantcare.bot.domain.enums.ConversationState;
+import com.plantcare.core.service.LocationService;
+import com.plantcare.core.service.PlantEventService;
+import com.plantcare.core.service.PlantService;
+import com.plantcare.core.service.PlantTemplateService;
+import com.plantcare.core.service.UserService;
+
+import com.plantcare.core.domain.Species;
+import com.plantcare.core.domain.User;
+import com.plantcare.core.domain.enums.ConversationState;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -19,6 +25,7 @@ import org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMa
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 import org.telegram.telegrambots.meta.generics.TelegramClient;
 
+import java.time.format.DateTimeFormatter;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -48,6 +55,7 @@ class MenuCallbackServiceTest {
     @Mock private PlantTemplateService plantTemplateService;
     @Mock private NotificationCallbackService notificationCallbackService;
     @Mock private PlantEventService plantEventService;
+    @Mock private com.plantcare.bot.seasonal.service.SeasonalMenuService seasonalMenuService;
     @Mock private TelegramClient telegramClient;
     @Mock private CallbackQuery callbackQuery;
     @Mock private Message message;
@@ -158,7 +166,7 @@ class MenuCallbackServiceTest {
     }
 
     @Test
-    @DisplayName("SETTINGS показывает меню настроек с кнопкой изменения региона")
+    @DisplayName("SETTINGS показывает меню настроек с кнопками таймзоны и тихих часов (#116)")
     void shouldShowSettingsMenu() throws TelegramApiException {
         when(callbackQuery.getData()).thenReturn("MENU:SETTINGS");
 
@@ -189,10 +197,16 @@ class MenuCallbackServiceTest {
                 .map(InlineKeyboardButton::getCallbackData)
                 .toList();
 
-        assertThat(buttonTexts).contains("🌍 Изменить регион");
+        assertThat(buttonTexts).contains("🌐 Таймзона: " + testUser.getTimezone());
+        assertThat(buttonTexts).contains(
+                "🌙 Тихие часы: "
+                        + testUser.getQuietHoursStart().format(DateTimeFormatter.ofPattern("HH:mm"))
+                        + "–"
+                        + testUser.getQuietHoursEnd().format(DateTimeFormatter.ofPattern("HH:mm")));
         assertThat(buttonTexts).contains("⬅️ Назад");
 
         assertThat(callbackData).contains("MENU:CHANGE_TZ");
+        assertThat(callbackData).contains("MENU:QUIET_HOURS");
         assertThat(callbackData).contains("MENU:BACK");
 
         verify(telegramClient).execute(any(AnswerCallbackQuery.class));
@@ -254,21 +268,21 @@ class MenuCallbackServiceTest {
     void shouldMarkCareDoneAndRefreshCard() {
         when(callbackQuery.getData()).thenReturn("PLANT:CARE:7:MISTING");
 
-        com.plantcare.bot.domain.CareSchedule schedule =
-                com.plantcare.bot.domain.CareSchedule.builder()
+        com.plantcare.core.domain.CareSchedule schedule =
+                com.plantcare.core.domain.CareSchedule.builder()
                         .nextDueAt(java.time.LocalDateTime.now().plusDays(7))
                         .build();
         PlantService.MarkCareDoneResult result =
                 new PlantService.MarkCareDoneResult(false, schedule, null, java.time.LocalDateTime.now());
 
         when(plantService.markCareDone(testUser.getId(), 7L,
-                com.plantcare.bot.domain.enums.TaskType.MISTING))
+                com.plantcare.core.domain.enums.TaskType.MISTING))
                 .thenReturn(result);
 
         service.handleCallback(callbackQuery, telegramClient, testUser);
 
         verify(plantService).markCareDone(testUser.getId(), 7L,
-                com.plantcare.bot.domain.enums.TaskType.MISTING);
+                com.plantcare.core.domain.enums.TaskType.MISTING);
         verify(plantCardService).showPlantCard(
                 testUser, 7L, 42, PlantCardService.BACK_TO_LIST, telegramClient
         );
@@ -279,12 +293,12 @@ class MenuCallbackServiceTest {
     void shouldStartWateringDetailsFlowFromCard() {
         when(callbackQuery.getData()).thenReturn("PLANT:CARE:7:WATERING");
 
-        com.plantcare.bot.domain.Plant plant =
-                com.plantcare.bot.domain.Plant.builder().name("Монстера").build();
-        com.plantcare.bot.domain.CareSchedule schedule =
-                com.plantcare.bot.domain.CareSchedule.builder()
+        com.plantcare.core.domain.Plant plant =
+                com.plantcare.core.domain.Plant.builder().name("Монстера").build();
+        com.plantcare.core.domain.CareSchedule schedule =
+                com.plantcare.core.domain.CareSchedule.builder()
                         .plant(plant)
-                        .taskType(com.plantcare.bot.domain.enums.TaskType.WATERING)
+                        .taskType(com.plantcare.core.domain.enums.TaskType.WATERING)
                         .intervalDays(7)
                         .nextDueAt(java.time.LocalDateTime.now().plusDays(7))
                         .active(true)
@@ -515,7 +529,7 @@ class MenuCallbackServiceTest {
         verify(plantService).rescheduleSchedule(
                 org.mockito.ArgumentMatchers.eq(testUser.getId()),
                 org.mockito.ArgumentMatchers.eq(7L),
-                org.mockito.ArgumentMatchers.eq(com.plantcare.bot.domain.enums.TaskType.WATERING),
+                org.mockito.ArgumentMatchers.eq(com.plantcare.core.domain.enums.TaskType.WATERING),
                 dtCap.capture()
         );
         // +3 дня от сейчас (с некоторым допуском)
@@ -523,7 +537,7 @@ class MenuCallbackServiceTest {
         assertThat(dtCap.getValue()).isBefore(java.time.LocalDateTime.now().plusDays(4));
 
         verify(plantCardService).showScheduleEditByType(
-                testUser, 7L, com.plantcare.bot.domain.enums.TaskType.WATERING,
+                testUser, 7L, com.plantcare.core.domain.enums.TaskType.WATERING,
                 42, PlantCardService.BACK_TO_LIST, telegramClient
         );
     }
@@ -533,15 +547,15 @@ class MenuCallbackServiceTest {
     void shouldToggleSchedule() {
         when(callbackQuery.getData()).thenReturn("PLANT:SCHED:TOGGLE:7:MISTING");
 
-        com.plantcare.bot.domain.CareSchedule afterToggle =
-                com.plantcare.bot.domain.CareSchedule.builder()
+        com.plantcare.core.domain.CareSchedule afterToggle =
+                com.plantcare.core.domain.CareSchedule.builder()
                         .active(true).build();
         when(plantService.toggleSchedule(any(), any(), any())).thenReturn(afterToggle);
 
         service.handleCallback(callbackQuery, telegramClient, testUser);
 
         verify(plantService).toggleSchedule(
-                testUser.getId(), 7L, com.plantcare.bot.domain.enums.TaskType.MISTING);
+                testUser.getId(), 7L, com.plantcare.core.domain.enums.TaskType.MISTING);
         verify(plantCardService).showCareTypesScreen(
                 testUser, 7L, 42, PlantCardService.BACK_TO_LIST, telegramClient
         );
@@ -581,22 +595,22 @@ class MenuCallbackServiceTest {
     @DisplayName("PLANT:EVENT:SAVE:<id>:<TYPE> сохраняет, alert и возвращает карточку")
     void shouldSaveEventAndShowCard() {
         when(callbackQuery.getData()).thenReturn("PLANT:EVENT:SAVE:7:PRUNING");
-        com.plantcare.bot.domain.PlantEvent saved =
-                com.plantcare.bot.domain.PlantEvent.builder()
-                        .eventType(com.plantcare.bot.domain.enums.PlantEventType.PRUNING)
+        com.plantcare.core.domain.PlantEvent saved =
+                com.plantcare.core.domain.PlantEvent.builder()
+                        .eventType(com.plantcare.core.domain.enums.PlantEventType.PRUNING)
                         .eventDate(java.time.LocalDateTime.now())
                         .build();
         when(plantEventService.addEvent(eq(testUser), eq(7L),
-                eq(com.plantcare.bot.domain.enums.PlantEventType.PRUNING)))
+                eq(com.plantcare.core.domain.enums.PlantEventType.PRUNING)))
                 .thenReturn(PlantEventService.AddResult.created(saved));
         when(plantCardService.eventShortLabel(
-                com.plantcare.bot.domain.enums.PlantEventType.PRUNING))
+                com.plantcare.core.domain.enums.PlantEventType.PRUNING))
                 .thenReturn("Обрезка");
 
         service.handleCallback(callbackQuery, telegramClient, testUser);
 
         verify(plantEventService).addEvent(testUser, 7L,
-                com.plantcare.bot.domain.enums.PlantEventType.PRUNING);
+                com.plantcare.core.domain.enums.PlantEventType.PRUNING);
 
         ArgumentCaptor<AnswerCallbackQuery> acap = ArgumentCaptor.forClass(AnswerCallbackQuery.class);
         try {
@@ -681,5 +695,105 @@ class MenuCallbackServiceTest {
                 eq(PlantCardService.BACK_TO_LOCATION_PREFIX + "5"),
                 eq(telegramClient)
         );
+    }
+
+    // ===== Сезонные интервалы (issue #67): wiring диспетчера =====
+
+    @Test
+    @DisplayName("MENU:SEASONAL открывает экран сезонных интервалов")
+    void shouldOpenSeasonalScreen() {
+        when(callbackQuery.getData()).thenReturn("MENU:SEASONAL");
+
+        service.handleCallback(callbackQuery, telegramClient, testUser);
+
+        verify(seasonalMenuService).sendScreen(testUser, 42, telegramClient);
+    }
+
+    @Test
+    @DisplayName("SEASON:TOGGLE переключает сезонность")
+    void shouldToggleSeasonal() {
+        when(callbackQuery.getData()).thenReturn("SEASON:TOGGLE");
+
+        service.handleCallback(callbackQuery, telegramClient, testUser);
+
+        verify(seasonalMenuService).toggleEnabled(testUser, 42, telegramClient);
+    }
+
+    @Test
+    @DisplayName("SEASON:MODE:FIXED переключает режим на FIXED")
+    void shouldSetFixedMode() {
+        when(callbackQuery.getData()).thenReturn("SEASON:MODE:FIXED");
+
+        service.handleCallback(callbackQuery, telegramClient, testUser);
+
+        verify(seasonalMenuService).setMode(
+                testUser, com.plantcare.core.domain.enums.SeasonalMode.FIXED, 42, telegramClient);
+    }
+
+    @Test
+    @DisplayName("SEASON:MODE с мусором — alert, setMode не зовётся")
+    void shouldRejectUnknownSeasonalMode() {
+        when(callbackQuery.getData()).thenReturn("SEASON:MODE:NONSENSE");
+
+        service.handleCallback(callbackQuery, telegramClient, testUser);
+
+        verify(seasonalMenuService, never()).setMode(any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("SEASON:MUL:SUMMER листает летний коэффициент")
+    void shouldCycleSummerMultiplier() {
+        when(callbackQuery.getData()).thenReturn("SEASON:MUL:SUMMER");
+
+        service.handleCallback(callbackQuery, telegramClient, testUser);
+
+        verify(seasonalMenuService).cycleMultiplier(
+                testUser, com.plantcare.core.domain.enums.Season.SUMMER, 42, telegramClient);
+    }
+
+    @Test
+    @DisplayName("SEASON:INT:WINTER листает зимний фиксированный интервал")
+    void shouldCycleWinterInterval() {
+        when(callbackQuery.getData()).thenReturn("SEASON:INT:WINTER");
+
+        service.handleCallback(callbackQuery, telegramClient, testUser);
+
+        verify(seasonalMenuService).cycleInterval(
+                testUser, com.plantcare.core.domain.enums.Season.WINTER, 42, telegramClient);
+    }
+
+    @Test
+    @DisplayName("SEASON:INT:SUMMER:CLEAR сбрасывает летний фиксированный интервал")
+    void shouldClearSummerInterval() {
+        when(callbackQuery.getData()).thenReturn("SEASON:INT:SUMMER:CLEAR");
+
+        service.handleCallback(callbackQuery, telegramClient, testUser);
+
+        verify(seasonalMenuService).clearInterval(
+                testUser, com.plantcare.core.domain.enums.Season.SUMMER, 42, telegramClient);
+        verify(seasonalMenuService, never()).cycleInterval(any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("PLANT:SEASONAL:<id> циклит per-plant override")
+    void shouldCyclePlantSeasonalOverride() {
+        when(callbackQuery.getData()).thenReturn("PLANT:SEASONAL:7");
+
+        service.handleCallback(callbackQuery, telegramClient, testUser);
+
+        verify(plantCardService).cycleSeasonalOverride(
+                testUser, 7L, 42, PlantCardService.BACK_TO_LIST, telegramClient);
+    }
+
+    @Test
+    @DisplayName("PLANT:SEASONAL:<id>:LOC:<loc> сохраняет back-target комнаты")
+    void shouldKeepLocationBackTargetInPlantSeasonal() {
+        when(callbackQuery.getData()).thenReturn("PLANT:SEASONAL:7:LOC:5");
+
+        service.handleCallback(callbackQuery, telegramClient, testUser);
+
+        verify(plantCardService).cycleSeasonalOverride(
+                testUser, 7L, 42,
+                PlantCardService.BACK_TO_LOCATION_PREFIX + "5", telegramClient);
     }
 }

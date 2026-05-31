@@ -1,9 +1,11 @@
 package com.plantcare.bot.seasonal.service;
 
-import com.plantcare.bot.domain.User;
-import com.plantcare.bot.domain.enums.Season;
-import com.plantcare.bot.domain.enums.SeasonalMode;
-import com.plantcare.bot.repository.UserRepository;
+import com.plantcare.core.seasonal.service.SeasonResolver;
+
+import com.plantcare.core.domain.User;
+import com.plantcare.core.domain.enums.Season;
+import com.plantcare.core.domain.enums.SeasonalMode;
+import com.plantcare.core.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;

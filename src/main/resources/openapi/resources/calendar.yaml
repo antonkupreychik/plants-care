@@ -15,8 +15,9 @@ paths:
         строки-даты в формате `YYYY-MM-DD`, упорядоченные по возрастанию.
 
         Максимальная длина диапазона — 60 дней; больше → 400.
+      security:
+        - bearerAuth: []
       parameters:
-        - $ref: '../_common/parameters.yaml#/XChatId'
         - name: from
           in: query
           required: true
@@ -43,6 +44,50 @@ paths:
         '400':
           $ref: '../_common/responses.yaml#/BadRequest'
 
+  Progress:
+    get:
+      tags: [Calendar]
+      operationId: getCalendarProgress
+      summary: Прогресс выполнения задач ухода по дням
+      description: |
+        Возвращает по каждому дню диапазона `[from, to]` (включительно) пару
+        чисел: сколько задач **запланировано** (проекция активных расписаний)
+        и сколько **выполнено** (`care_history` с `cancelled_by IS NULL`).
+
+        Оба числа считаются в **таймзоне пользователя** (`users.timezone`).
+        Дни без планов и без выполнений в ответе **не появляются**. Ключи —
+        строки-даты `YYYY-MM-DD`, упорядоченные по возрастанию.
+
+        Максимальная длина диапазона — 60 дней; больше → 400.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: from
+          in: query
+          required: true
+          description: Начало диапазона (включительно).
+          schema:
+            type: string
+            format: date
+            example: 2026-05-24
+        - name: to
+          in: query
+          required: true
+          description: Конец диапазона (включительно). Разница `to - from` ≤ 60 дней.
+          schema:
+            type: string
+            format: date
+            example: 2026-06-22
+      responses:
+        '200':
+          description: Карта «дата → прогресс».
+          content:
+            application/json:
+              schema:
+                $ref: '#/schemas/CalendarProgressResponse'
+        '400':
+          $ref: '../_common/responses.yaml#/BadRequest'
+
 schemas:
   TaskDto:
     type: object
@@ -57,6 +102,18 @@ schemas:
         format: int64
       plantName:
         type: string
+      speciesId:
+        type: integer
+        format: int64
+        nullable: true
+        description: |
+          Id вида растения (`Species.id`), если вид задан. Нужен клиенту, чтобы
+          выбрать иллюстрацию задачи (mobile gap G6). `null`, если у растения
+          нет привязки к виду.
+      speciesName:
+        type: string
+        nullable: true
+        description: Денормализованное имя вида (подпись/фолбэк иллюстрации). `null`, если вид не задан.
       taskType:
         type: string
         description: Имя `TaskType.name()` — `WATERING` / `MISTING` / `FERTILIZING` / `SOIL_CHECK`.
@@ -68,6 +125,14 @@ schemas:
         type: string
         format: date-time
         description: Ближайший дедлайн (UTC).
+      doneAt:
+        type: string
+        format: date-time
+        nullable: true
+        description: |
+          Момент отметки «сделано» (UTC), если задача выполнена сегодня
+          (mobile gap G11, ADR-014). `null` — задача ещё не выполнена (pending).
+          В выдаче `/calendar` всегда `null`.
 
   CalendarResponse:
     type: object
@@ -83,3 +148,26 @@ schemas:
       type: array
       items:
         $ref: '#/components/schemas/TaskDto'
+
+  DayProgress:
+    type: object
+    description: Прогресс за один день — запланировано/выполнено в TZ пользователя.
+    required: [planned, done]
+    properties:
+      planned:
+        type: integer
+        format: int32
+        description: Количество запланированных occurrence'ов в этот локальный день.
+      done:
+        type: integer
+        format: int32
+        description: Количество выполненных (не отменённых) записей в этот локальный день.
+
+  CalendarProgressResponse:
+    type: object
+    description: |
+      Карта `date → {planned, done}` для эндпоинта `/api/v1/calendar/progress`.
+      Ключи — строки `YYYY-MM-DD`, отсортированы по возрастанию. Значения —
+      объекты `DayProgress`.
+    additionalProperties:
+      $ref: '#/schemas/DayProgress'

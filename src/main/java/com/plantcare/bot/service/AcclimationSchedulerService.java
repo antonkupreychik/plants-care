@@ -1,10 +1,13 @@
 package com.plantcare.bot.service;
 
-import com.plantcare.bot.client.TelegramClientProvider;
-import com.plantcare.bot.domain.Plant;
-import com.plantcare.bot.domain.User;
-import com.plantcare.bot.observability.SentryTags;
-import com.plantcare.bot.observability.SentryTags.Layer;
+import com.plantcare.core.service.PlantAcclimationService;
+
+import com.plantcare.core.domain.Plant;
+import com.plantcare.core.domain.User;
+import com.plantcare.core.observability.SentryTags;
+import com.plantcare.core.observability.SentryTags.Layer;
+import com.plantcare.bot.telegram.RateLimitedTelegramSender;
+import com.plantcare.bot.telegram.SendCallbacks;
 import io.sentry.Sentry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -15,7 +18,6 @@ import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMarkup;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardButton;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardRow;
-import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -40,7 +42,7 @@ import java.util.List;
 public class AcclimationSchedulerService {
 
     private final PlantAcclimationService plantAcclimationService;
-    private final TelegramClientProvider telegramClientProvider;
+    private final RateLimitedTelegramSender telegramSender;
 
     @Scheduled(fixedRate = 3_600_000L)  // раз в час
     @Transactional
@@ -57,8 +59,7 @@ public class AcclimationSchedulerService {
                     if (user.isPaused() || isQuietHours(user, now)) {
                         continue;  // подождём до следующего тика
                     }
-                    sendFinishMessage(user, plant);
-                    plantAcclimationService.finish(plant);
+                    enqueueFinishMessage(user, plant);
                 } catch (Exception e) {
                     log.error("Failed to finish acclimation for plant {}: {}",
                             plant.getId(), e.getMessage(), e);
@@ -73,8 +74,7 @@ public class AcclimationSchedulerService {
                     if (user.isPaused() || isQuietHours(user, now)) {
                         continue;
                     }
-                    sendCheckinMessage(user, plant);
-                    plantAcclimationService.scheduleNextCheckin(plant);
+                    enqueueCheckinMessage(user, plant);
                 } catch (Exception e) {
                     log.error("Failed to send acclimation checkin for plant {}: {}",
                             plant.getId(), e.getMessage(), e);
@@ -84,23 +84,30 @@ public class AcclimationSchedulerService {
         });
     }
 
-    private void sendFinishMessage(User user, Plant plant) {
+    /**
+     * Issue #29: отправка ушла в rate-limited очередь. Очистка acclimation-полей
+     * ({@code finishById} — идемпотентна: повторный вызов на уже очищенном растении
+     * ничего не меняет) переехала в onSuccess-колбэк на воркер-потоке. Захватываем
+     * только plantId, чтобы перерезолвить растение в свежей транзакции.
+     */
+    private void enqueueFinishMessage(User user, Plant plant) {
         SendMessage msg = SendMessage.builder()
                 .chatId(user.getTelegramChatId().toString())
                 .text("✅ Акклиматизация для " + plant.getName() + " завершена. "
                         + "Возвращаюсь к обычному режиму уведомлений.")
                 .build();
-        try {
-            telegramClientProvider.getTelegramClient().execute(msg);
-            log.info("Acclimation finished message sent: plant={} chat={}",
-                    plant.getId(), user.getTelegramChatId());
-        } catch (TelegramApiException e) {
-            log.error("Telegram send error (acclimation finish, plant={}): {}",
-                    plant.getId(), e.getMessage(), e);
-        }
+
+        final long plantId = plant.getId();
+        final long chatId = user.getTelegramChatId();
+        telegramSender.enqueue(msg, new SendCallbacks(
+                () -> {
+                    plantAcclimationService.finishById(plantId);
+                    log.info("Acclimation finished message sent: plant={} chat={}", plantId, chatId);
+                },
+                null));
     }
 
-    private void sendCheckinMessage(User user, Plant plant) {
+    private void enqueueCheckinMessage(User user, Plant plant) {
         InlineKeyboardButton ok = InlineKeyboardButton.builder()
                 .text("👍 Ок")
                 .callbackData("v1:accl_checkin:" + plant.getId() + ":OK")
@@ -122,14 +129,16 @@ public class AcclimationSchedulerService {
                 .text("👀 Как выглядит " + plant.getName() + "?")
                 .replyMarkup(keyboard)
                 .build();
-        try {
-            telegramClientProvider.getTelegramClient().execute(msg);
-            log.info("Acclimation checkin sent: plant={} chat={}",
-                    plant.getId(), user.getTelegramChatId());
-        } catch (TelegramApiException e) {
-            log.error("Telegram send error (acclimation checkin, plant={}): {}",
-                    plant.getId(), e.getMessage(), e);
-        }
+
+        // Issue #29: планирование следующего check-in переехало в onSuccess-колбэк.
+        final long plantId = plant.getId();
+        final long chatId = user.getTelegramChatId();
+        telegramSender.enqueue(msg, new SendCallbacks(
+                () -> {
+                    plantAcclimationService.scheduleNextCheckinById(plantId);
+                    log.info("Acclimation checkin sent: plant={} chat={}", plantId, chatId);
+                },
+                null));
     }
 
     /**

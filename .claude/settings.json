@@ -70,7 +70,6 @@
       "Edit(Dockerfile)",
       "Edit(docker-compose.yml)",
       "Edit(railway.toml)",
-      "Edit(.github/workflows/**)",
       "Edit(src/main/resources/db/migration/V1__*)",
       "Edit(src/main/resources/db/migration/V2__*)"
     ],

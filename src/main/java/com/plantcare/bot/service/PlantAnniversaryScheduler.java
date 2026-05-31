@@ -1,16 +1,18 @@
 package com.plantcare.bot.service;
 
-import com.plantcare.bot.client.TelegramClientProvider;
-import com.plantcare.bot.observability.SentryTags;
-import com.plantcare.bot.observability.SentryTags.Layer;
-import com.plantcare.bot.repository.UserRepository;
+import com.plantcare.core.service.PlantAnniversaryService;
+
+import com.plantcare.core.observability.SentryTags;
+import com.plantcare.core.observability.SentryTags.Layer;
+import com.plantcare.core.repository.UserRepository;
+import com.plantcare.bot.telegram.RateLimitedTelegramSender;
+import com.plantcare.bot.telegram.SendCallbacks;
 import io.sentry.Sentry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
-import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 
 import java.time.Clock;
 import java.time.Instant;
@@ -50,7 +52,7 @@ public class PlantAnniversaryScheduler {
 
     private final PlantAnniversaryService plantAnniversaryService;
     private final UserRepository userRepository;
-    private final TelegramClientProvider telegramClientProvider;
+    private final RateLimitedTelegramSender telegramSender;
     private final Clock clock;
 
     /**
@@ -77,16 +79,7 @@ public class PlantAnniversaryScheduler {
                     if (!isMorningInUserZone(anniversary.userId(), now)) {
                         continue;
                     }
-                    if (sendAnniversary(anniversary)) {
-                        plantAnniversaryService.markSent(
-                                anniversary.plantId(),
-                                anniversary.anniversaryYear(),
-                                now);
-                        log.info("Anniversary sent: plant={} years={} user={}",
-                                anniversary.plantId(),
-                                anniversary.yearsOld(),
-                                anniversary.telegramChatId());
-                    }
+                    enqueueAnniversary(anniversary, now);
                 } catch (Exception e) {
                     log.error("Failed to handle anniversary for plant {}: {}",
                             anniversary.plantId(), e.getMessage(), e);
@@ -111,19 +104,28 @@ public class PlantAnniversaryScheduler {
                 .orElse(false);
     }
 
-    private boolean sendAnniversary(PlantAnniversaryService.Anniversary anniversary) {
+    /**
+     * Issue #29: отправка ушла в rate-limited очередь. Пометка «отправлено»
+     * ({@code markSent} — идемпотентный PK-based upsert) переехала в onSuccess-колбэк
+     * на воркер-потоке. Захватываем только примитивы из снимка anniversary.
+     */
+    private void enqueueAnniversary(PlantAnniversaryService.Anniversary anniversary, Instant now) {
         SendMessage message = SendMessage.builder()
                 .chatId(anniversary.telegramChatId().toString())
                 .text(anniversary.buildText())
                 .build();
-        try {
-            telegramClientProvider.getTelegramClient().execute(message);
-            return true;
-        } catch (TelegramApiException e) {
-            log.error("Failed to send anniversary push (plant={}, chat={}): {}",
-                    anniversary.plantId(), anniversary.telegramChatId(), e.getMessage());
-            return false;
-        }
+
+        final Long plantId = anniversary.plantId();
+        final int anniversaryYear = anniversary.anniversaryYear();
+        final int yearsOld = anniversary.yearsOld();
+        final Long chatId = anniversary.telegramChatId();
+        telegramSender.enqueue(message, new SendCallbacks(
+                () -> {
+                    plantAnniversaryService.markSent(plantId, anniversaryYear, now);
+                    log.info("Anniversary sent: plant={} years={} chat={}",
+                            plantId, yearsOld, chatId);
+                },
+                null));
     }
 
     private static ZoneId safeZone(String tz) {

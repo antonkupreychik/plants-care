@@ -34,6 +34,20 @@ spring:
           time_zone: UTC
         format_sql: false
 
+  # Issue #88: SMTP для magic-link писем. Реальные креды только из env.
+  mail:
+    host: ${MAIL_HOST:localhost}
+    port: ${MAIL_PORT:1025}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    from: ${MAIL_FROM:no-reply@plantcare.local}
+    properties:
+      mail:
+        smtp:
+          auth: ${MAIL_SMTP_AUTH:false}
+          starttls:
+            enable: ${MAIL_SMTP_STARTTLS:false}
+
 app:
   species:
     search-limit: 5
@@ -43,6 +57,16 @@ app:
     base-url: ${CALENDAR_BASE_URL:https://example.com}
     event-window-days: 90
 
+  # Issue #138: health-score растения. Формула:
+  #   score = round(onTimePct * on-time-weight) + (есть фото ? photo-bonus) + (есть заметки ? notes-bonus)
+  # затем клампится в [0, 100]. Идеальная серия (100% on-time) + фото + заметки = 100.
+  health-score:
+    on-time-weight: 0.8    # доля 100-балльной шкалы под % on-time за 30 дней (макс. 80 баллов)
+    photo-bonus: 10        # бонус за наличие фото (issue #24)
+    notes-bonus: 10        # бонус за наличие заметок (issue #25)
+    green-threshold: 80    # score >= → зелёная зона 🟢
+    yellow-threshold: 50   # score >= (но < green) → жёлтая 🟡; ниже — красная 🔴
+
 weather:
   cache-minutes: 60          # дефолт 60
   threshold-defer-ok: 80     # дефолт 80
@@ -50,6 +74,38 @@ weather:
   open-meteo:
     base-url: https://api.open-meteo.com/v1
     timeout-seconds: 5
+
+# Issue #88 (ADR-011): мобильная аутентификация. Секреты — только из env.
+plantcare:
+  auth:
+    # Глобальный выключатель мобильной авторизации. На prod ВСЕГДА true.
+    # AUTH_ENABLED=false — только для локальной разработки: /api/v1/** открываются
+    # без токена, JWT-секрет не нужен, текущий пользователь = dev-user-id.
+    enabled: ${AUTH_ENABLED:false}
+    # users.id, от имени которого работают /api/v1/** при enabled=false.
+    # Пользователь с этим id должен существовать в локальной БД.
+    dev-user-id: ${AUTH_DEV_USER_ID:1}
+    jwt:
+      # HMAC-секрет для подписи наших access/refresh JWT. На prod ОБЯЗАТЕЛЬНО
+      # задать длинный случайный AUTH_JWT_SECRET (>= 32 байт). Пустой дефолт.
+      secret: ${AUTH_JWT_SECRET:}
+      issuer: ${AUTH_JWT_ISSUER:https://plants-care.up.railway.app}
+      access-ttl: ${AUTH_JWT_ACCESS_TTL:PT1H}
+      refresh-ttl: ${AUTH_JWT_REFRESH_TTL:P30D}
+    apple:
+      bundle-id: ${AUTH_APPLE_BUNDLE_ID:}
+      issuer: ${AUTH_APPLE_ISSUER:https://appleid.apple.com}
+      jwks-uri: ${AUTH_APPLE_JWKS_URI:https://appleid.apple.com/auth/keys}
+    google:
+      client-id: ${AUTH_GOOGLE_CLIENT_ID:}
+      issuers: ${AUTH_GOOGLE_ISSUERS:accounts.google.com,https://accounts.google.com}
+      jwks-uri: ${AUTH_GOOGLE_JWKS_URI:https://www.googleapis.com/oauth2/v3/certs}
+    magic-link:
+      base-url: ${AUTH_MAGIC_LINK_BASE_URL:https://plants-care.up.railway.app/auth/verify}
+      ttl: ${AUTH_MAGIC_LINK_TTL:PT15M}
+      rate-limit:
+        max-attempts: 5
+        window-seconds: 300
 
 admin:
   username: ${ADMIN_USERNAME:}
@@ -86,6 +142,11 @@ management:
   endpoint:
     health:
       show-details: when-authorized
+  health:
+    # Issue #88: starter-mail добавляет MailHealthIndicator, который пингует SMTP.
+    # Отправка magic-link писем не должна влиять на liveness/health приложения.
+    mail:
+      enabled: false
   prometheus:
     metrics:
       export:
@@ -101,12 +162,32 @@ plants:
       # Для более агрессивного мониторинга можно поставить PT3M (3 пропуска).
       max-tick-age: ${PLANTS_SCHEDULER_MAX_TICK_AGE:PT15M}
 
+  # Issue #141: подсказка расходников перед предстоящей пересадкой.
+  # «Предстоящая пересадка» = дата последней TRANSPLANT из журнала (#76) + interval-months.
+  # Если она в окне ближайших horizon-days (в TZ юзера) — бот шлёт мягкую нотификацию
+  # с кнопками «➕ В список покупок» / «Не нужно».
+  transplant-suggestion:
+    enabled: ${PLANTS_TRANSPLANT_SUGGESTION_ENABLED:true}
+    horizon-days: ${PLANTS_TRANSPLANT_SUGGESTION_HORIZON_DAYS:14}
+    interval-months: ${PLANTS_TRANSPLANT_SUGGESTION_INTERVAL_MONTHS:12}
+    supplies:
+      - Грунт
+      - Дренаж
+    message-template: "🪴 Растению «%s» скоро пересадка — добавить расходники (%s) в список покупок?"
+
 # Telegram (placeholder, используется со следующей задачи)
 telegram:
   bot:
     token: ${TELEGRAM_BOT_TOKEN:}
     username: ${TELEGRAM_BOT_USERNAME:}
     enabled: ${TELEGRAM_BOT_ENABLED:true}
+  # Issue #29: очередь исходящих сообщений с rate-limiting под лимит Telegram (~30/sec).
+  rate-limit:
+    permits-per-second: ${TELEGRAM_RATE_LIMIT_PERMITS_PER_SECOND:25}
+    queue-capacity: ${TELEGRAM_RATE_LIMIT_QUEUE_CAPACITY:10000}
+    max-retries: ${TELEGRAM_RATE_LIMIT_MAX_RETRIES:3}
+    default-retry-after-seconds: ${TELEGRAM_RATE_LIMIT_DEFAULT_RETRY_AFTER_SECONDS:1}
+    max-retry-after-seconds: ${TELEGRAM_RATE_LIMIT_MAX_RETRY_AFTER_SECONDS:60}
 
 logging:
   level:

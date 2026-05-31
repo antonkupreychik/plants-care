@@ -1,11 +1,13 @@
 package com.plantcare.bot.service;
 
-import com.plantcare.bot.domain.Location;
-import com.plantcare.bot.domain.User;
-import com.plantcare.bot.domain.enums.TaskType;
-import com.plantcare.bot.service.CalendarService.CareTask;
-import com.plantcare.bot.service.CalendarService.DayView;
-import com.plantcare.bot.service.CalendarService.WeekView;
+import com.plantcare.core.service.CalendarService;
+
+import com.plantcare.core.domain.Location;
+import com.plantcare.core.domain.User;
+import com.plantcare.core.domain.enums.TaskType;
+import com.plantcare.core.service.CalendarService.CareTask;
+import com.plantcare.core.service.CalendarService.DayView;
+import com.plantcare.core.service.CalendarService.WeekView;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;

@@ -3,14 +3,16 @@ package com.plantcare.bot.beans;
 import com.plantcare.bot.client.TelegramClientProvider;
 import com.plantcare.bot.command.CommandContainer;
 import com.plantcare.bot.command.impl.CancelCommand;
-import com.plantcare.bot.domain.User;
-import com.plantcare.bot.domain.enums.ConversationState;
+import com.plantcare.core.domain.User;
+import com.plantcare.core.domain.enums.ConversationState;
+import com.plantcare.bot.service.DiseaseMenuService;
 import com.plantcare.bot.service.MenuCallbackService;
 import com.plantcare.bot.service.NotificationCallbackService;
 import com.plantcare.bot.service.NotificationDigestCallbackService;
-import com.plantcare.bot.observability.SentryTags;
-import com.plantcare.bot.observability.SentryTags.Layer;
-import com.plantcare.bot.service.UserService;
+import com.plantcare.bot.service.TransplantSuggestionCallbackService;
+import com.plantcare.core.observability.SentryTags;
+import com.plantcare.core.observability.SentryTags.Layer;
+import com.plantcare.core.service.UserService;
 import com.plantcare.bot.state.StateResolver;
 import io.sentry.Sentry;
 import lombok.extern.slf4j.Slf4j;
@@ -32,10 +34,16 @@ public class PlantsCareBot implements LongPollingSingleThreadUpdateConsumer, Tel
     private static final String MENU_CALLBACK_PREFIX = "MENU:";
     private static final String LOCATION_CALLBACK_PREFIX = "LOCATION:";
     private static final String PLANT_CALLBACK_PREFIX = "PLANT:";
+    private static final String ARCHIVE_CALLBACK_PREFIX = "ARCHIVE:";
     private static final String CALENDAR_CALLBACK_PREFIX = "cal:";
     private static final String WEATHER_CALLBACK_PREFIX = "WEATHER:";
     private static final String SEASON_CALLBACK_PREFIX = "SEASON:";
     private static final String PHOTO_PROGRESS_CALLBACK_PREFIX = "PHOTO_PROGRESS:";
+    private static final String SHOPPING_CALLBACK_PREFIX = "SHOPPING:";
+    private static final String DISEASE_CALLBACK_PREFIX = "DISEASE:";
+    private static final String SET_TZ_CALLBACK_PREFIX = "SET_TZ";
+    private static final String TRANSPLANT_SUGGEST_CALLBACK_PREFIX =
+            TransplantSuggestionCallbackService.CALLBACK_PREFIX;
 
     private final TelegramClient telegramClient;
     private final CommandContainer commandContainer;
@@ -45,6 +53,8 @@ public class PlantsCareBot implements LongPollingSingleThreadUpdateConsumer, Tel
     private final NotificationCallbackService notificationCallbackService;
     private final NotificationDigestCallbackService notificationDigestCallbackService;
     private final MenuCallbackService menuCallbackService;
+    private final DiseaseMenuService diseaseMenuService;
+    private final TransplantSuggestionCallbackService transplantSuggestionCallbackService;
 
     public PlantsCareBot(
             @Value("${telegram.bot.token}") String botToken,
@@ -54,7 +64,9 @@ public class PlantsCareBot implements LongPollingSingleThreadUpdateConsumer, Tel
             CancelCommand cancelCommand,
             NotificationCallbackService notificationCallbackService,
             NotificationDigestCallbackService notificationDigestCallbackService,
-            MenuCallbackService menuCallbackService
+            MenuCallbackService menuCallbackService,
+            DiseaseMenuService diseaseMenuService,
+            TransplantSuggestionCallbackService transplantSuggestionCallbackService
     ) {
         this.telegramClient = new OkHttpTelegramClient(botToken);
         this.commandContainer = commandContainer;
@@ -64,6 +76,8 @@ public class PlantsCareBot implements LongPollingSingleThreadUpdateConsumer, Tel
         this.notificationCallbackService = notificationCallbackService;
         this.notificationDigestCallbackService = notificationDigestCallbackService;
         this.menuCallbackService = menuCallbackService;
+        this.diseaseMenuService = diseaseMenuService;
+        this.transplantSuggestionCallbackService = transplantSuggestionCallbackService;
     }
 
     @Override
@@ -106,19 +120,43 @@ public class PlantsCareBot implements LongPollingSingleThreadUpdateConsumer, Tel
                     return;
                 }
 
+                if (data != null && data.startsWith(TRANSPLANT_SUGGEST_CALLBACK_PREFIX)) {
+                    String userName = getUserName(update);
+                    User user = userService.findOrCreate(chatId, userName);
+
+                    transplantSuggestionCallbackService.handleCallback(
+                            update.getCallbackQuery(), telegramClient, user);
+                    return;
+                }
+
                 if (data != null && (
                         data.startsWith(MENU_CALLBACK_PREFIX) ||
                                 data.startsWith(LOCATION_CALLBACK_PREFIX) ||
                                 data.startsWith(PLANT_CALLBACK_PREFIX) ||
+                                data.startsWith(ARCHIVE_CALLBACK_PREFIX) ||
                                 data.startsWith(WEATHER_CALLBACK_PREFIX) ||
                                 data.startsWith(SEASON_CALLBACK_PREFIX) ||
                                 data.startsWith(CALENDAR_CALLBACK_PREFIX) ||
-                                data.startsWith(PHOTO_PROGRESS_CALLBACK_PREFIX)
+                                data.startsWith(PHOTO_PROGRESS_CALLBACK_PREFIX) ||
+                                data.startsWith(SHOPPING_CALLBACK_PREFIX) ||
+                                data.startsWith(DISEASE_CALLBACK_PREFIX)
                 )) {
                     String userName = getUserName(update);
                     User user = userService.findOrCreate(chatId, userName);
 
                     menuCallbackService.handleCallback(update.getCallbackQuery(), telegramClient, user);
+                    return;
+                }
+
+                // Issue #116: SET_TZ:<zone> и SET_TZ_CUSTOM из inline-пикера ручного
+                // ввода таймзоны обслуживает не MenuCallbackService, а машина состояний
+                // (AwaitingTimezoneManualStateHandler, состояние AWAITING_TIMEZONE_MANUAL).
+                // startsWith("SET_TZ") покрывает оба варианта — маршрутизируем в stateResolver.
+                if (data != null && data.startsWith(SET_TZ_CALLBACK_PREFIX)) {
+                    String userName = getUserName(update);
+                    User user = userService.findOrCreate(chatId, userName);
+
+                    stateResolver.resolve(user, update, telegramClient);
                     return;
                 }
 
@@ -139,6 +177,16 @@ public class PlantsCareBot implements LongPollingSingleThreadUpdateConsumer, Tel
                     && update.getMessage().hasText()
                     && "/cancel".equalsIgnoreCase(update.getMessage().getText())) {
                 cancelCommand.execute(update, telegramClient);
+                return;
+            }
+
+            // Диплинк-команда /disease_<id> из подсказки диагностики (#73, #140).
+            // Динамический id не ложится в CommandContainer (точное совпадение имени),
+            // поэтому перехватываем здесь по префиксу — в любом состоянии.
+            if (update.hasMessage()
+                    && update.getMessage().hasText()
+                    && isDiseaseCommand(update.getMessage().getText())) {
+                handleDiseaseCommand(update.getMessage().getText(), user);
                 return;
             }
 
@@ -188,6 +236,33 @@ public class PlantsCareBot implements LongPollingSingleThreadUpdateConsumer, Tel
         }
 
         return "unknown";
+    }
+
+    private static final String DISEASE_COMMAND_PREFIX = "/disease_";
+
+    private boolean isDiseaseCommand(String text) {
+        if (text == null) {
+            return false;
+        }
+
+        // Берём первый токен (Telegram может прислать "/disease_5@botname").
+        String token = text.trim().split("\\s+")[0].split("@")[0];
+        return token.startsWith(DISEASE_COMMAND_PREFIX);
+    }
+
+    private void handleDiseaseCommand(String text, User user) {
+        String token = text.trim().split("\\s+")[0].split("@")[0];
+        String idPart = token.substring(DISEASE_COMMAND_PREFIX.length());
+
+        Long diseaseId;
+        try {
+            diseaseId = Long.parseLong(idPart);
+        } catch (NumberFormatException e) {
+            log.warn("Invalid /disease_ command: '{}'", text);
+            return;
+        }
+
+        diseaseMenuService.sendCard(user, diseaseId, telegramClient);
     }
 
     private String getCommandName(String text) {

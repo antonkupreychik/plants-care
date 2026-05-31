@@ -8,7 +8,7 @@ paths:
       summary: История событий ухода за растением
       description: |
         Возвращает страницу истории ухода за растением, принадлежащим
-        пользователю из заголовка `X-Chat-Id` (Telegram chat_id).
+        текущему пользователю (`sub` из bearer-токена).
 
         В выдачу попадают только активные (не отменённые) записи всех типов
         ухода **кроме `SOIL_CHECK`** — это служебный тип, который наружу не
@@ -17,8 +17,9 @@ paths:
         Пагинация — `limit/offset`. `limit` строго в диапазоне [1, 100]
         (значения вне диапазона отдаются как 400). `offset` < 0 нормализуется
         в 0.
+      security:
+        - bearerAuth: []
       parameters:
-        - $ref: '../_common/parameters.yaml#/XChatId'
         - $ref: '../_common/parameters.yaml#/PlantIdPath'
         - name: limit
           in: query

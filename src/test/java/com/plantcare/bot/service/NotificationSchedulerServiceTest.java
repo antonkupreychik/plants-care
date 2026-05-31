@@ -1,18 +1,20 @@
 package com.plantcare.bot.service;
 
-import com.plantcare.bot.client.TelegramClientProvider;
-import com.plantcare.bot.domain.CareSchedule;
-import com.plantcare.bot.domain.NotificationDigest;
-import com.plantcare.bot.domain.NotificationLog;
-import com.plantcare.bot.domain.Plant;
-import com.plantcare.bot.domain.User;
-import com.plantcare.bot.domain.enums.NotificationType;
-import com.plantcare.bot.domain.enums.TaskType;
-import com.plantcare.bot.metrics.MetricsService;
-import com.plantcare.bot.repository.CareScheduleRepository;
-import com.plantcare.bot.repository.NotificationDigestRepository;
-import com.plantcare.bot.repository.NotificationLogRepository;
-import com.plantcare.bot.repository.UserRepository;
+import com.plantcare.core.service.QuietHoursPolicy;
+import com.plantcare.core.service.SchedulerHealthTracker;
+
+import com.plantcare.core.domain.CareSchedule;
+import com.plantcare.core.domain.NotificationDigest;
+import com.plantcare.core.domain.Plant;
+import com.plantcare.core.domain.User;
+import com.plantcare.core.domain.enums.TaskType;
+import com.plantcare.core.metrics.MetricsService;
+import com.plantcare.core.repository.CareScheduleRepository;
+import com.plantcare.core.repository.NotificationDigestRepository;
+import com.plantcare.core.repository.NotificationLogRepository;
+import com.plantcare.core.repository.UserRepository;
+import com.plantcare.bot.telegram.RateLimitedTelegramSender;
+import com.plantcare.bot.telegram.SendCallbacks;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -29,7 +31,6 @@ import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMarkup;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardButton;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
-import org.telegram.telegrambots.meta.generics.TelegramClient;
 
 import java.time.Clock;
 import java.time.Instant;
@@ -41,11 +42,30 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.*;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
 
+/**
+ * Unit-тесты {@link NotificationSchedulerService} после перевода отправки на
+ * rate-limited очередь (issue #29). Шедулер больше не зовёт Telegram напрямую —
+ * он кладёт {@link SendMessage} в {@link RateLimitedTelegramSender#enqueue}, а
+ * bookkeeping (дедуп-лог, метрики, пометка blocked) выполняется в колбэках
+ * {@link SendCallbacks}, делегирующих в {@link NotificationDeliveryCallbacks}.
+ *
+ * <p>Тесты ловят: (1) что именно ставится в очередь (текст/кнопки/получатель),
+ * (2) фильтры shouldSend (pause / quiet-hours / дедуп) до постановки в очередь,
+ * (3) маршрутизацию колбэков — onSuccess → onSent/onDigestSent, onFailure → onFailed.
+ *
+ * <p>Дедуп-проверка считает quiet-hours в TZ юзера (Europe/Minsk) — таймзонный
+ * кейс сохранён через QuietHoursPolicy-перегрузку на Instant из фиксированного Clock.
+ */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
-@DisplayName("Unit-тесты для NotificationSchedulerService")
+@DisplayName("Unit-тесты для NotificationSchedulerService (issue #29)")
 class NotificationSchedulerServiceTest {
 
     @Mock
@@ -61,29 +81,25 @@ class NotificationSchedulerServiceTest {
     private UserRepository userRepository;
 
     @Mock
-    private TelegramClientProvider telegramClientProvider;
-
-    @Mock
-    private TelegramClient telegramClient;
-
-    @Mock
     private SchedulerHealthTracker schedulerHealthTracker;
 
-    // Зависимости, добавленные после рефакторинга (issue #69 weather, #67 seasonal,
-    // #118 quiet-hours/keyboard вынесены в отдельные компоненты). Моки нужны
-    // потому что без них @InjectMocks вернёт null и тик упадёт в NPE на первом
-    // же вызове isWeatherUsable/isQuiet/buildReminderKeyboard.
     @Mock
-    private com.plantcare.bot.weather.service.WeatherService weatherService;
+    private com.plantcare.core.weather.service.WeatherService weatherService;
 
     @Mock
-    private com.plantcare.bot.seasonal.service.SeasonalIntervalService seasonalIntervalService;
+    private com.plantcare.core.seasonal.service.SeasonalIntervalService seasonalIntervalService;
 
     @Mock
     private QuietHoursPolicy quietHoursPolicy;
 
     @Mock
     private MetricsService metricsService;
+
+    @Mock
+    private RateLimitedTelegramSender telegramSender;
+
+    @Mock
+    private NotificationDeliveryCallbacks deliveryCallbacks;
 
     /**
      * Реальный экземпляр, не мок: проверки в тестах смотрят на содержимое
@@ -94,9 +110,8 @@ class NotificationSchedulerServiceTest {
     private ReminderKeyboardFactory reminderKeyboardFactory = new ReminderKeyboardFactory();
 
     /**
-     * Реальный Clock с фиксированным моментом — quiet-hours проверка теперь
-     * читает {@code clock.instant()} вместо передаваемого LocalDateTime
-     * (фикс регрессии после #118, см. NotificationSchedulerService.shouldSend).
+     * Реальный Clock с фиксированным моментом — quiet-hours проверка читает
+     * {@code clock.instant()} (фикс регрессии после #118).
      */
     @org.mockito.Spy
     private Clock clock = Clock.fixed(Instant.parse("2026-05-24T12:00:00Z"), ZoneOffset.UTC);
@@ -135,15 +150,33 @@ class NotificationSchedulerServiceTest {
         ReflectionTestUtils.setField(plant, "id", 10L);
         ReflectionTestUtils.setField(schedule, "id", 100L);
 
-        // По умолчанию quiet-hours не активны (любой момент проходит фильтр).
-        // Конкретные тесты QuietHours переопределяют через свой when(...).
-        // Шедулер с #118-фикса вызывает Instant-перегрузку (см. shouldSend).
+        // По умолчанию quiet-hours не активны. Шедулер с #118-фикса вызывает
+        // Instant-перегрузку (см. shouldSend).
         when(quietHoursPolicy.isQuiet(any(User.class), any(Instant.class)))
                 .thenReturn(false);
-        // По умолчанию сезонная корректировка возвращает базовый интервал —
-        // тесты, проверяющие сезонную логику, есть отдельно от этого набора.
         when(seasonalIntervalService.effectiveIntervalDays(any(), any(), any(Integer.class)))
                 .thenAnswer(inv -> inv.getArgument(2, Integer.class));
+    }
+
+    /** Захватывает SendCallbacks из единственного enqueue с колбэками. */
+    private SendCallbacks captureCallbacks() {
+        ArgumentCaptor<SendCallbacks> captor = ArgumentCaptor.forClass(SendCallbacks.class);
+        verify(telegramSender).enqueue(any(SendMessage.class), captor.capture());
+        return captor.getValue();
+    }
+
+    /** Эмулирует вызов onSuccess воркером очереди (с null-guard, как в проде). */
+    private static void runSuccess(SendCallbacks callbacks) {
+        if (callbacks.onSuccess() != null) {
+            callbacks.onSuccess().run();
+        }
+    }
+
+    /** Эмулирует вызов onFailure воркером очереди (с null-guard, как в проде). */
+    private static void runFailure(SendCallbacks callbacks, TelegramApiException e) {
+        if (callbacks.onFailure() != null) {
+            callbacks.onFailure().accept(e);
+        }
     }
 
     @Nested
@@ -151,29 +184,62 @@ class NotificationSchedulerServiceTest {
     class SingleNotification {
 
         @Test
-        @DisplayName("Если due-задача одна, отправляется обычное уведомление")
-        void shouldSendSingleNotificationWhenOnlyOneDueSchedule() throws TelegramApiException {
+        @DisplayName("Если due-задача одна, в очередь ставится обычное уведомление")
+        void shouldEnqueueSingleNotificationWhenOnlyOneDueSchedule() {
             when(careScheduleRepository.findDueSchedules(any())).thenReturn(List.of(schedule));
             when(notificationLogRepository.existsByPlantIdAndTaskTypeAndSentAtAfter(any(), any(), any()))
                     .thenReturn(false);
-            when(telegramClientProvider.getTelegramClient()).thenReturn(telegramClient);
 
             service.checkAndSendNotifications();
 
             ArgumentCaptor<SendMessage> messageCaptor = ArgumentCaptor.forClass(SendMessage.class);
-            verify(telegramClient).execute(messageCaptor.capture());
+            verify(telegramSender).enqueue(messageCaptor.capture(), any(SendCallbacks.class));
 
             SendMessage sent = messageCaptor.getValue();
-
             assertThat(sent.getChatId()).isEqualTo("100");
             assertThat(sent.getText()).contains("Пора полить");
             assertThat(sent.getText()).contains("Монстера");
             assertThat(sent.getText()).doesNotContain("На сегодня:");
 
             verify(notificationDigestRepository, never()).save(any());
-            verify(notificationLogRepository).save(any(NotificationLog.class));
             // Тик зафиксирован после успешной итерации (issue #28).
             verify(schedulerHealthTracker).recordTick();
+        }
+
+        @Test
+        @DisplayName("onSuccess колбэк пишет дедуп-лог через NotificationDeliveryCallbacks.onSent")
+        void shouldRouteSuccessCallbackToOnSent() {
+            when(careScheduleRepository.findDueSchedules(any())).thenReturn(List.of(schedule));
+            when(notificationLogRepository.existsByPlantIdAndTaskTypeAndSentAtAfter(any(), any(), any()))
+                    .thenReturn(false);
+
+            service.checkAndSendNotifications();
+
+            SendCallbacks callbacks = captureCallbacks();
+            // До выполнения колбэка bookkeeping не трогается.
+            verify(deliveryCallbacks, never()).onSent(anyLong(), any());
+
+            runSuccess(callbacks);
+
+            verify(deliveryCallbacks).onSent(plant.getId(), TaskType.WATERING);
+        }
+
+        @Test
+        @DisplayName("onFailure колбэк делегирует в NotificationDeliveryCallbacks.onFailed с chatId")
+        void shouldRouteFailureCallbackToOnFailed() {
+            when(careScheduleRepository.findDueSchedules(any())).thenReturn(List.of(schedule));
+            when(notificationLogRepository.existsByPlantIdAndTaskTypeAndSentAtAfter(any(), any(), any()))
+                    .thenReturn(false);
+
+            service.checkAndSendNotifications();
+
+            SendCallbacks callbacks = captureCallbacks();
+            TelegramApiException error =
+                    new TelegramApiException("Forbidden: bot was blocked by the user [403]");
+
+            runFailure(callbacks, error);
+
+            verify(deliveryCallbacks).onFailed(user.getTelegramChatId(), error);
         }
 
         @Test
@@ -198,23 +264,22 @@ class NotificationSchedulerServiceTest {
                 // ожидаемо, тик не завершился успешно
             }
 
-            verify(schedulerHealthTracker, org.mockito.Mockito.never()).recordTick();
+            verify(schedulerHealthTracker, never()).recordTick();
         }
 
         @Test
         @DisplayName("Текст уведомления зависит от типа задачи")
-        void shouldUseCorrectTextForDifferentTaskTypes() throws TelegramApiException {
+        void shouldUseCorrectTextForDifferentTaskTypes() {
             schedule.setTaskType(TaskType.MISTING);
 
             when(careScheduleRepository.findDueSchedules(any())).thenReturn(List.of(schedule));
             when(notificationLogRepository.existsByPlantIdAndTaskTypeAndSentAtAfter(any(), any(), any()))
                     .thenReturn(false);
-            when(telegramClientProvider.getTelegramClient()).thenReturn(telegramClient);
 
             service.checkAndSendNotifications();
 
             ArgumentCaptor<SendMessage> messageCaptor = ArgumentCaptor.forClass(SendMessage.class);
-            verify(telegramClient).execute(messageCaptor.capture());
+            verify(telegramSender).enqueue(messageCaptor.capture(), any(SendCallbacks.class));
 
             assertThat(messageCaptor.getValue().getText()).contains("Пора опрыскать");
             assertThat(messageCaptor.getValue().getText()).contains("Монстера");
@@ -222,120 +287,75 @@ class NotificationSchedulerServiceTest {
 
         @Test
         @DisplayName("Кнопка done содержит правильный глагол для WATERING")
-        void shouldUseWateringDoneButtonLabel() throws TelegramApiException {
+        void shouldUseWateringDoneButtonLabel() {
             when(careScheduleRepository.findDueSchedules(any())).thenReturn(List.of(schedule));
             when(notificationLogRepository.existsByPlantIdAndTaskTypeAndSentAtAfter(any(), any(), any()))
                     .thenReturn(false);
-            when(telegramClientProvider.getTelegramClient()).thenReturn(telegramClient);
 
             service.checkAndSendNotifications();
 
-            ArgumentCaptor<SendMessage> messageCaptor = ArgumentCaptor.forClass(SendMessage.class);
-            verify(telegramClient).execute(messageCaptor.capture());
-
-            InlineKeyboardMarkup keyboard = (InlineKeyboardMarkup) messageCaptor.getValue().getReplyMarkup();
-
-            List<String> buttonLabels = keyboard.getKeyboard().stream()
-                    .flatMap(Collection::stream)
-                    .map(InlineKeyboardButton::getText)
-                    .toList();
-
-            assertThat(buttonLabels).contains("✅ Полил");
+            assertThat(buttonLabels()).contains("✅ Полил");
         }
 
         @Test
         @DisplayName("Кнопка done содержит правильный глагол для MISTING")
-        void shouldUseMistingDoneButtonLabel() throws TelegramApiException {
+        void shouldUseMistingDoneButtonLabel() {
             schedule.setTaskType(TaskType.MISTING);
 
             when(careScheduleRepository.findDueSchedules(any())).thenReturn(List.of(schedule));
             when(notificationLogRepository.existsByPlantIdAndTaskTypeAndSentAtAfter(any(), any(), any()))
                     .thenReturn(false);
-            when(telegramClientProvider.getTelegramClient()).thenReturn(telegramClient);
 
             service.checkAndSendNotifications();
 
-            ArgumentCaptor<SendMessage> messageCaptor = ArgumentCaptor.forClass(SendMessage.class);
-            verify(telegramClient).execute(messageCaptor.capture());
-
-            InlineKeyboardMarkup keyboard = (InlineKeyboardMarkup) messageCaptor.getValue().getReplyMarkup();
-
-            List<String> buttonLabels = keyboard.getKeyboard().stream()
-                    .flatMap(Collection::stream)
-                    .map(InlineKeyboardButton::getText)
-                    .toList();
-
-            assertThat(buttonLabels).contains("✅ Опрыскал");
+            assertThat(buttonLabels()).contains("✅ Опрыскал");
         }
 
         @Test
         @DisplayName("Кнопка done содержит правильный глагол для FERTILIZING")
-        void shouldUseFertilizingDoneButtonLabel() throws TelegramApiException {
+        void shouldUseFertilizingDoneButtonLabel() {
             schedule.setTaskType(TaskType.FERTILIZING);
 
             when(careScheduleRepository.findDueSchedules(any())).thenReturn(List.of(schedule));
             when(notificationLogRepository.existsByPlantIdAndTaskTypeAndSentAtAfter(any(), any(), any()))
                     .thenReturn(false);
-            when(telegramClientProvider.getTelegramClient()).thenReturn(telegramClient);
 
             service.checkAndSendNotifications();
 
-            ArgumentCaptor<SendMessage> messageCaptor = ArgumentCaptor.forClass(SendMessage.class);
-            verify(telegramClient).execute(messageCaptor.capture());
-
-            InlineKeyboardMarkup keyboard = (InlineKeyboardMarkup) messageCaptor.getValue().getReplyMarkup();
-
-            List<String> buttonLabels = keyboard.getKeyboard().stream()
-                    .flatMap(Collection::stream)
-                    .map(InlineKeyboardButton::getText)
-                    .toList();
-
-            assertThat(buttonLabels).contains("✅ Удобрил");
+            assertThat(buttonLabels()).contains("✅ Удобрил");
         }
 
         @Test
         @DisplayName("Обычное уведомление содержит кнопки done, snooze, skip")
-        void shouldContainThreeInlineButtons() throws TelegramApiException {
+        void shouldContainThreeInlineButtons() {
             when(careScheduleRepository.findDueSchedules(any())).thenReturn(List.of(schedule));
             when(notificationLogRepository.existsByPlantIdAndTaskTypeAndSentAtAfter(any(), any(), any()))
                     .thenReturn(false);
-            when(telegramClientProvider.getTelegramClient()).thenReturn(telegramClient);
 
             service.checkAndSendNotifications();
 
+            assertThat(callbackData())
+                    .contains("v1:done:100", "v1:snooze:100", "v1:skip:100");
+        }
+
+        private List<String> buttonLabels() {
             ArgumentCaptor<SendMessage> messageCaptor = ArgumentCaptor.forClass(SendMessage.class);
-            verify(telegramClient).execute(messageCaptor.capture());
-
+            verify(telegramSender).enqueue(messageCaptor.capture(), any(SendCallbacks.class));
             InlineKeyboardMarkup keyboard = (InlineKeyboardMarkup) messageCaptor.getValue().getReplyMarkup();
+            return keyboard.getKeyboard().stream()
+                    .flatMap(Collection::stream)
+                    .map(InlineKeyboardButton::getText)
+                    .toList();
+        }
 
-            List<String> callbackData = keyboard.getKeyboard().stream()
+        private List<String> callbackData() {
+            ArgumentCaptor<SendMessage> messageCaptor = ArgumentCaptor.forClass(SendMessage.class);
+            verify(telegramSender).enqueue(messageCaptor.capture(), any(SendCallbacks.class));
+            InlineKeyboardMarkup keyboard = (InlineKeyboardMarkup) messageCaptor.getValue().getReplyMarkup();
+            return keyboard.getKeyboard().stream()
                     .flatMap(Collection::stream)
                     .map(InlineKeyboardButton::getCallbackData)
                     .toList();
-
-            assertThat(callbackData).contains("v1:done:100");
-            assertThat(callbackData).contains("v1:snooze:100");
-            assertThat(callbackData).contains("v1:skip:100");
-        }
-
-        @Test
-        @DisplayName("После отправки обычного уведомления создаётся запись в notifications_log")
-        void shouldSaveNotificationLog() throws TelegramApiException {
-            when(careScheduleRepository.findDueSchedules(any())).thenReturn(List.of(schedule));
-            when(notificationLogRepository.existsByPlantIdAndTaskTypeAndSentAtAfter(any(), any(), any()))
-                    .thenReturn(false);
-            when(telegramClientProvider.getTelegramClient()).thenReturn(telegramClient);
-
-            service.checkAndSendNotifications();
-
-            ArgumentCaptor<NotificationLog> logCaptor = ArgumentCaptor.forClass(NotificationLog.class);
-            verify(notificationLogRepository).save(logCaptor.capture());
-
-            NotificationLog saved = logCaptor.getValue();
-
-            assertThat(saved.getPlant()).isEqualTo(plant);
-            assertThat(saved.getTaskType()).isEqualTo(TaskType.WATERING);
-            assertThat(saved.getNotificationType()).isEqualTo(NotificationType.DUE);
         }
     }
 
@@ -344,33 +364,12 @@ class NotificationSchedulerServiceTest {
     class DigestNotifications {
 
         @Test
-        @DisplayName("Если у одного пользователя 3 due-задачи, отправляется один digest")
-        void shouldSendDigestWhenUserHasSeveralDueSchedules() throws TelegramApiException {
-            CareSchedule schedule2 = CareSchedule.builder()
-                    .plant(plant)
-                    .taskType(TaskType.MISTING)
-                    .intervalDays(3)
-                    .nextDueAt(LocalDateTime.now().minusHours(1))
-                    .active(true)
-                    .build();
+        @DisplayName("Если у одного пользователя 3 due-задачи, в очередь ставится один digest")
+        void shouldEnqueueDigestWhenUserHasSeveralDueSchedules() {
+            CareSchedule schedule2 = dueSchedule(plant, TaskType.MISTING, 101L);
+            CareSchedule schedule3 = dueSchedule(plant, TaskType.FERTILIZING, 102L);
 
-            CareSchedule schedule3 = CareSchedule.builder()
-                    .plant(plant)
-                    .taskType(TaskType.FERTILIZING)
-                    .intervalDays(30)
-                    .nextDueAt(LocalDateTime.now().minusHours(1))
-                    .active(true)
-                    .build();
-
-            ReflectionTestUtils.setField(schedule2, "id", 101L);
-            ReflectionTestUtils.setField(schedule3, "id", 102L);
-
-            NotificationDigest savedDigest = NotificationDigest.builder()
-                    .userId(user.getId())
-                    .plantTaskIds(List.of())
-                    .build();
-
-            ReflectionTestUtils.setField(savedDigest, "id", 500L);
+            NotificationDigest savedDigest = savedDigest(500L);
 
             when(careScheduleRepository.findDueSchedules(any()))
                     .thenReturn(List.of(schedule, schedule2, schedule3));
@@ -378,15 +377,13 @@ class NotificationSchedulerServiceTest {
                     .thenReturn(false);
             when(notificationDigestRepository.save(any(NotificationDigest.class)))
                     .thenReturn(savedDigest);
-            when(telegramClientProvider.getTelegramClient()).thenReturn(telegramClient);
 
             service.checkAndSendNotifications();
 
             ArgumentCaptor<SendMessage> messageCaptor = ArgumentCaptor.forClass(SendMessage.class);
-            verify(telegramClient).execute(messageCaptor.capture());
+            verify(telegramSender).enqueue(messageCaptor.capture(), any(SendCallbacks.class));
 
             SendMessage sent = messageCaptor.getValue();
-
             assertThat(sent.getChatId()).isEqualTo("100");
             assertThat(sent.getText()).contains("На сегодня:");
             assertThat(sent.getText()).contains("Монстера — полить");
@@ -394,46 +391,50 @@ class NotificationSchedulerServiceTest {
             assertThat(sent.getText()).contains("Монстера — удобрить");
 
             InlineKeyboardMarkup keyboard = (InlineKeyboardMarkup) sent.getReplyMarkup();
-
             List<String> callbacks = keyboard.getKeyboard().stream()
                     .flatMap(Collection::stream)
                     .map(InlineKeyboardButton::getCallbackData)
                     .toList();
 
-            assertThat(callbacks).contains("digest:done_all:500");
-            assertThat(callbacks).contains("digest:expand:500");
+            assertThat(callbacks).contains("digest:done_all:500", "digest:expand:500");
 
             verify(notificationDigestRepository).save(any(NotificationDigest.class));
-            verify(notificationLogRepository, times(3)).save(any(NotificationLog.class));
+        }
+
+        @Test
+        @DisplayName("onSuccess дайджеста пишет дедуп-лог по каждой задаче через onDigestSent")
+        void shouldRouteDigestSuccessToOnDigestSent() {
+            CareSchedule schedule2 = dueSchedule(plant, TaskType.MISTING, 101L);
+            when(careScheduleRepository.findDueSchedules(any()))
+                    .thenReturn(List.of(schedule, schedule2));
+            when(notificationLogRepository.existsByPlantIdAndTaskTypeAndSentAtAfter(any(), any(), any()))
+                    .thenReturn(false);
+            when(notificationDigestRepository.save(any(NotificationDigest.class)))
+                    .thenReturn(savedDigest(500L));
+
+            service.checkAndSendNotifications();
+
+            runSuccess(captureCallbacks());
+
+            ArgumentCaptor<List<NotificationDeliveryCallbacks.DigestLogItem>> itemsCaptor =
+                    ArgumentCaptor.forClass(List.class);
+            verify(deliveryCallbacks).onDigestSent(itemsCaptor.capture());
+            assertThat(itemsCaptor.getValue())
+                    .extracting(NotificationDeliveryCallbacks.DigestLogItem::taskType)
+                    .containsExactlyInAnyOrder(TaskType.WATERING, TaskType.MISTING);
         }
 
         @Test
         @DisplayName("В NotificationDigest сохраняются все задачи пользователя")
-        void shouldSaveDigestWithAllTasks() throws TelegramApiException {
-            CareSchedule schedule2 = CareSchedule.builder()
-                    .plant(plant)
-                    .taskType(TaskType.MISTING)
-                    .intervalDays(3)
-                    .nextDueAt(LocalDateTime.now().minusHours(1))
-                    .active(true)
-                    .build();
-
-            ReflectionTestUtils.setField(schedule2, "id", 101L);
-
-            NotificationDigest savedDigest = NotificationDigest.builder()
-                    .userId(user.getId())
-                    .plantTaskIds(List.of())
-                    .build();
-
-            ReflectionTestUtils.setField(savedDigest, "id", 500L);
+        void shouldSaveDigestWithAllTasks() {
+            CareSchedule schedule2 = dueSchedule(plant, TaskType.MISTING, 101L);
 
             when(careScheduleRepository.findDueSchedules(any()))
                     .thenReturn(List.of(schedule, schedule2));
             when(notificationLogRepository.existsByPlantIdAndTaskTypeAndSentAtAfter(any(), any(), any()))
                     .thenReturn(false);
             when(notificationDigestRepository.save(any(NotificationDigest.class)))
-                    .thenReturn(savedDigest);
-            when(telegramClientProvider.getTelegramClient()).thenReturn(telegramClient);
+                    .thenReturn(savedDigest(500L));
 
             service.checkAndSendNotifications();
 
@@ -441,7 +442,6 @@ class NotificationSchedulerServiceTest {
             verify(notificationDigestRepository).save(digestCaptor.capture());
 
             NotificationDigest digest = digestCaptor.getValue();
-
             assertThat(digest.getUserId()).isEqualTo(1L);
             assertThat(digest.getPlantTaskIds()).hasSize(2);
             assertThat(digest.getPlantTaskIds().get(0).scheduleId()).isEqualTo(100L);
@@ -454,115 +454,52 @@ class NotificationSchedulerServiceTest {
 
         @Test
         @DisplayName("Если у разных пользователей по одной задаче, digest не создаётся")
-        void shouldNotCreateDigestForDifferentUsersWithSingleTaskEach() throws TelegramApiException {
-            User secondUser = User.builder()
-                    .telegramChatId(200L)
-                    .timezone("Europe/Minsk")
-                    .quietHoursStart(LocalTime.of(0, 0))
-                    .quietHoursEnd(LocalTime.of(0, 0))
-                    .blocked(false)
-                    .build();
-
-            Plant secondPlant = Plant.builder()
-                    .user(secondUser)
-                    .name("Фикус")
-                    .build();
-
-            CareSchedule secondSchedule = CareSchedule.builder()
-                    .plant(secondPlant)
-                    .taskType(TaskType.MISTING)
-                    .intervalDays(3)
-                    .nextDueAt(LocalDateTime.now().minusHours(1))
-                    .active(true)
-                    .build();
-
-            ReflectionTestUtils.setField(secondUser, "id", 2L);
-            ReflectionTestUtils.setField(secondPlant, "id", 20L);
-            ReflectionTestUtils.setField(secondSchedule, "id", 200L);
+        void shouldNotCreateDigestForDifferentUsersWithSingleTaskEach() {
+            User secondUser = secondUser();
+            Plant secondPlant = secondPlant(secondUser);
+            CareSchedule secondSchedule = dueSchedule(secondPlant, TaskType.MISTING, 200L);
 
             when(careScheduleRepository.findDueSchedules(any()))
                     .thenReturn(List.of(schedule, secondSchedule));
             when(notificationLogRepository.existsByPlantIdAndTaskTypeAndSentAtAfter(any(), any(), any()))
                     .thenReturn(false);
-            when(telegramClientProvider.getTelegramClient()).thenReturn(telegramClient);
 
             service.checkAndSendNotifications();
 
-            verify(telegramClient, times(2)).execute(any(SendMessage.class));
+            verify(telegramSender, times(2)).enqueue(any(SendMessage.class), any(SendCallbacks.class));
             verify(notificationDigestRepository, never()).save(any());
-            verify(notificationLogRepository, times(2)).save(any(NotificationLog.class));
         }
 
         @Test
-        @DisplayName("Если у первого пользователя 2 задачи, а у второго 1, первый получает digest, второй обычное уведомление")
-        void shouldSendDigestForOneUserAndSingleNotificationForAnother() throws TelegramApiException {
-            CareSchedule schedule2 = CareSchedule.builder()
-                    .plant(plant)
-                    .taskType(TaskType.MISTING)
-                    .intervalDays(3)
-                    .nextDueAt(LocalDateTime.now().minusHours(1))
-                    .active(true)
-                    .build();
+        @DisplayName("Первый пользователь получает digest, второй — обычное уведомление")
+        void shouldSendDigestForOneUserAndSingleNotificationForAnother() {
+            CareSchedule schedule2 = dueSchedule(plant, TaskType.MISTING, 101L);
 
-            User secondUser = User.builder()
-                    .telegramChatId(200L)
-                    .timezone("Europe/Minsk")
-                    .quietHoursStart(LocalTime.of(0, 0))
-                    .quietHoursEnd(LocalTime.of(0, 0))
-                    .blocked(false)
-                    .build();
-
-            Plant secondPlant = Plant.builder()
-                    .user(secondUser)
-                    .name("Фикус")
-                    .build();
-
-            CareSchedule secondUserSchedule = CareSchedule.builder()
-                    .plant(secondPlant)
-                    .taskType(TaskType.WATERING)
-                    .intervalDays(5)
-                    .nextDueAt(LocalDateTime.now().minusHours(1))
-                    .active(true)
-                    .build();
-
-            ReflectionTestUtils.setField(schedule2, "id", 101L);
-            ReflectionTestUtils.setField(secondUser, "id", 2L);
-            ReflectionTestUtils.setField(secondPlant, "id", 20L);
-            ReflectionTestUtils.setField(secondUserSchedule, "id", 200L);
-
-            NotificationDigest savedDigest = NotificationDigest.builder()
-                    .userId(user.getId())
-                    .plantTaskIds(List.of())
-                    .build();
-
-            ReflectionTestUtils.setField(savedDigest, "id", 500L);
+            User secondUser = secondUser();
+            Plant secondPlant = secondPlant(secondUser);
+            CareSchedule secondUserSchedule = dueSchedule(secondPlant, TaskType.WATERING, 200L);
 
             when(careScheduleRepository.findDueSchedules(any()))
                     .thenReturn(List.of(schedule, schedule2, secondUserSchedule));
             when(notificationLogRepository.existsByPlantIdAndTaskTypeAndSentAtAfter(any(), any(), any()))
                     .thenReturn(false);
             when(notificationDigestRepository.save(any(NotificationDigest.class)))
-                    .thenReturn(savedDigest);
-            when(telegramClientProvider.getTelegramClient()).thenReturn(telegramClient);
+                    .thenReturn(savedDigest(500L));
 
             service.checkAndSendNotifications();
 
             ArgumentCaptor<SendMessage> messageCaptor = ArgumentCaptor.forClass(SendMessage.class);
-            verify(telegramClient, times(2)).execute(messageCaptor.capture());
+            verify(telegramSender, times(2)).enqueue(messageCaptor.capture(), any(SendCallbacks.class));
 
             List<SendMessage> sentMessages = messageCaptor.getAllValues();
-
             assertThat(sentMessages)
-                    .anyMatch(message -> message.getChatId().equals("100")
-                            && message.getText().contains("На сегодня:"));
-
+                    .anyMatch(m -> m.getChatId().equals("100") && m.getText().contains("На сегодня:"));
             assertThat(sentMessages)
-                    .anyMatch(message -> message.getChatId().equals("200")
-                            && message.getText().contains("Пора полить")
-                            && message.getText().contains("Фикус"));
+                    .anyMatch(m -> m.getChatId().equals("200")
+                            && m.getText().contains("Пора полить")
+                            && m.getText().contains("Фикус"));
 
             verify(notificationDigestRepository).save(any(NotificationDigest.class));
-            verify(notificationLogRepository, times(3)).save(any(NotificationLog.class));
         }
     }
 
@@ -571,32 +508,30 @@ class NotificationSchedulerServiceTest {
     class PausedUser {
 
         @Test
-        @DisplayName("Не отправляет уведомление, если pausedUntil > now")
-        void shouldSkipPausedUser() throws TelegramApiException {
+        @DisplayName("Не ставит в очередь, если pausedUntil > now")
+        void shouldSkipPausedUser() {
             user.setPausedUntil(LocalDateTime.now().plusHours(1));
 
             when(careScheduleRepository.findDueSchedules(any())).thenReturn(List.of(schedule));
 
             service.checkAndSendNotifications();
 
-            verify(telegramClient, never()).execute(any(SendMessage.class));
+            verifyNoInteractions(telegramSender);
             verify(notificationDigestRepository, never()).save(any());
-            verify(notificationLogRepository, never()).save(any());
         }
 
         @Test
-        @DisplayName("Отправляет уведомление, если pausedUntil уже прошло")
-        void shouldSendIfPauseExpired() throws TelegramApiException {
+        @DisplayName("Ставит в очередь, если pausedUntil уже прошло")
+        void shouldSendIfPauseExpired() {
             user.setPausedUntil(LocalDateTime.now().minusHours(1));
 
             when(careScheduleRepository.findDueSchedules(any())).thenReturn(List.of(schedule));
             when(notificationLogRepository.existsByPlantIdAndTaskTypeAndSentAtAfter(any(), any(), any()))
                     .thenReturn(false);
-            when(telegramClientProvider.getTelegramClient()).thenReturn(telegramClient);
 
             service.checkAndSendNotifications();
 
-            verify(telegramClient).execute(any(SendMessage.class));
+            verify(telegramSender).enqueue(any(SendMessage.class), any(SendCallbacks.class));
         }
     }
 
@@ -605,8 +540,8 @@ class NotificationSchedulerServiceTest {
     class QuietHours {
 
         @Test
-        @DisplayName("Не отправляет уведомление во время тихих часов")
-        void shouldSkipDuringQuietHours() throws TelegramApiException {
+        @DisplayName("Не ставит в очередь во время тихих часов")
+        void shouldSkipDuringQuietHours() {
             user.setQuietHoursStart(LocalTime.of(0, 0));
             user.setQuietHoursEnd(LocalTime.of(23, 59));
 
@@ -617,25 +552,23 @@ class NotificationSchedulerServiceTest {
 
             service.checkAndSendNotifications();
 
-            verify(telegramClient, never()).execute(any(SendMessage.class));
+            verifyNoInteractions(telegramSender);
             verify(notificationDigestRepository, never()).save(any());
-            verify(notificationLogRepository, never()).save(any());
         }
 
         @Test
-        @DisplayName("Отправляет уведомление, если quiet_hours_start == quiet_hours_end")
-        void shouldSendWhenQuietHoursDisabled() throws TelegramApiException {
+        @DisplayName("Ставит в очередь, если quiet_hours_start == quiet_hours_end")
+        void shouldSendWhenQuietHoursDisabled() {
             user.setQuietHoursStart(LocalTime.of(0, 0));
             user.setQuietHoursEnd(LocalTime.of(0, 0));
 
             when(careScheduleRepository.findDueSchedules(any())).thenReturn(List.of(schedule));
             when(notificationLogRepository.existsByPlantIdAndTaskTypeAndSentAtAfter(any(), any(), any()))
                     .thenReturn(false);
-            when(telegramClientProvider.getTelegramClient()).thenReturn(telegramClient);
 
             service.checkAndSendNotifications();
 
-            verify(telegramClient).execute(any(SendMessage.class));
+            verify(telegramSender).enqueue(any(SendMessage.class), any(SendCallbacks.class));
         }
     }
 
@@ -644,100 +577,52 @@ class NotificationSchedulerServiceTest {
     class Deduplication {
 
         @Test
-        @DisplayName("Не отправляет уведомление, если за последние 12 часов уже отправляли")
-        void shouldSkipIfAlreadyNotifiedRecently() throws TelegramApiException {
+        @DisplayName("Не ставит в очередь, если за последние 12 часов уже отправляли")
+        void shouldSkipIfAlreadyNotifiedRecently() {
             when(careScheduleRepository.findDueSchedules(any())).thenReturn(List.of(schedule));
             when(notificationLogRepository.existsByPlantIdAndTaskTypeAndSentAtAfter(any(), any(), any()))
                     .thenReturn(true);
 
             service.checkAndSendNotifications();
 
-            verify(telegramClient, never()).execute(any(SendMessage.class));
+            verifyNoInteractions(telegramSender);
             verify(notificationDigestRepository, never()).save(any());
-            verify(notificationLogRepository, never()).save(any());
         }
     }
 
     @Nested
-    @DisplayName("Ошибки Telegram")
-    class TelegramErrors {
+    @DisplayName("Ошибки доставки маршрутизируются в onFailed")
+    class FailureRouting {
 
         @Test
-        @DisplayName("При 403 помечает пользователя как заблокированного")
-        void shouldMarkUserAsBlockedOn403() throws TelegramApiException {
+        @DisplayName("403-колбэк делегирует в onFailed (пометка blocked живёт там)")
+        void shouldRouteForbiddenToOnFailed() {
             when(careScheduleRepository.findDueSchedules(any())).thenReturn(List.of(schedule));
             when(notificationLogRepository.existsByPlantIdAndTaskTypeAndSentAtAfter(any(), any(), any()))
                     .thenReturn(false);
-            when(telegramClientProvider.getTelegramClient()).thenReturn(telegramClient);
-            when(telegramClient.execute(any(SendMessage.class)))
-                    .thenThrow(new TelegramApiException("Forbidden: bot was blocked by the user [403]"));
 
             service.checkAndSendNotifications();
 
-            assertThat(user.isBlocked()).isTrue();
+            TelegramApiException error =
+                    new TelegramApiException("Forbidden: bot was blocked by the user [403]");
+            runFailure(captureCallbacks(), error);
 
-            verify(userRepository).save(user);
-            verify(notificationLogRepository, never()).save(any());
+            verify(deliveryCallbacks).onFailed(100L, error);
         }
 
         @Test
-        @DisplayName("При прочих ошибках пользователь не блокируется")
-        void shouldNotBlockUserOnOtherErrors() throws TelegramApiException {
+        @DisplayName("Прочая ошибка тоже делегирует в onFailed с тем же chatId/исключением")
+        void shouldRouteOtherErrorToOnFailed() {
             when(careScheduleRepository.findDueSchedules(any())).thenReturn(List.of(schedule));
             when(notificationLogRepository.existsByPlantIdAndTaskTypeAndSentAtAfter(any(), any(), any()))
                     .thenReturn(false);
-            when(telegramClientProvider.getTelegramClient()).thenReturn(telegramClient);
-            when(telegramClient.execute(any(SendMessage.class)))
-                    .thenThrow(new TelegramApiException("Network timeout"));
 
             service.checkAndSendNotifications();
 
-            assertThat(user.isBlocked()).isFalse();
+            TelegramApiException error = new TelegramApiException("Network timeout");
+            runFailure(captureCallbacks(), error);
 
-            verify(userRepository, never()).save(any());
-            verify(notificationLogRepository, never()).save(any());
-        }
-
-        @Test
-        @DisplayName("Ошибка у одного пользователя не останавливает обработку другого")
-        void shouldContinueProcessingAfterError() throws TelegramApiException {
-            User secondUser = User.builder()
-                    .telegramChatId(200L)
-                    .timezone("Europe/Minsk")
-                    .quietHoursStart(LocalTime.of(0, 0))
-                    .quietHoursEnd(LocalTime.of(0, 0))
-                    .blocked(false)
-                    .build();
-
-            Plant secondPlant = Plant.builder()
-                    .user(secondUser)
-                    .name("Фикус")
-                    .build();
-
-            CareSchedule secondSchedule = CareSchedule.builder()
-                    .plant(secondPlant)
-                    .taskType(TaskType.MISTING)
-                    .intervalDays(3)
-                    .nextDueAt(LocalDateTime.now().minusHours(1))
-                    .active(true)
-                    .build();
-
-            ReflectionTestUtils.setField(secondUser, "id", 2L);
-            ReflectionTestUtils.setField(secondPlant, "id", 20L);
-            ReflectionTestUtils.setField(secondSchedule, "id", 200L);
-
-            when(careScheduleRepository.findDueSchedules(any()))
-                    .thenReturn(List.of(schedule, secondSchedule));
-            when(notificationLogRepository.existsByPlantIdAndTaskTypeAndSentAtAfter(any(), any(), any()))
-                    .thenReturn(false);
-            when(telegramClientProvider.getTelegramClient()).thenReturn(telegramClient);
-            when(telegramClient.execute(any(SendMessage.class)))
-                    .thenThrow(new TelegramApiException("error"))
-                    .thenReturn(null);
-
-            service.checkAndSendNotifications();
-
-            verify(telegramClient, times(2)).execute(any(SendMessage.class));
+            verify(deliveryCallbacks).onFailed(100L, error);
         }
     }
 
@@ -746,20 +631,19 @@ class NotificationSchedulerServiceTest {
     class NoDueSchedules {
 
         @Test
-        @DisplayName("Не отправляет ничего, если нет просроченных расписаний")
-        void shouldDoNothingWhenNoDueSchedules() throws TelegramApiException {
+        @DisplayName("Не ставит ничего в очередь, если нет просроченных расписаний")
+        void shouldDoNothingWhenNoDueSchedules() {
             when(careScheduleRepository.findDueSchedules(any())).thenReturn(List.of());
 
             service.checkAndSendNotifications();
 
-            verify(telegramClient, never()).execute(any(SendMessage.class));
+            verifyNoInteractions(telegramSender);
             verify(notificationDigestRepository, never()).save(any());
-            verify(notificationLogRepository, never()).save(any());
         }
     }
 
     @Nested
-    @DisplayName("Метрики (#115)")
+    @DisplayName("Метрики тика (#115)")
     class Metrics {
 
         @Test
@@ -767,7 +651,7 @@ class NotificationSchedulerServiceTest {
         void should_wrap_each_tick_in_timer_sample_when_called() {
             when(careScheduleRepository.findDueSchedules(any())).thenReturn(List.of());
             io.micrometer.core.instrument.Timer.Sample sample =
-                    mock(io.micrometer.core.instrument.Timer.Sample.class);
+                    org.mockito.Mockito.mock(io.micrometer.core.instrument.Timer.Sample.class);
             when(metricsService.startSchedulerTickTimer()).thenReturn(sample);
 
             service.checkAndSendNotifications();
@@ -780,7 +664,7 @@ class NotificationSchedulerServiceTest {
         @DisplayName("Timer.stop вызывается даже если tick упал с исключением (finally)")
         void should_stop_timer_when_tick_fails_with_exception() {
             io.micrometer.core.instrument.Timer.Sample sample =
-                    mock(io.micrometer.core.instrument.Timer.Sample.class);
+                    org.mockito.Mockito.mock(io.micrometer.core.instrument.Timer.Sample.class);
             when(metricsService.startSchedulerTickTimer()).thenReturn(sample);
             when(careScheduleRepository.findDueSchedules(any()))
                     .thenThrow(new RuntimeException("DB down"));
@@ -794,104 +678,49 @@ class NotificationSchedulerServiceTest {
             verify(metricsService).startSchedulerTickTimer();
             verify(metricsService).stopSchedulerTickTimer(sample);
         }
+    }
 
-        @Test
-        @DisplayName("После успешной отправки одиночного уведомления увеличивается notifications.sent")
-        void should_record_notification_sent_when_single_push_succeeds() throws TelegramApiException {
-            when(careScheduleRepository.findDueSchedules(any())).thenReturn(List.of(schedule));
-            when(notificationLogRepository.existsByPlantIdAndTaskTypeAndSentAtAfter(any(), any(), any()))
-                    .thenReturn(false);
-            when(telegramClientProvider.getTelegramClient()).thenReturn(telegramClient);
+    // ===== helpers =====
 
-            service.checkAndSendNotifications();
+    private CareSchedule dueSchedule(Plant ownerPlant, TaskType type, long id) {
+        CareSchedule s = CareSchedule.builder()
+                .plant(ownerPlant)
+                .taskType(type)
+                .intervalDays(3)
+                .nextDueAt(LocalDateTime.now().minusHours(1))
+                .active(true)
+                .build();
+        ReflectionTestUtils.setField(s, "id", id);
+        return s;
+    }
 
-            verify(metricsService).recordNotificationSent(MetricsService.CHANNEL_TELEGRAM, TaskType.WATERING);
-            verify(metricsService, never()).recordNotificationFailed(any(), any());
-        }
+    private NotificationDigest savedDigest(long id) {
+        NotificationDigest d = NotificationDigest.builder()
+                .userId(user.getId())
+                .plantTaskIds(List.of())
+                .build();
+        ReflectionTestUtils.setField(d, "id", id);
+        return d;
+    }
 
-        @Test
-        @DisplayName("При 429 от Telegram пишутся telegram.api.errors[429] и notifications.failed[rate_limit]")
-        void should_record_rate_limit_failure_when_telegram_returns_429() throws TelegramApiException {
-            when(careScheduleRepository.findDueSchedules(any())).thenReturn(List.of(schedule));
-            when(notificationLogRepository.existsByPlantIdAndTaskTypeAndSentAtAfter(any(), any(), any()))
-                    .thenReturn(false);
-            when(telegramClientProvider.getTelegramClient()).thenReturn(telegramClient);
-            when(telegramClient.execute(any(SendMessage.class)))
-                    .thenThrow(new TelegramApiException("[429] Too Many Requests: retry after 30"));
+    private User secondUser() {
+        User secondUser = User.builder()
+                .telegramChatId(200L)
+                .timezone("Europe/Minsk")
+                .quietHoursStart(LocalTime.of(0, 0))
+                .quietHoursEnd(LocalTime.of(0, 0))
+                .blocked(false)
+                .build();
+        ReflectionTestUtils.setField(secondUser, "id", 2L);
+        return secondUser;
+    }
 
-            service.checkAndSendNotifications();
-
-            verify(metricsService).recordTelegramApiError(MetricsService.TelegramErrorCode.RATE_LIMITED);
-            verify(metricsService).recordNotificationFailed(
-                    MetricsService.CHANNEL_TELEGRAM, MetricsService.FailureReason.RATE_LIMIT);
-            verify(metricsService, never()).recordNotificationSent(any(), any());
-        }
-
-        @Test
-        @DisplayName("При 403 от Telegram пишутся telegram.api.errors[403] и notifications.failed[blocked]")
-        void should_record_blocked_failure_when_telegram_returns_403() throws TelegramApiException {
-            when(careScheduleRepository.findDueSchedules(any())).thenReturn(List.of(schedule));
-            when(notificationLogRepository.existsByPlantIdAndTaskTypeAndSentAtAfter(any(), any(), any()))
-                    .thenReturn(false);
-            when(telegramClientProvider.getTelegramClient()).thenReturn(telegramClient);
-            when(telegramClient.execute(any(SendMessage.class)))
-                    .thenThrow(new TelegramApiException("Forbidden: bot was blocked by the user [403]"));
-
-            service.checkAndSendNotifications();
-
-            verify(metricsService).recordTelegramApiError(MetricsService.TelegramErrorCode.FORBIDDEN);
-            verify(metricsService).recordNotificationFailed(
-                    MetricsService.CHANNEL_TELEGRAM, MetricsService.FailureReason.BLOCKED);
-        }
-
-        @Test
-        @DisplayName("При прочей ошибке Telegram пишется failed[other]")
-        void should_record_other_failure_when_telegram_throws_unknown_error() throws TelegramApiException {
-            when(careScheduleRepository.findDueSchedules(any())).thenReturn(List.of(schedule));
-            when(notificationLogRepository.existsByPlantIdAndTaskTypeAndSentAtAfter(any(), any(), any()))
-                    .thenReturn(false);
-            when(telegramClientProvider.getTelegramClient()).thenReturn(telegramClient);
-            when(telegramClient.execute(any(SendMessage.class)))
-                    .thenThrow(new TelegramApiException("Network timeout"));
-
-            service.checkAndSendNotifications();
-
-            verify(metricsService).recordTelegramApiError(MetricsService.TelegramErrorCode.OTHER);
-            verify(metricsService).recordNotificationFailed(
-                    MetricsService.CHANNEL_TELEGRAM, MetricsService.FailureReason.OTHER);
-        }
-
-        @Test
-        @DisplayName("Дайджест из 2 задач: 2x recordNotificationSent + 1x recordDigestSent")
-        void should_record_digest_sent_and_per_task_sent_when_digest_pushed() throws TelegramApiException {
-            CareSchedule schedule2 = CareSchedule.builder()
-                    .plant(plant)
-                    .taskType(TaskType.MISTING)
-                    .intervalDays(3)
-                    .nextDueAt(LocalDateTime.now().minusHours(1))
-                    .active(true)
-                    .build();
-            ReflectionTestUtils.setField(schedule2, "id", 101L);
-
-            NotificationDigest savedDigest = NotificationDigest.builder()
-                    .userId(user.getId())
-                    .plantTaskIds(List.of())
-                    .build();
-            ReflectionTestUtils.setField(savedDigest, "id", 500L);
-
-            when(careScheduleRepository.findDueSchedules(any()))
-                    .thenReturn(List.of(schedule, schedule2));
-            when(notificationLogRepository.existsByPlantIdAndTaskTypeAndSentAtAfter(any(), any(), any()))
-                    .thenReturn(false);
-            when(notificationDigestRepository.save(any(NotificationDigest.class)))
-                    .thenReturn(savedDigest);
-            when(telegramClientProvider.getTelegramClient()).thenReturn(telegramClient);
-
-            service.checkAndSendNotifications();
-
-            verify(metricsService).recordNotificationSent(MetricsService.CHANNEL_TELEGRAM, TaskType.WATERING);
-            verify(metricsService).recordNotificationSent(MetricsService.CHANNEL_TELEGRAM, TaskType.MISTING);
-            verify(metricsService).recordDigestSent();
-        }
+    private Plant secondPlant(User owner) {
+        Plant secondPlant = Plant.builder()
+                .user(owner)
+                .name("Фикус")
+                .build();
+        ReflectionTestUtils.setField(secondPlant, "id", 20L);
+        return secondPlant;
     }
 }

@@ -1,10 +1,12 @@
 package com.plantcare.bot.service;
 
-import com.plantcare.bot.domain.Location;
-import com.plantcare.bot.domain.Plant;
-import com.plantcare.bot.domain.User;
-import com.plantcare.bot.domain.enums.TaskType;
-import com.plantcare.bot.repository.CareScheduleRepository;
+import com.plantcare.core.service.LocationService;
+
+import com.plantcare.core.domain.Location;
+import com.plantcare.core.domain.Plant;
+import com.plantcare.core.domain.User;
+import com.plantcare.core.domain.enums.TaskType;
+import com.plantcare.core.repository.CareScheduleRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;

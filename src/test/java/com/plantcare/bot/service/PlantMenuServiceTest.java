@@ -1,9 +1,12 @@
 package com.plantcare.bot.service;
 
-import com.plantcare.bot.domain.Location;
-import com.plantcare.bot.domain.Plant;
-import com.plantcare.bot.domain.User;
-import com.plantcare.bot.repository.PlantRepository;
+import com.plantcare.core.service.HealthScoreService;
+
+import com.plantcare.core.domain.Location;
+import com.plantcare.core.domain.Plant;
+import com.plantcare.core.domain.User;
+import com.plantcare.core.domain.enums.HealthZone;
+import com.plantcare.core.repository.PlantRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -24,6 +27,8 @@ import java.lang.reflect.Field;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -32,6 +37,7 @@ import static org.mockito.Mockito.when;
 class PlantMenuServiceTest {
 
     @Mock private PlantRepository plantRepository;
+    @Mock private HealthScoreService healthScoreService;
     @Mock private TelegramClient client;
 
     @InjectMocks
@@ -45,6 +51,11 @@ class PlantMenuServiceTest {
                 .telegramChatId(100L)
                 .build();
         setPrivateField(user, "id", 7L);
+
+        // issue #138: по умолчанию «мало данных» — сводка по зонам не печатается,
+        // существующие ассерты про текст/клавиатуру не задеваются.
+        lenient().when(healthScoreService.computeForPlant(any()))
+                .thenReturn(HealthScoreService.HealthScore.insufficient());
     }
 
     @Test
@@ -170,6 +181,62 @@ class PlantMenuServiceTest {
                 .flatExtracting(row -> row)
                 .extracting(InlineKeyboardButton::getCallbackData)
                 .doesNotContain("ARCHIVE:LIST");
+    }
+
+    @Test
+    @DisplayName("issue #138: сводка «🟢 N · 🟡 N · 🔴 N» считает зоны, insufficient не учитывается")
+    void should_render_health_summary_with_zone_counts_excluding_insufficient_plants()
+            throws TelegramApiException {
+        // arrange: 5 растений — 2 GREEN, 1 YELLOW, 1 RED, 1 insufficient
+        Plant green1 = plant(1L, "Алоэ", location(10L, "Кухня", "🍳"));
+        Plant green2 = plant(2L, "Бегония", location(10L, "Кухня", "🍳"));
+        Plant yellow = plant(3L, "Фикус", location(11L, "Спальня", null));
+        Plant red = plant(4L, "Орхидея", location(11L, "Спальня", null));
+        Plant noData = plant(5L, "Кактус", location(11L, "Спальня", null));
+
+        when(plantRepository.findAllByUserIdAndArchivedAtIsNullOrderByNameAsc(7L))
+                .thenReturn(List.of(green1, green2, yellow, red, noData));
+        when(healthScoreService.computeForPlant(green1))
+                .thenReturn(HealthScoreService.HealthScore.of(90, HealthZone.GREEN));
+        when(healthScoreService.computeForPlant(green2))
+                .thenReturn(HealthScoreService.HealthScore.of(81, HealthZone.GREEN));
+        when(healthScoreService.computeForPlant(yellow))
+                .thenReturn(HealthScoreService.HealthScore.of(55, HealthZone.YELLOW));
+        when(healthScoreService.computeForPlant(red))
+                .thenReturn(HealthScoreService.HealthScore.of(20, HealthZone.RED));
+        when(healthScoreService.computeForPlant(noData))
+                .thenReturn(HealthScoreService.HealthScore.insufficient());
+
+        // act
+        service.sendMyPlantsList(user, null, client);
+
+        // assert: insufficient (Кактус) в счётчики не попал → 2 / 1 / 1
+        ArgumentCaptor<SendMessage> captor = ArgumentCaptor.forClass(SendMessage.class);
+        verify(client).execute(captor.capture());
+        assertThat(captor.getValue().getText()).contains("🟢 2 · 🟡 1 · 🔴 1");
+    }
+
+    @Test
+    @DisplayName("issue #138: при всех insufficient строка-сводка не печатается")
+    void should_not_render_health_summary_when_all_plants_have_insufficient_data()
+            throws TelegramApiException {
+        // arrange: оба растения без достаточных данных (дефолтный стаб из setUp)
+        Plant a = plant(1L, "Алоэ", location(10L, "Кухня", "🍳"));
+        Plant b = plant(2L, "Фикус", location(11L, "Спальня", null));
+        when(plantRepository.findAllByUserIdAndArchivedAtIsNullOrderByNameAsc(7L))
+                .thenReturn(List.of(a, b));
+
+        // act
+        service.sendMyPlantsList(user, null, client);
+
+        // assert: ни одной зональной строки
+        ArgumentCaptor<SendMessage> captor = ArgumentCaptor.forClass(SendMessage.class);
+        verify(client).execute(captor.capture());
+        String text = captor.getValue().getText();
+        assertThat(text).contains("Всего: 2");
+        assertThat(text).doesNotContain("🟢");
+        assertThat(text).doesNotContain("🟡");
+        assertThat(text).doesNotContain("🔴");
     }
 
     // ---- helpers ----

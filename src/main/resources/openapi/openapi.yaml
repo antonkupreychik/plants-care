@@ -17,17 +17,14 @@ info:
 
     ## Аутентификация
 
-    В текущей версии (PoC, issue #85/#86) большинство пользовательских
-    эндпоинтов идентифицируют вызывающего по числовому заголовку:
+    Пользовательские эндпоинты защищены JWT bearer-токеном (issue #88, ADR-011).
+    Клиент получает пару токенов через `/api/v1/auth/*` (Apple / Google / email
+    magic link), затем передаёт access-токен в заголовке
+    `Authorization: Bearer <token>`. Идентификатор пользователя (`users.id`)
+    берётся из claim `sub`.
 
-    * **`X-User-Id`** — внутренний идентификатор пользователя в БД. Используется
-      эндпоинтами `/api/v1/plants`, `/api/v1/locations`.
-    * **`X-Chat-Id`** — Telegram `chat_id`. Используется эндпоинтами
-      `/api/v1/care-events`, `/api/v1/today`, `/api/v1/calendar`,
-      `/api/v1/stats/streak` и историей растения.
-
-    Публичные справочники (`/api/v1/species`, `/api/v1/care-types`) аутентификацию
-    не требуют.
+    Эндпоинты `/api/v1/auth/**` и публичные справочники (`/api/v1/species`,
+    `/api/v1/care-types`) аутентификацию не требуют.
 
     ## Таймзоны и время
 
@@ -53,6 +50,10 @@ servers:
     description: Production (Railway)
 
 tags:
+  - name: Auth
+    description: |
+      Мобильная аутентификация (issue #88): Sign in with Apple, Google,
+      email magic link и ротация токенов. Все эндпоинты публичны.
   - name: Health
     description: Liveness probe — простой пинг для оркестратора (Railway, Docker), не проверяет состояние БД и внешних API.
   - name: Plants
@@ -77,12 +78,41 @@ tags:
     description: Задачи ухода, дедлайн которых до конца сегодняшнего дня в таймзоне пользователя.
   - name: Stats
     description: Статистика по уходу. Сейчас доступен только стрик растения.
+  - name: Reports
+    description: Сводные отчёты по уходу. Месячный отчёт для мобильного экрана (gap G23).
   - name: Species
     description: Публичный справочник видов растений. Без авторизации.
   - name: Care Types
     description: Публичный справочник типов ухода (полив, опрыскивание, и т.п.). Без авторизации.
+  - name: Schedules
+    description: |
+      Расписания ухода конкретного растения (полив, опрыскивание, удобрение,
+      проверка почвы). Чтение всех четырёх и редактирование одного по типу.
+  - name: Shopping
+    description: Персональный список покупок пользователя — расходники для ухода за растениями.
+  - name: Me
+    description: Профиль и настройки текущего пользователя — имя, счётчики, тихие часы, таймзона, язык (mobile G5 + G16).
+  - name: Notifications
+    description: |
+      Персистентный inbox уведомлений пользователя для мобильного приложения
+      (gap G17): лента со счётчиком непрочитанных и идемпотентная отметка прочтения.
 
 paths:
+  /api/v1/auth/apple:
+    $ref: './resources/auth.yaml#/paths/Apple'
+  /api/v1/auth/google:
+    $ref: './resources/auth.yaml#/paths/Google'
+  /api/v1/auth/email/request:
+    $ref: './resources/auth.yaml#/paths/EmailRequest'
+  /api/v1/auth/email/verify:
+    $ref: './resources/auth.yaml#/paths/EmailVerify'
+  /api/v1/auth/refresh:
+    $ref: './resources/auth.yaml#/paths/Refresh'
+  /api/v1/auth/logout:
+    $ref: './resources/auth.yaml#/paths/Logout'
+  /api/v1/auth/logout-all:
+    $ref: './resources/auth.yaml#/paths/LogoutAll'
+
   /api/v1/health:
     $ref: './resources/health.yaml#/paths/Health'
 
@@ -92,6 +122,16 @@ paths:
     $ref: './resources/plants.yaml#/paths/Item'
   /api/v1/plants/{id}/history:
     $ref: './resources/plant-history.yaml#/paths/ItemHistory'
+  /api/v1/plants/{id}/health:
+    $ref: './resources/plants.yaml#/paths/ItemHealth'
+  /api/v1/plants/{id}/family:
+    $ref: './resources/plants.yaml#/paths/ItemFamily'
+  /api/v1/plants/{id}/diagnosis:
+    $ref: './resources/plants.yaml#/paths/ItemDiagnosis'
+  /api/v1/plants/{id}/schedules:
+    $ref: './resources/schedules.yaml#/paths/Collection'
+  /api/v1/plants/{id}/schedules/{type}:
+    $ref: './resources/schedules.yaml#/paths/Item'
 
   /api/v1/locations:
     $ref: './resources/locations.yaml#/paths/Collection'
@@ -105,12 +145,20 @@ paths:
 
   /api/v1/calendar:
     $ref: './resources/calendar.yaml#/paths/Collection'
+  /api/v1/calendar/progress:
+    $ref: './resources/calendar.yaml#/paths/Progress'
 
   /api/v1/today:
     $ref: './resources/today.yaml#/paths/Collection'
 
+  /api/v1/weather/snapshot:
+    $ref: './resources/weather.yaml#/paths/Snapshot'
+
   /api/v1/stats/streak:
     $ref: './resources/stats.yaml#/paths/Streak'
+
+  /api/v1/reports/monthly:
+    $ref: './resources/reports.yaml#/paths/Monthly'
 
   /api/v1/species:
     $ref: './resources/species.yaml#/paths/Collection'
@@ -120,14 +168,33 @@ paths:
   /api/v1/care-types:
     $ref: './resources/care-types.yaml#/paths/Collection'
 
+  /api/v1/shopping:
+    $ref: './resources/shopping.yaml#/paths/Collection'
+  /api/v1/shopping/{id}:
+    $ref: './resources/shopping.yaml#/paths/Item'
+
+  /api/v1/notifications:
+    $ref: './resources/notifications.yaml#/paths/Collection'
+  /api/v1/notifications/{id}/read:
+    $ref: './resources/notifications.yaml#/paths/Item'
+
+  /api/v1/me:
+    $ref: './resources/me.yaml#/paths/Me'
+
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Наш access-JWT, выданный `/api/v1/auth/*`. Передаётся в заголовке
+        `Authorization: Bearer <token>`. Идентификатор пользователя — в claim
+        `sub` (= `users.id`).
+
   # Параметры дублируются через $ref в каждом ресурсе (для удобства локального чтения),
   # здесь регистрируем только для верхнеуровневого свагер-баннера.
   parameters:
-    XUserId:
-      $ref: './_common/parameters.yaml#/XUserId'
-    XChatId:
-      $ref: './_common/parameters.yaml#/XChatId'
     PlantIdPath:
       $ref: './_common/parameters.yaml#/PlantIdPath'
     LocationIdPath:
@@ -136,6 +203,10 @@ components:
   responses:
     BadRequest:
       $ref: './_common/responses.yaml#/BadRequest'
+    Unauthorized:
+      $ref: './_common/responses.yaml#/Unauthorized'
+    TooManyRequests:
+      $ref: './_common/responses.yaml#/TooManyRequests'
     Forbidden:
       $ref: './_common/responses.yaml#/Forbidden'
     NotFound:
@@ -148,6 +219,21 @@ components:
   # с одинаковыми именами вне зависимости от того, в каком ресурсе живёт
   # их определение.
   schemas:
+    AppleAuthRequest:
+      $ref: './resources/auth.yaml#/schemas/AppleAuthRequest'
+    GoogleAuthRequest:
+      $ref: './resources/auth.yaml#/schemas/GoogleAuthRequest'
+    EmailRequest:
+      $ref: './resources/auth.yaml#/schemas/EmailRequest'
+    MagicLinkVerifyRequest:
+      $ref: './resources/auth.yaml#/schemas/MagicLinkVerifyRequest'
+    RefreshRequest:
+      $ref: './resources/auth.yaml#/schemas/RefreshRequest'
+    LogoutRequest:
+      $ref: './resources/auth.yaml#/schemas/LogoutRequest'
+    TokenPairResponse:
+      $ref: './resources/auth.yaml#/schemas/TokenPairResponse'
+
     HealthResponse:
       $ref: './resources/health.yaml#/schemas/HealthResponse'
 
@@ -159,6 +245,14 @@ components:
       $ref: './resources/plants.yaml#/schemas/PlantUpdateRequest'
     PageResponsePlantDto:
       $ref: './resources/plants.yaml#/schemas/PageResponsePlantDto'
+    PlantDiagnosisDto:
+      $ref: './resources/plants.yaml#/schemas/PlantDiagnosisDto'
+    DiagnosisIssueDto:
+      $ref: './resources/plants.yaml#/schemas/DiagnosisIssueDto'
+    PlantFamilyMemberDto:
+      $ref: './resources/plants.yaml#/schemas/PlantFamilyMemberDto'
+    PlantFamilyResponse:
+      $ref: './resources/plants.yaml#/schemas/PlantFamilyResponse'
 
     PlantHistoryResponse:
       $ref: './resources/plant-history.yaml#/schemas/PlantHistoryResponse'
@@ -181,12 +275,23 @@ components:
       $ref: './resources/calendar.yaml#/schemas/TaskDto'
     CalendarResponse:
       $ref: './resources/calendar.yaml#/schemas/CalendarResponse'
+    DayProgress:
+      $ref: './resources/calendar.yaml#/schemas/DayProgress'
+    CalendarProgressResponse:
+      $ref: './resources/calendar.yaml#/schemas/CalendarProgressResponse'
 
     TodayResponse:
       $ref: './resources/today.yaml#/schemas/TodayResponse'
+    TodaySummary:
+      $ref: './resources/today.yaml#/schemas/TodaySummary'
 
     StreakResponse:
       $ref: './resources/stats.yaml#/schemas/StreakResponse'
+
+    MonthlyReportResponse:
+      $ref: './resources/reports.yaml#/schemas/MonthlyReportResponse'
+    WeeklyHealthBucket:
+      $ref: './resources/reports.yaml#/schemas/WeeklyHealthBucket'
 
     SpeciesSummaryDto:
       $ref: './resources/species.yaml#/schemas/SpeciesSummaryDto'
@@ -197,6 +302,29 @@ components:
 
     CareTypeDto:
       $ref: './resources/care-types.yaml#/schemas/CareTypeDto'
+
+    CareScheduleDto:
+      $ref: './resources/schedules.yaml#/schemas/CareScheduleDto'
+    CareScheduleUpdateRequest:
+      $ref: './resources/schedules.yaml#/schemas/CareScheduleUpdateRequest'
+
+    ShoppingItemDto:
+      $ref: './resources/shopping.yaml#/schemas/ShoppingItemDto'
+    ShoppingListResponse:
+      $ref: './resources/shopping.yaml#/schemas/ShoppingListResponse'
+    ShoppingItemCreateRequest:
+      $ref: './resources/shopping.yaml#/schemas/ShoppingItemCreateRequest'
+    ShoppingItemUpdateRequest:
+      $ref: './resources/shopping.yaml#/schemas/ShoppingItemUpdateRequest'
+
+    MeResponse:
+      $ref: './resources/me.yaml#/schemas/MeResponse'
+    MeUpdateRequest:
+      $ref: './resources/me.yaml#/schemas/MeUpdateRequest'
+    NotificationDto:
+      $ref: './resources/notifications.yaml#/schemas/NotificationDto'
+    NotificationsResponse:
+      $ref: './resources/notifications.yaml#/schemas/NotificationsResponse'
 
     ApiErrorResponse:
       $ref: './_common/errors.yaml#/schemas/ApiErrorResponse'

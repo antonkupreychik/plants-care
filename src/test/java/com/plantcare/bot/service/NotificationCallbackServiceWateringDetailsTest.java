@@ -1,14 +1,17 @@
 package com.plantcare.bot.service;
 
-import com.plantcare.bot.domain.CareHistory;
-import com.plantcare.bot.domain.CareSchedule;
-import com.plantcare.bot.domain.Plant;
-import com.plantcare.bot.domain.User;
-import com.plantcare.bot.domain.enums.TaskType;
-import com.plantcare.bot.metrics.MetricsService;
-import com.plantcare.bot.repository.CareHistoryRepository;
-import com.plantcare.bot.repository.CareScheduleRepository;
-import com.plantcare.bot.seasonal.service.SeasonalIntervalService;
+import com.plantcare.core.service.PlantService;
+import com.plantcare.core.service.UserService;
+
+import com.plantcare.core.domain.CareHistory;
+import com.plantcare.core.domain.CareSchedule;
+import com.plantcare.core.domain.Plant;
+import com.plantcare.core.domain.User;
+import com.plantcare.core.domain.enums.TaskType;
+import com.plantcare.core.metrics.MetricsService;
+import com.plantcare.core.repository.CareHistoryRepository;
+import com.plantcare.core.repository.CareScheduleRepository;
+import com.plantcare.core.seasonal.service.SeasonalIntervalService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
