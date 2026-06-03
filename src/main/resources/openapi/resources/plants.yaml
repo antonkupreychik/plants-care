@@ -512,6 +512,20 @@ schemas:
         type: integer
         format: int64
         nullable: true
+      speciesId:
+        type: integer
+        format: int64
+        nullable: true
+        description: |
+          Новый вид растения. Если не передан — вид не изменяется.
+          Для снятия привязки используй clearSpecies: true.
+          Если вид не найден — 404.
+      clearSpecies:
+        type: boolean
+        nullable: true
+        description: |
+          true — убрать привязку к виду (plant.species = null).
+          Игнорируется, если speciesId задан.
 
   PageResponsePlantDto:
     type: object

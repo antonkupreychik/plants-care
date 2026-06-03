@@ -287,7 +287,7 @@ class PlantControllerTest {
     void should_update_plant() throws Exception {
         Plant updated = mockPlant(1L, 1L, "Updated");
 
-        when(plantService.updatePlant(eq(1L), eq(1L), eq("Updated"), isNull(), isNull()))
+        when(plantService.updatePlant(eq(1L), eq(1L), eq("Updated"), isNull(), isNull(), isNull(), isNull()))
                 .thenReturn(updated);
 
         String body = """
@@ -299,6 +299,66 @@ class PlantControllerTest {
                         .content(body))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.name").value("Updated"));
+    }
+
+    @Test
+    void should_update_plant_species_when_speciesId_provided() throws Exception {
+        Plant updated = mockPlant(1L, 1L, "Ficus");
+
+        Species species = mock(Species.class);
+        when(species.getId()).thenReturn(7L);
+        when(species.getName()).thenReturn("Ficus benjamina");
+        when(updated.getSpecies()).thenReturn(species);
+
+        when(plantService.updatePlant(eq(1L), eq(1L), isNull(), isNull(), isNull(), eq(7L), isNull()))
+                .thenReturn(updated);
+
+        String body = """
+                {"speciesId": 7}
+                """;
+
+        mockMvc.perform(put("/api/v1/plants/1")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.speciesId").value(7))
+                .andExpect(jsonPath("$.speciesName").value("Ficus benjamina"));
+    }
+
+    @Test
+    void should_clear_species_when_clearSpecies_true() throws Exception {
+        Plant updated = mockPlant(1L, 1L, "Ficus");
+        // species is null after clearing
+        when(updated.getSpecies()).thenReturn(null);
+
+        when(plantService.updatePlant(eq(1L), eq(1L), isNull(), isNull(), isNull(), isNull(), eq(true)))
+                .thenReturn(updated);
+
+        String body = """
+                {"clearSpecies": true}
+                """;
+
+        mockMvc.perform(put("/api/v1/plants/1")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.speciesId").doesNotExist());
+    }
+
+    @Test
+    void should_return_404_when_species_not_found_on_update() throws Exception {
+        when(plantService.updatePlant(eq(1L), eq(1L), isNull(), isNull(), isNull(), eq(999L), isNull()))
+                .thenThrow(new EntityNotFoundException("Species not found: 999"));
+
+        String body = """
+                {"speciesId": 999}
+                """;
+
+        mockMvc.perform(put("/api/v1/plants/1")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.error.code").value("NOT_FOUND"));
     }
 
     @Test

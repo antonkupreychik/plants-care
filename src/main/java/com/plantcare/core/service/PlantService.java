@@ -508,6 +508,19 @@ public class PlantService {
 
     @Transactional
     public Plant updatePlant(Long userId, Long plantId, String name, String notes, Long locationId) {
+        return updatePlant(userId, plantId, name, notes, locationId, null, null);
+    }
+
+    @Transactional
+    public Plant updatePlant(
+            Long userId,
+            Long plantId,
+            String name,
+            String notes,
+            Long locationId,
+            Long speciesId,
+            Boolean clearSpecies
+    ) {
         Plant plant = getPlantOrThrow(userId, plantId);
 
         if (name != null) {
@@ -523,9 +536,23 @@ public class PlantService {
             plant.setLocation(location);
         }
 
+        if (speciesId != null) {
+            Species species = speciesRepository.findById(speciesId)
+                    .orElseThrow(() -> new EntityNotFoundException("Species not found: " + speciesId));
+            plant.setSpecies(species);
+        } else if (Boolean.TRUE.equals(clearSpecies)) {
+            plant.setSpecies(null);
+        }
+
         Plant saved = plantRepository.save(plant);
 
-        log.info("Updated plant {} via REST API (user {})", plantId, userId);
+        log.info(
+                "Updated plant {} via REST API (user {}, speciesId={}, clearSpecies={})",
+                plantId,
+                userId,
+                speciesId,
+                clearSpecies
+        );
 
         return saved;
     }
