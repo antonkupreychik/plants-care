@@ -54,6 +54,14 @@ public interface CareHistoryRepository extends JpaRepository<CareHistory, Long> 
                                          @Param("after") LocalDateTime after);
 
     /**
+     * Суммарное число активных (не-cancelled) записей ухода по всем растениям пользователя
+     * за всё время, включая архивированные растения (issue #226).
+     */
+    @Query("SELECT COUNT(h) FROM CareHistory h " +
+            "WHERE h.plant.user.id = :userId AND h.cancelledBy IS NULL")
+    long countAllByUserId(@Param("userId") Long userId);
+
+    /**
      * Все done_at для всех растений юзера (для расчёта user-streak по дням).
      * Активные записи (не-cancelled). Сортировка по убыванию.
      */

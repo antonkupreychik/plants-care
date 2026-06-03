@@ -38,6 +38,7 @@ public class UserProfileService {
     private final PlantRepository plantRepository;
     private final TodayApiService todayApiService;
     private final UserSettingsService userSettingsService;
+    private final CareHistoryService careHistoryService;
 
     /**
      * Собранный профиль пользователя для {@code GET /api/v1/me}.
@@ -55,6 +56,7 @@ public class UserProfileService {
             String avatar,
             int plantsTotal,
             int tasksToday,
+            long totalCareEvents,
             int notificationsUnread,
             LocalTime quietHoursStart,
             LocalTime quietHoursEnd,
@@ -101,6 +103,8 @@ public class UserProfileService {
                 .filter(t -> t.doneAt() == null)
                 .count();
 
+        long totalCareEvents = careHistoryService.countAllByUser(user.getId());
+
         // notificationsUnread — плейсхолдер: фид уведомлений (issue #183) ещё не влит.
         int notificationsUnread = 0;
 
@@ -118,6 +122,7 @@ public class UserProfileService {
                 null, // avatar — плейсхолдер, колонки в схеме нет.
                 plantsTotal,
                 tasksToday,
+                totalCareEvents,
                 notificationsUnread,
                 user.getQuietHoursStart(),
                 user.getQuietHoursEnd(),

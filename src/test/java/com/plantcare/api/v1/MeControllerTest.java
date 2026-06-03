@@ -81,7 +81,7 @@ class MeControllerTest {
         // seasonalMode-строка, featureFlags-map и linkage booleans
         Profile profile = new Profile(
                 42L, "user@example.com", true, CREATED_AT,
-                "Антон", null, 12, 3, 0,
+                "Антон", null, 12, 3, 348L, 0,
                 LocalTime.of(22, 0), LocalTime.of(8, 0),
                 "Europe/Moscow", "ru",
                 true, SeasonalMode.FIXED, true,
@@ -100,6 +100,7 @@ class MeControllerTest {
                 .andExpect(jsonPath("$.avatar").value(org.hamcrest.Matchers.nullValue()))
                 .andExpect(jsonPath("$.plantsTotal").value(12))
                 .andExpect(jsonPath("$.tasksToday").value(3))
+                .andExpect(jsonPath("$.totalCareEvents").value(348))
                 .andExpect(jsonPath("$.notificationsUnread").value(0))
                 .andExpect(jsonPath("$.quietHoursStart").value("22:00"))
                 .andExpect(jsonPath("$.quietHoursEnd").value("08:00"))
@@ -123,7 +124,7 @@ class MeControllerTest {
         // assert на отсутствие JSON-путей ловит регрессию, если кто-то добавит их в MeResponse.
         Profile profile = new Profile(
                 42L, "user@example.com", true, CREATED_AT,
-                "Антон", null, 1, 0, 0,
+                "Антон", null, 1, 0, 0L, 0,
                 LocalTime.of(22, 0), LocalTime.of(8, 0),
                 "Europe/Moscow", "ru",
                 false, SeasonalMode.MULTIPLIER, false,
@@ -151,7 +152,7 @@ class MeControllerTest {
         // arrange — edge: чисто Telegram-юзер, email == null, emailLinked == false
         Profile profile = new Profile(
                 42L, null, false, CREATED_AT,
-                "Аноним", null, 0, 0, 0,
+                "Аноним", null, 0, 0, 0L, 0,
                 LocalTime.of(22, 0), LocalTime.of(9, 0),
                 "UTC", "ru",
                 false, SeasonalMode.MULTIPLIER, false,
@@ -238,7 +239,7 @@ class MeControllerTest {
         // остальные поля апдейта остаются null (partial semantics)
         Profile updated = new Profile(
                 42L, "user@example.com", true, CREATED_AT,
-                "Антон", null, 1, 0, 0,
+                "Антон", null, 1, 0, 0L, 0,
                 LocalTime.of(22, 0), LocalTime.of(8, 0),
                 "Europe/Moscow", "ru",
                 true, SeasonalMode.FIXED, true,
@@ -300,7 +301,7 @@ class MeControllerTest {
         // arrange — AC: валидный IANA tz прокидывается в сервис и возвращается в ответе
         Profile updated = new Profile(
                 42L, "user@example.com", true, CREATED_AT,
-                "Антон", null, 1, 0, 0,
+                "Антон", null, 1, 0, 0L, 0,
                 LocalTime.of(22, 0), LocalTime.of(9, 0),
                 "Asia/Almaty", "ru",
                 false, SeasonalMode.MULTIPLIER, false,
@@ -458,7 +459,7 @@ class MeControllerTest {
     private static Profile sampleProfile() {
         return new Profile(
                 42L, "user@example.com", true, CREATED_AT,
-                "Антон", null, 0, 0, 0,
+                "Антон", null, 0, 0, 0L, 0,
                 LocalTime.of(22, 0), LocalTime.of(9, 0),
                 "Europe/Moscow", "ru",
                 false, SeasonalMode.MULTIPLIER, false,

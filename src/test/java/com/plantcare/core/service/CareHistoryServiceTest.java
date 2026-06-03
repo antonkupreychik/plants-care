@@ -359,6 +359,27 @@ class CareHistoryServiceTest {
         }
     }
 
+    @Nested
+    @DisplayName("countAllByUser")
+    class CountAllByUserTests {
+
+        @Test
+        @DisplayName("should_return_zero_when_user_has_no_care_history")
+        void should_return_zero_when_user_has_no_care_history() {
+            when(historyRepository.countAllByUserId(42L)).thenReturn(0L);
+
+            assertThat(service.countAllByUser(42L)).isZero();
+        }
+
+        @Test
+        @DisplayName("should_return_correct_count_when_user_has_care_events")
+        void should_return_correct_count_when_user_has_care_events() {
+            when(historyRepository.countAllByUserId(42L)).thenReturn(348L);
+
+            assertThat(service.countAllByUser(42L)).isEqualTo(348L);
+        }
+    }
+
     // ===== helpers =====
 
     /** Создаёт мок-CareHistory с указанными флагами on_time / cancelled. */
