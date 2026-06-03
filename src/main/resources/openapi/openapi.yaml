@@ -62,6 +62,10 @@ tags:
       soft-delete (флаг `archivedAt`), физически записи в БД остаются.
   - name: Plant History
     description: История событий ухода для конкретного растения с пагинацией.
+  - name: Plant Events
+    description: |
+      Журнал редких разовых событий растения (пересадка, замена грунта,
+      обрезка, обработка от вредителей) с пагинацией и дедупом повторных нажатий.
   - name: Locations
     description: |
       Локации (комнаты/места) пользователя, в которых стоят растения. Каждый
@@ -128,6 +132,8 @@ paths:
     $ref: './resources/plant-history.yaml#/paths/ItemHistory'
   /api/v1/plants/{id}/history/summary:
     $ref: './resources/plant-history.yaml#/paths/ItemHistorySummary'
+  /api/v1/plants/{id}/events:
+    $ref: './resources/plant-events.yaml#/paths/Collection'
   /api/v1/plants/{id}/health:
     $ref: './resources/plants.yaml#/paths/ItemHealth'
   /api/v1/plants/{id}/family:
@@ -224,6 +230,8 @@ components:
       $ref: './_common/responses.yaml#/NotFound'
     Conflict:
       $ref: './_common/responses.yaml#/Conflict'
+    UnprocessableEntity:
+      $ref: './_common/responses.yaml#/UnprocessableEntity'
 
   # Все доменные схемы регистрируются здесь, чтобы они появились в
   # /v3/api-docs и были генерированы openapi-generator'ом как Java-классы
@@ -269,6 +277,15 @@ components:
       $ref: './resources/plant-history.yaml#/schemas/PlantHistoryResponse'
     PlantHistorySummaryDto:
       $ref: './resources/plant-history.yaml#/schemas/PlantHistorySummaryDto'
+
+    PlantEventType:
+      $ref: './resources/plant-events.yaml#/schemas/PlantEventType'
+    PlantEventDto:
+      $ref: './resources/plant-events.yaml#/schemas/PlantEventDto'
+    PlantEventRequest:
+      $ref: './resources/plant-events.yaml#/schemas/PlantEventRequest'
+    PlantEventPageResponse:
+      $ref: './resources/plant-events.yaml#/schemas/PlantEventPageResponse'
 
     LocationDto:
       $ref: './resources/locations.yaml#/schemas/LocationDto'

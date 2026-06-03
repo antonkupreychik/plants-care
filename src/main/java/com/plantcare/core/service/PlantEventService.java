@@ -4,13 +4,16 @@ import com.plantcare.core.domain.Plant;
 import com.plantcare.core.domain.PlantEvent;
 import com.plantcare.core.domain.User;
 import com.plantcare.core.domain.enums.PlantEventType;
+import com.plantcare.core.repository.OffsetLimitPageable;
 import com.plantcare.core.repository.PlantEventRepository;
 import com.plantcare.core.repository.PlantRepository;
+import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -95,6 +98,33 @@ public class PlantEventService {
 
         int safePage = Math.max(0, page);
         Pageable pageable = PageRequest.of(safePage, EVENTS_PAGE_SIZE);
+        return plantEventRepository.findByPlantIdOrderByEventDateDesc(plantId, pageable);
+    }
+
+    /**
+     * Возвращает страницу журнала по произвольному {@code offset/limit} — для
+     * REST API (issue #220). В отличие от {@link #getEvents(User, Long, int)},
+     * который для Telegram-бота отдаёт пустую страницу при недоступном растении,
+     * здесь недоступность — это {@link EntityNotFoundException} (контроллер
+     * мапит в 404): чужое/архивное/несуществующее растение неотличимо для клиента.
+     *
+     * <p>Сортировка фиксирована — {@code event_date DESC}. {@code offset/limit}
+     * предполагаются уже нормализованными вызывающим.
+     */
+    @Transactional(readOnly = true)
+    public Page<PlantEvent> getEventsPage(User user, Long plantId, int offset, int limit) {
+        boolean accessible = plantRepository
+                .findByUserIdAndIdAndArchivedAtIsNull(user.getId(), plantId)
+                .isPresent();
+
+        if (!accessible) {
+            throw new EntityNotFoundException(
+                    "Plant not found: id=" + plantId + " for userId=" + user.getId());
+        }
+
+        // Сортировка уже зашита в имя метода (OrderByEventDateDesc); во избежание
+        // дублирования ORDER BY передаём в Pageable unsorted.
+        Pageable pageable = OffsetLimitPageable.of(offset, limit, Sort.unsorted());
         return plantEventRepository.findByPlantIdOrderByEventDateDesc(plantId, pageable);
     }
 

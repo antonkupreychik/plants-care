@@ -10,6 +10,7 @@ import java.util.List;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -44,6 +45,31 @@ public class ApiExceptionHandler {
     public ResponseEntity<ApiErrorResponse> handleTypeMismatch(MethodArgumentTypeMismatchException e) {
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                 .body(ApiErrorResponse.of("BAD_REQUEST", "Invalid parameter value: " + e.getValue()));
+    }
+
+    /**
+     * Тело не читается. Если причина — недопустимое значение enum/семантически
+     * невалидное поле (Jackson оборачивает {@link IllegalArgumentException} из
+     * {@code @JsonCreator}), это 422 (issue #220: неизвестный {@code eventType}).
+     * Прочий синтаксический мусор остаётся 400.
+     */
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<ApiErrorResponse> handleNotReadable(HttpMessageNotReadableException e) {
+        if (hasCause(e, IllegalArgumentException.class)) {
+            return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY)
+                    .body(ApiErrorResponse.of("VALIDATION_ERROR", "Validation failed"));
+        }
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(ApiErrorResponse.of("BAD_REQUEST", "Malformed request body"));
+    }
+
+    private static boolean hasCause(Throwable t, Class<? extends Throwable> type) {
+        for (Throwable c = t; c != null; c = c.getCause()) {
+            if (type.isInstance(c)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     @ExceptionHandler(EntityNotFoundException.class)
