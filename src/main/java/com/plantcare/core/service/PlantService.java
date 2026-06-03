@@ -6,6 +6,8 @@ import com.plantcare.core.domain.Location;
 import com.plantcare.core.domain.Plant;
 import com.plantcare.core.domain.Species;
 import com.plantcare.core.domain.User;
+import com.plantcare.core.domain.enums.Season;
+import com.plantcare.core.domain.enums.SeasonalOverride;
 import com.plantcare.core.domain.enums.TaskType;
 import com.plantcare.core.repository.CareHistoryRepository;
 import com.plantcare.core.repository.CareScheduleRepository;
@@ -165,12 +167,15 @@ public class PlantService {
         return createPlant(user, name, notes, locationId, speciesId, null);
     }
 
+    public record SeasonalInfo(boolean active, int summerIntervalDays, int winterIntervalDays) {}
+
     public record ScheduleView(
             TaskType type,
             int every,
             Integer amountMl,
             boolean enabled,
-            LocalDateTime nextDueAt
+            LocalDateTime nextDueAt,
+            SeasonalInfo seasonal
     ) {
     }
 
@@ -184,6 +189,7 @@ public class PlantService {
     @Transactional(readOnly = true)
     public List<ScheduleView> getSchedules(Long userId, Long plantId) {
         Plant plant = getPlantOrThrow(userId, plantId);
+        User user = plant.getUser();
 
         java.util.Map<TaskType, CareSchedule> existing = careScheduleRepository
                 .findAllByPlantId(plant.getId())
@@ -196,25 +202,40 @@ public class PlantService {
 
                     if (row != null) {
                         boolean enabled = row.isActive();
+                        int base = row.getIntervalDays();
+                        SeasonalInfo seasonal = buildSeasonalInfo(plant, user, base);
 
                         return new ScheduleView(
                                 type,
-                                row.getIntervalDays(),
+                                base,
                                 row.getAmountMl(),
                                 enabled,
-                                enabled ? row.getNextDueAt() : null
+                                enabled ? row.getNextDueAt() : null,
+                                seasonal
                         );
                     }
 
+                    int base = defaultIntervalFor(plant, type);
+                    SeasonalInfo seasonal = buildSeasonalInfo(plant, user, base);
+
                     return new ScheduleView(
                             type,
-                            defaultIntervalFor(plant, type),
+                            base,
                             null,
                             false,
-                            null
+                            null,
+                            seasonal
                     );
                 })
                 .toList();
+    }
+
+    private SeasonalInfo buildSeasonalInfo(Plant plant, User user, int baseIntervalDays) {
+        return new SeasonalInfo(
+                seasonalIntervalService.isSeasonalActive(plant, user),
+                seasonalIntervalService.effectiveIntervalForSeason(plant, user, baseIntervalDays, Season.SUMMER),
+                seasonalIntervalService.effectiveIntervalForSeason(plant, user, baseIntervalDays, Season.WINTER)
+        );
     }
 
     @Transactional
@@ -224,7 +245,8 @@ public class PlantService {
             TaskType type,
             int every,
             Integer amountMl,
-            boolean enabled
+            boolean enabled,
+            SeasonalOverride seasonalOverride
     ) {
         if (!isValidInterval(every)) {
             throw new IllegalArgumentException("Интервал должен быть от 1 до 365 дней");
@@ -236,6 +258,10 @@ public class PlantService {
         }
 
         Plant plant = getPlantOrThrow(userId, plantId);
+
+        if (seasonalOverride != null) {
+            plant.setSeasonalOverride(seasonalOverride);
+        }
 
         int effectiveInterval = seasonalIntervalService.effectiveIntervalDays(
                 plant,
@@ -271,21 +297,26 @@ public class PlantService {
         CareSchedule saved = careScheduleRepository.save(schedule);
 
         log.info(
-                "Updated {} schedule for plant {} (every={}, amountMl={}, enabled={}, user {})",
+                "Updated {} schedule for plant {} (every={}, amountMl={}, enabled={}, seasonalOverride={}, user {})",
                 type,
                 plantId,
                 every,
                 effectiveAmount,
                 enabled,
+                seasonalOverride,
                 userId
         );
+
+        User user = plant.getUser();
+        SeasonalInfo seasonal = buildSeasonalInfo(plant, user, every);
 
         return new ScheduleView(
                 type,
                 every,
                 effectiveAmount,
                 enabled,
-                enabled ? saved.getNextDueAt() : null
+                enabled ? saved.getNextDueAt() : null,
+                seasonal
         );
     }
 
