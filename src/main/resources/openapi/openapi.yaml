@@ -309,6 +309,8 @@ components:
       $ref: './resources/schedules.yaml#/schemas/CareScheduleUpdateRequest'
     SeasonalScheduleDto:
       $ref: './resources/schedules.yaml#/schemas/SeasonalScheduleDto'
+    ScheduleInput:
+      $ref: './resources/schedules.yaml#/schemas/ScheduleInput'
 
     ShoppingItemDto:
       $ref: './resources/shopping.yaml#/schemas/ShoppingItemDto'

@@ -18,15 +18,16 @@ public interface PlantRepository extends JpaRepository<Plant, Long> {
     List<Plant> findAllByUserIdAndArchivedAtIsNullOrderByNameAsc(Long userId);
 
     /**
-     * Пагинированный список для REST API (issue #85). {@code location} и
-     * {@code species} подтягиваются через {@link EntityGraph}, потому что
-     * {@code PlantController.toDto} читает их вне транзакции (OSIV=false) —
-     * без графа был бы {@code LazyInitializationException: no Session}.
+     * Пагинированный список для REST API (issue #85). {@code location},
+     * {@code species} и {@code user} подтягиваются через {@link EntityGraph}:
+     * {@code location}/{@code species} нужны для {@code PlantController.toDto}
+     * вне транзакции (OSIV=false); {@code user} нужен для health-score (issue #207) —
+     * {@code HealthScoreService.computeForPlant} читает {@code user.timezone}.
      */
-    @EntityGraph(attributePaths = {"location", "species"})
+    @EntityGraph(attributePaths = {"location", "species", "user"})
     List<Plant> findAllByUserIdAndArchivedAtIsNullOrderByNameAsc(Long userId, Pageable pageable);
 
-    @EntityGraph(attributePaths = {"location", "species"})
+    @EntityGraph(attributePaths = {"location", "species", "user"})
     List<Plant> findAllByUserIdAndLocationIdAndArchivedAtIsNullOrderByNameAsc(
             Long userId,
             Long locationId,
