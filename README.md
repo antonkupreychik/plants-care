@@ -126,11 +126,11 @@ echo 'testcontainers.reuse.enable=true' >> ~/.testcontainers.properties
 |---|---|---|
 | `GET` | `/api/v1/plants` | Список растений. Параметры: `locationId` (фильтр), `offset` (по умолч. 0), `limit` (по умолч. 20, макс. 100) |
 | `GET` | `/api/v1/plants/{id}` | Одно растение |
-| `POST` | `/api/v1/plants` | Создать растение (без расписания полива) |
+| `POST` | `/api/v1/plants` | Создать растение. Опциональное поле `schedules` позволяет задать расписания сразу при создании |
 | `PUT` | `/api/v1/plants/{id}` | Обновить растение. PATCH-семантика: обновляются только переданные поля (`name`, `notes`, `locationId`) |
 | `DELETE` | `/api/v1/plants/{id}` | Soft-delete: выставляет `archivedAt`, из выборок не возвращается |
 
-При создании растения через REST засеваются все четыре расписания ухода (`WATERING`/`MISTING`/`FERTILIZING`/`SOIL_CHECK`) из дефолтов вида; включён по умолчанию только `WATERING`.
+При создании растения через REST засеваются все четыре расписания ухода (`WATERING`/`MISTING`/`FERTILIZING`/`SOIL_CHECK`). Если массив `schedules` не передан или пуст — применяются дефолты вида, включён по умолчанию только `WATERING`. Если `schedules` передан — переданные типы создаются с `enabled=true` и указанными параметрами (`every`, `unit`, `amountMl?`); отсутствующие типы получают дефолтный интервал с `enabled=false`. Дублирующийся тип в массиве → 400.
 
 ### Schedules (issue #185)
 

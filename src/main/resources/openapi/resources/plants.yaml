@@ -470,6 +470,14 @@ schemas:
           отводком/потомком этого растения. Родитель должен принадлежать текущему
           пользователю и не быть архивированным, иначе 404/403.
         example: 10
+      schedules:
+        type: array
+        nullable: true
+        description: |
+          Опциональные расписания ухода. Если не передан или пуст — применяются
+          дефолты вида (как при обычном создании).
+        items:
+          $ref: '../resources/schedules.yaml#/schemas/ScheduleInput'
 
   PlantUpdateRequest:
     type: object
