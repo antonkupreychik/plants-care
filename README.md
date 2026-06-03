@@ -131,6 +131,15 @@ echo 'testcontainers.reuse.enable=true' >> ~/.testcontainers.properties
 | `DELETE` | `/api/v1/plants/{id}` | Soft-delete: выставляет `archivedAt`, из выборок не возвращается |
 
 При создании растения через REST засеваются все четыре расписания ухода (`WATERING`/`MISTING`/`FERTILIZING`/`SOIL_CHECK`). Если массив `schedules` не передан или пуст — применяются дефолты вида, включён по умолчанию только `WATERING`. Если `schedules` передан — переданные типы создаются с `enabled=true` и указанными параметрами (`every`, `unit`, `amountMl?`); отсутствующие типы получают дефолтный интервал с `enabled=false`. Дублирующийся тип в массиве → 400.
+Оба `GET`-эндпоинта включают в каждый объект `PlantDto` поля здоровья (issue #207):
+
+| Поле | Тип | Описание |
+|---|---|---|
+| `healthScore` | `integer\|null` | Балл здоровья 0–100. `null` при недостаточных данных |
+| `healthZone` | `GREEN\|YELLOW\|RED\|null` | Цветовая зона. `null` при недостаточных данных |
+| `healthInsufficientData` | `boolean\|null` | `true` — менее 3 активных записей ухода, `score`/`zone` равны `null` |
+
+При создании растения через REST засеваются все четыре расписания ухода (`WATERING`/`MISTING`/`FERTILIZING`/`SOIL_CHECK`) из дефолтов вида; включён по умолчанию только `WATERING`.
 
 ### Schedules (issue #185)
 

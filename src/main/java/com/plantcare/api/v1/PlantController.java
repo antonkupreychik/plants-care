@@ -47,11 +47,12 @@ public class PlantController implements PlantsApi {
         int safeLimit = Math.min(Math.max(limit, 1), 100);
         int safeOffset = Math.max(offset, 0);
 
-        List<Plant> plants = plantService.listPlants(userId, locationId, safeOffset, safeLimit);
+        List<PlantService.PlantWithHealth> plantsWithHealth =
+                plantService.listPlantsWithHealth(userId, locationId, safeOffset, safeLimit);
         long total = plantService.countPlants(userId, locationId);
 
-        List<PlantDto> items = plants.stream()
-                .map(PlantController::toDto)
+        List<PlantDto> items = plantsWithHealth.stream()
+                .map(pwh -> toDto(pwh.plant(), pwh.health()))
                 .toList();
 
         return new PageResponsePlantDto(items, (int) total, safeOffset, safeLimit);
@@ -60,9 +61,9 @@ public class PlantController implements PlantsApi {
     @Override
     public PlantDto getPlant(Long id) {
         Long userId = currentUserProvider.currentUserId();
-        Plant plant = plantService.getPlantOrThrow(userId, id);
+        PlantService.PlantWithHealth pwh = plantService.getPlantWithHealth(userId, id);
 
-        return toDto(plant);
+        return toDto(pwh.plant(), pwh.health());
     }
 
     @Override
@@ -190,6 +191,18 @@ public class PlantController implements PlantsApi {
             dto.createdAt(plant.getCreatedAt().atOffset(ZoneOffset.UTC));
         }
 
+        return dto;
+    }
+
+    private static PlantDto toDto(Plant plant, HealthScoreService.HealthScore health) {
+        PlantDto dto = toDto(plant);
+        if (health != null) {
+            dto.healthInsufficientData(health.insufficientData());
+            if (!health.insufficientData()) {
+                dto.healthScore(health.score())
+                   .healthZone(PlantDto.HealthZoneEnum.fromValue(health.zone().name()));
+            }
+        }
         return dto;
     }
 
