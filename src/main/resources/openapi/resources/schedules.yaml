@@ -108,7 +108,8 @@ schemas:
         nullable: true
         description: Ближайшее срабатывание (UTC). Заполнено только если enabled=true.
       seasonal:
-        $ref: '#/schemas/SeasonalScheduleDto'
+        allOf:
+          - $ref: '#/schemas/SeasonalScheduleDto'
         description: Сезонные параметры расписания (mobile G20, issue #188).
 
   CareScheduleUpdateRequest:
