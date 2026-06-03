@@ -15,6 +15,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.HandlerMethodValidationException;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 /**
  * Глобальный обработчик ошибок REST API ({@code /api/**}).
@@ -37,6 +38,12 @@ public class ApiExceptionHandler {
     public ResponseEntity<ApiErrorResponse> handleMethodValidation(Exception e) {
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                 .body(ApiErrorResponse.of("VALIDATION_ERROR", "Validation failed"));
+    }
+
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<ApiErrorResponse> handleTypeMismatch(MethodArgumentTypeMismatchException e) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(ApiErrorResponse.of("BAD_REQUEST", "Invalid parameter value: " + e.getValue()));
     }
 
     @ExceptionHandler(EntityNotFoundException.class)

@@ -2,6 +2,7 @@ package com.plantcare.core.service;
 
 import com.plantcare.core.domain.CareHistory;
 import com.plantcare.core.domain.CareSchedule;
+import com.plantcare.core.domain.enums.TaskType;
 import com.plantcare.core.repository.CareHistoryRepository;
 import com.plantcare.core.repository.CareScheduleRepository;
 import lombok.RequiredArgsConstructor;
@@ -11,14 +12,18 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
+import java.util.EnumMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.stream.Collectors;
 
 /**
  * Сервис для экрана «📜 История» в карточке растения и стриков (issue #51).
@@ -74,6 +79,7 @@ public class CareHistoryService {
 
     private final CareHistoryRepository careHistoryRepository;
     private final CareScheduleRepository careScheduleRepository;
+    private final Clock clock;
 
     /**
      * Одна страница истории растения в обратном хронологическом порядке.
@@ -93,14 +99,57 @@ public class CareHistoryService {
      * <p>Использует нативный SQL с LIMIT/OFFSET вместо page-based пагинации,
      * чтобы offset=5, limit=20 возвращал записи 5-24, а не 0-19.
      *
+     * @param plantId  id растения
+     * @param offset   смещение от начала (0-based)
+     * @param limit    количество записей [1, 100]
+     * @param taskType опциональный фильтр по типу ухода; {@code null} — все типы
+     */
+    @Transactional(readOnly = true)
+    public List<CareHistory> getHistoryPageWithLimit(Long plantId, int offset, int limit, TaskType taskType) {
+        int safeOffset = Math.max(0, offset);
+        String typeStr = taskType != null ? taskType.name() : null;
+        return careHistoryRepository.findActiveByPlantIdWithRealOffsetAndType(plantId, limit, safeOffset, typeStr);
+    }
+
+    /**
+     * Срез истории с реальным offset без фильтра по типу — делегирует к основному методу.
+     *
      * @param plantId id растения
      * @param offset  смещение от начала (0-based)
      * @param limit   количество записей [1, 100]
      */
     @Transactional(readOnly = true)
     public List<CareHistory> getHistoryPageWithLimit(Long plantId, int offset, int limit) {
-        int safeOffset = Math.max(0, offset);
-        return careHistoryRepository.findActiveByPlantIdWithRealOffset(plantId, limit, safeOffset);
+        return getHistoryPageWithLimit(plantId, offset, limit, null);
+    }
+
+    /**
+     * Сводная статистика по всей истории растения (issue #206).
+     *
+     * <p>Возвращает: общее число активных записей, число on-time, процент on-time,
+     * разбивку по типам ухода (без SOIL_CHECK, только типы с count > 0).
+     *
+     * @param plantId id растения
+     * @return сводка
+     */
+    @Transactional(readOnly = true)
+    public HistorySummary getHistorySummary(Long plantId) {
+        long total = countHistory(plantId);
+        long onTimeCount = careHistoryRepository.countActiveOnTimeByPlantId(plantId);
+        int onTimePercent = total == 0 ? 0 : (int) Math.round(100.0 * onTimeCount / total);
+
+        Map<TaskType, Long> byType = careHistoryRepository.countActiveByPlantIdGroupedByType(plantId)
+                .stream()
+                .filter(r -> r.getTaskType() != TaskType.SOIL_CHECK)
+                .filter(r -> r.getCount() > 0)
+                .collect(Collectors.toMap(
+                        CareHistoryRepository.TaskTypeCount::getTaskType,
+                        CareHistoryRepository.TaskTypeCount::getCount,
+                        Long::sum,
+                        () -> new EnumMap<>(TaskType.class)
+                ));
+
+        return new HistorySummary(total, onTimeCount, onTimePercent, byType);
     }
 
     /**
@@ -110,6 +159,19 @@ public class CareHistoryService {
     @Transactional(readOnly = true)
     public long countHistory(Long plantId) {
         return careHistoryRepository.countActiveByPlantId(plantId);
+    }
+
+    /**
+     * Сколько активных записей у растения с опциональным фильтром по типу ухода.
+     * При {@code taskType == null} возвращает общее число — аналогично {@link #countHistory(Long)}.
+     *
+     * @param plantId  id растения
+     * @param taskType тип ухода для фильтрации, или {@code null} — все типы
+     */
+    @Transactional(readOnly = true)
+    public long countHistory(Long plantId, TaskType taskType) {
+        String typeStr = taskType != null ? taskType.name() : null;
+        return careHistoryRepository.countActiveByPlantIdAndType(plantId, typeStr);
     }
 
     /**
@@ -124,7 +186,7 @@ public class CareHistoryService {
             return new PlantStats(0, 0, 0);
         }
 
-        LocalDateTime since = LocalDateTime.now().minusDays(ON_TIME_WINDOW_DAYS);
+        LocalDateTime since = LocalDateTime.now(clock).minusDays(ON_TIME_WINDOW_DAYS);
         long actionsInWindow = careHistoryRepository.countActiveByPlantIdSince(plantId, since);
         long onTimeInWindow = careHistoryRepository.countActiveOnTimeByPlantIdSince(plantId, since);
 
@@ -144,7 +206,7 @@ public class CareHistoryService {
     @Transactional(readOnly = true)
     public int computePlantStreak(Long plantId) {
         // 1) Просроченные расписания (без своего done) сразу обнуляют стрик.
-        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime now = LocalDateTime.now(clock);
         List<CareSchedule> schedules = careScheduleRepository.findAllByPlantId(plantId);
         for (CareSchedule s : schedules) {
             if (!s.isActive() || s.getNextDueAt() == null) continue;
@@ -195,7 +257,7 @@ public class CareHistoryService {
             }
         }
 
-        LocalDate today = LocalDate.now(tz);
+        LocalDate today = LocalDate.now(clock.withZone(tz));
         LocalDate latest = uniqueDays.last();
 
         // Если последняя активность раньше «вчера» — стрик сломан.
@@ -239,4 +301,14 @@ public class CareHistoryService {
             return total >= MIN_ACTIONS_FOR_STATS;
         }
     }
+
+    /**
+     * Агрегированная статистика по всей истории растения (issue #206).
+     *
+     * @param total          всего активных (не-cancelled) записей
+     * @param onTimeCount    из них on-time
+     * @param onTimePercent  процент on-time; 0 если total = 0
+     * @param byType         разбивка по типам (без SOIL_CHECK, только count > 0)
+     */
+    public record HistorySummary(long total, long onTimeCount, int onTimePercent, Map<TaskType, Long> byType) {}
 }

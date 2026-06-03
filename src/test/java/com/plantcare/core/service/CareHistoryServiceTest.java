@@ -5,6 +5,7 @@ import com.plantcare.core.domain.CareSchedule;
 import com.plantcare.core.domain.enums.TaskType;
 import com.plantcare.core.repository.CareHistoryRepository;
 import com.plantcare.core.repository.CareScheduleRepository;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -14,6 +15,8 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.domain.Limit;
 
+import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -34,9 +37,21 @@ class CareHistoryServiceTest {
 
     @Mock private CareHistoryRepository historyRepository;
     @Mock private CareScheduleRepository scheduleRepository;
+    @Mock private Clock clock;
 
     @InjectMocks
     private CareHistoryService service;
+
+    @BeforeEach
+    void stubClock() {
+        Instant now = Instant.now();
+        lenient().when(clock.instant()).thenReturn(now);
+        lenient().when(clock.getZone()).thenReturn(ZoneOffset.UTC);
+        lenient().when(clock.withZone(any(ZoneId.class))).thenAnswer(inv -> {
+            ZoneId zone = inv.getArgument(0);
+            return Clock.fixed(now, zone);
+        });
+    }
 
     @Nested
     @DisplayName("computePlantStreak")
