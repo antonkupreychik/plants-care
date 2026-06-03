@@ -430,6 +430,22 @@ schemas:
         nullable: true
         description: Момент создания записи в БД (UTC).
         example: 2026-05-24T10:15:30Z
+      healthInsufficientData:
+        type: boolean
+        nullable: true
+        description: true — данных мало (< 3 активных записей ухода), score/zone равны null.
+      healthScore:
+        type: integer
+        format: int32
+        minimum: 0
+        maximum: 100
+        nullable: true
+        description: Балл здоровья 0–100 (mobile gap G16). null если insufficientData.
+      healthZone:
+        type: string
+        enum: [ GREEN, YELLOW, RED ]
+        nullable: true
+        description: Цветовая зона. null если insufficientData.
 
   PlantCreateRequest:
     type: object
