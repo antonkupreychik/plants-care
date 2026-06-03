@@ -168,6 +168,7 @@ class PlantControllerTest {
                 isNull(),
                 isNull(),
                 isNull(),
+                isNull(),
                 isNull()
         )).thenReturn(plant);
 
@@ -200,6 +201,7 @@ class PlantControllerTest {
                 isNull(),
                 isNull(),
                 eq(7L),
+                isNull(),
                 isNull()
         )).thenReturn(plant);
 
@@ -228,7 +230,8 @@ class PlantControllerTest {
                 isNull(),
                 isNull(),
                 isNull(),
-                eq(10L)
+                eq(10L),
+                isNull()
         )).thenReturn(plant);
 
         String body = """
@@ -503,5 +506,103 @@ class PlantControllerTest {
         mockMvc.perform(get("/api/v1/plants/999/diagnosis"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.error.code").value("NOT_FOUND"));
+    }
+
+    // ==================== POST /plants with schedules ====================
+
+    @Test
+    void should_create_plant_passing_null_schedules_when_schedules_field_absent() throws Exception {
+        User user = User.builder().telegramChatId(1L).build();
+        Plant plant = mockPlant(20L, 1L, "Ficus");
+
+        when(userService.getByIdOrThrow(1L)).thenReturn(user);
+        when(plantService.createPlant(
+                eq(user),
+                eq("Ficus"),
+                isNull(),
+                isNull(),
+                isNull(),
+                isNull(),
+                isNull()
+        )).thenReturn(plant);
+
+        String body = """
+                {"name": "Ficus"}
+                """;
+
+        mockMvc.perform(post("/api/v1/plants")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.id").value(20));
+    }
+
+    @Test
+    void should_create_plant_passing_null_to_service_when_schedules_is_empty_array() throws Exception {
+        // The controller coalesces empty[] → null before calling the service,
+        // so the service receives null (triggering default-schedule creation).
+        User user = User.builder().telegramChatId(1L).build();
+        Plant plant = mockPlant(21L, 1L, "Rose");
+
+        when(userService.getByIdOrThrow(1L)).thenReturn(user);
+        when(plantService.createPlant(
+                eq(user),
+                eq("Rose"),
+                isNull(),
+                isNull(),
+                isNull(),
+                isNull(),
+                isNull()
+        )).thenReturn(plant);
+
+        String body = """
+                {"name": "Rose", "schedules": []}
+                """;
+
+        mockMvc.perform(post("/api/v1/plants")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.id").value(21));
+    }
+
+    @Test
+    void should_create_plant_forwarding_schedule_list_to_service_when_schedules_provided() throws Exception {
+        User user = User.builder().telegramChatId(1L).build();
+        Plant plant = mockPlant(22L, 1L, "Monstera");
+
+        var expectedSchedules = java.util.List.of(
+                new PlantService.ScheduleInputDto(
+                        com.plantcare.core.domain.enums.TaskType.WATERING,
+                        5,
+                        150
+                )
+        );
+
+        when(userService.getByIdOrThrow(1L)).thenReturn(user);
+        when(plantService.createPlant(
+                eq(user),
+                eq("Monstera"),
+                isNull(),
+                isNull(),
+                isNull(),
+                isNull(),
+                eq(expectedSchedules)
+        )).thenReturn(plant);
+
+        String body = """
+                {
+                  "name": "Monstera",
+                  "schedules": [
+                    {"type": "WATERING", "every": 5, "unit": "DAY", "amountMl": 150}
+                  ]
+                }
+                """;
+
+        mockMvc.perform(post("/api/v1/plants")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.id").value(22));
     }
 }

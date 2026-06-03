@@ -11,11 +11,14 @@ import com.plantcare.api.generated.model.PlantFamilyMemberDto;
 import com.plantcare.api.generated.model.PlantFamilyResponse;
 import com.plantcare.api.generated.model.PlantHealthDto;
 import com.plantcare.api.generated.model.PlantUpdateRequest;
+import com.plantcare.api.generated.model.ScheduleInput;
 import com.plantcare.core.domain.Plant;
 import com.plantcare.core.domain.User;
+import com.plantcare.core.domain.enums.TaskType;
 import com.plantcare.core.service.HealthScoreService;
 import com.plantcare.core.service.PlantDiagnosisReportService;
 import com.plantcare.core.service.PlantService;
+import com.plantcare.core.service.PlantService.ScheduleInputDto;
 import com.plantcare.core.service.UserService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.RestController;
@@ -67,16 +70,32 @@ public class PlantController implements PlantsApi {
     public PlantDto createPlant(PlantCreateRequest request) {
         User user = userService.getByIdOrThrow(currentUserProvider.currentUserId());
 
+        List<ScheduleInputDto> schedules = toScheduleInputDtos(request.getSchedules());
+
         Plant plant = plantService.createPlant(
                 user,
                 request.getName(),
                 request.getNotes(),
                 request.getLocationId(),
                 request.getSpeciesId(),
-                request.getParentPlantId()
+                request.getParentPlantId(),
+                schedules
         );
 
         return toDto(plant);
+    }
+
+    private static List<ScheduleInputDto> toScheduleInputDtos(List<ScheduleInput> raw) {
+        if (raw == null || raw.isEmpty()) {
+            return null;
+        }
+        return raw.stream()
+                .map(s -> new ScheduleInputDto(
+                        TaskType.valueOf(s.getType().getValue()),
+                        s.getEvery(),
+                        s.getAmountMl()
+                ))
+                .toList();
     }
 
     @Override

@@ -22,6 +22,7 @@ import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -40,6 +41,7 @@ public class PlantService {
     private final com.plantcare.core.seasonal.service.SeasonalIntervalService seasonalIntervalService;
     private final HealthScoreService healthScoreService;
     private final PlantDiagnosisReportService plantDiagnosisReportService;
+    private final Clock clock;
 
     @Transactional(readOnly = true)
     public List<Plant> listPlants(Long userId, Long locationId, int offset, int limit) {
@@ -185,6 +187,112 @@ public class PlantService {
         return createPlant(user, name, notes, locationId, speciesId, null);
     }
 
+    /**
+     * Создаёт растение и расписания ухода в одной транзакции.
+     *
+     * <p>Если {@code schedules} null или пуст — применяются дефолтные расписания вида
+     * (как в {@link #createPlantWithDefaultSchedules}). Иначе создаются только
+     * переданные типы с {@code enabled=true}; остальные типы получают дефолтный
+     * интервал с {@code enabled=false}.
+     *
+     * @param schedules опциональные расписания при создании; null или пустой список = дефолты вида
+     * @throws IllegalArgumentException если в {@code schedules} присутствует два элемента с одинаковым {@code type}
+     */
+    @Transactional
+    public Plant createPlant(
+            User user,
+            String name,
+            String notes,
+            Long locationId,
+            Long speciesId,
+            Long parentPlantId,
+            List<ScheduleInputDto> schedules
+    ) {
+        // internal call — already within @Transactional boundary, proxy bypass is intentional
+        Plant plant = createPlant(user, name, notes, locationId, speciesId, parentPlantId);
+
+        if (schedules == null || schedules.isEmpty()) {
+            LocalDateTime now = LocalDateTime.now(clock);
+            for (TaskType type : SCHEDULE_ORDER) {
+                int interval = defaultIntervalFor(plant, type);
+                boolean active = type == TaskType.WATERING;
+                LocalDateTime nextDueAt = active
+                        ? now.plusDays(seasonalIntervalService.effectiveIntervalDays(plant, user, interval))
+                        : now.plusDays(interval);
+                CareSchedule schedule = CareSchedule.builder()
+                        .plant(plant)
+                        .taskType(type)
+                        .intervalDays(interval)
+                        .nextDueAt(nextDueAt)
+                        .active(active)
+                        .build();
+                careScheduleRepository.save(schedule);
+            }
+            log.info("Seeded default schedules for plant {} (user {})", plant.getId(), user.getId());
+        } else {
+            long distinctCount = schedules.stream()
+                    .map(ScheduleInputDto::type)
+                    .distinct()
+                    .count();
+            if (distinctCount != schedules.size()) {
+                throw new IllegalArgumentException("Дублирующийся тип расписания в массиве schedules");
+            }
+
+            java.util.Map<TaskType, ScheduleInputDto> inputMap = schedules.stream()
+                    .collect(java.util.stream.Collectors.toMap(
+                            ScheduleInputDto::type,
+                            s -> s
+                    ));
+
+            LocalDateTime now = LocalDateTime.now(clock);
+            for (TaskType type : SCHEDULE_ORDER) {
+                ScheduleInputDto input = inputMap.get(type);
+                if (input != null) {
+                    int every = input.every();
+                    if (!isValidInterval(every)) {
+                        throw new IllegalArgumentException("Интервал должен быть от 1 до 365 дней: " + type);
+                    }
+                    Integer amountMl = type == TaskType.WATERING ? input.amountMl() : null;
+                    int effectiveInterval = seasonalIntervalService.effectiveIntervalDays(plant, user, every);
+                    CareSchedule schedule = CareSchedule.builder()
+                            .plant(plant)
+                            .taskType(type)
+                            .intervalDays(every)
+                            .amountMl(amountMl)
+                            .nextDueAt(now.plusDays(effectiveInterval))
+                            .active(true)
+                            .build();
+                    careScheduleRepository.save(schedule);
+                } else {
+                    int interval = defaultIntervalFor(plant, type);
+                    CareSchedule schedule = CareSchedule.builder()
+                            .plant(plant)
+                            .taskType(type)
+                            .intervalDays(interval)
+                            .nextDueAt(now.plusDays(interval))
+                            .active(false)
+                            .build();
+                    careScheduleRepository.save(schedule);
+                }
+            }
+            log.info(
+                    "Created {} custom schedule(s) for plant {} (user {})",
+                    schedules.size(),
+                    plant.getId(),
+                    user.getId()
+            );
+        }
+
+        return plant;
+    }
+
+    public record ScheduleInputDto(
+            TaskType type,
+            int every,
+            Integer amountMl
+    ) {
+    }
+
     public record ScheduleView(
             TaskType type,
             int every,
@@ -263,7 +371,7 @@ public class PlantService {
                 every
         );
 
-        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime now = LocalDateTime.now(clock);
 
         CareSchedule schedule = careScheduleRepository
                 .findByPlantIdAndTaskType(plant.getId(), type)
@@ -319,7 +427,7 @@ public class PlantService {
     ) {
         Plant plant = createPlant(user, name, notes, locationId, speciesId, null);
 
-        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime now = LocalDateTime.now(clock);
 
         for (TaskType type : SCHEDULE_ORDER) {
             int interval = defaultIntervalFor(plant, type);
@@ -783,14 +891,14 @@ public class PlantService {
 
             if (existing.isActive()
                     && existing.getNextDueAt() != null
-                    && existing.getNextDueAt().isBefore(LocalDateTime.now())) {
+                    && existing.getNextDueAt().isBefore(LocalDateTime.now(clock))) {
                 int effective = seasonalIntervalService.effectiveIntervalDays(
                         plant,
                         plant.getUser(),
                         existing.getIntervalDays()
                 );
 
-                existing.rescheduleFrom(LocalDateTime.now(), effective);
+                existing.rescheduleFrom(LocalDateTime.now(clock), effective);
             }
 
             CareSchedule saved = careScheduleRepository.save(existing);
@@ -813,7 +921,7 @@ public class PlantService {
                 defaultInterval
         );
 
-        LocalDateTime nextDueAt = LocalDateTime.now().plusDays(effectiveInterval);
+        LocalDateTime nextDueAt = LocalDateTime.now(clock).plusDays(effectiveInterval);
 
         CareSchedule fresh = CareSchedule.builder()
                 .plant(plant)
@@ -904,7 +1012,7 @@ public class PlantService {
             return null;
         }
 
-        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime now = LocalDateTime.now(clock);
 
         Optional<CareHistory> lastEntry = careHistoryRepository
                 .findFirstByPlantIdAndTaskTypeOrderByDoneAtDesc(plant.getId(), taskType);
@@ -959,7 +1067,7 @@ public class PlantService {
 
         String locationName = schedules.get(0).getPlant().getLocation().getDisplayName();
 
-        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime now = LocalDateTime.now(clock);
         int updated = 0;
         int deduped = 0;
 
