@@ -37,14 +37,17 @@ public interface PlantRepository extends JpaRepository<Plant, Long> {
     Optional<Plant> findByUserIdAndIdAndArchivedAtIsNull(Long userId, Long plantId);
 
     /**
-     * Растение по id с подтянутыми {@code location} и {@code species}.
+     * Растение по id с подтянутыми {@code location}, {@code species} и {@code user}.
      * Используется в {@code PlantService.getPlantOrThrow}, результат которого
      * мапится в DTO вне транзакции (REST API, issue #85) — иначе ленивые
      * связи дают {@code no Session}. {@code LEFT JOIN}, т.к. {@code species}
-     * nullable.
+     * nullable. {@code user} INNER JOIN нужен для сезонных настроек (issue #188) —
+     * без eager-загрузки каждый вызов {@code getSchedules}/{@code updateSchedule}
+     * делал бы отдельный SELECT.
      */
     @Query("""
             SELECT p FROM Plant p
+            JOIN FETCH p.user
             LEFT JOIN FETCH p.location
             LEFT JOIN FETCH p.species
             WHERE p.id = :id

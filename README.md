@@ -142,7 +142,7 @@ echo 'testcontainers.reuse.enable=true' >> ~/.testcontainers.properties
 
 При создании растения через REST засеваются все четыре расписания ухода (`WATERING`/`MISTING`/`FERTILIZING`/`SOIL_CHECK`) из дефолтов вида; включён по умолчанию только `WATERING`.
 
-### Schedules (issue #185)
+### Schedules (issue #185, #188)
 
 Расписания ухода конкретного растения. У каждого растения ровно четыре расписания по числу типов ухода. Все эндпоинты user-scoped (JWT).
 
@@ -151,13 +151,21 @@ echo 'testcontainers.reuse.enable=true' >> ~/.testcontainers.properties
 | `GET` | `/api/v1/plants/{id}/schedules` | Все четыре расписания в фиксированном порядке. Если расписание ещё не настроено — отдаётся дефолтный интервал вида с `enabled=false` |
 | `PUT` | `/api/v1/plants/{id}/schedules/{type}` | Создать/обновить расписание типа `{type}`; пересчитывает `nextDueAt` |
 
-`type` ∈ `WATERING` / `MISTING` / `FERTILIZING` / `SOIL_CHECK`. Тело `PUT`: `{ "every", "unit", "amountMl?", "enabled" }`. Элемент ответа:
+`type` ∈ `WATERING` / `MISTING` / `FERTILIZING` / `SOIL_CHECK`. Тело `PUT`: `{ "every", "unit", "amountMl?", "enabled", "seasonalOverride?" }`. Элемент ответа:
 
 ```json
-{ "type": "WATERING", "every": 7, "unit": "DAY", "amountMl": 250, "enabled": true, "nextDueAt": "2026-06-05T08:00:00Z" }
+{
+  "type": "WATERING", "every": 7, "unit": "DAY", "amountMl": 250,
+  "enabled": true, "nextDueAt": "2026-06-05T08:00:00Z",
+  "seasonal": { "active": true, "summerIntervalDays": 5, "winterIntervalDays": 10 }
+}
 ```
 
 `unit` сейчас всегда `DAY`. `amountMl` осмыслен только для `WATERING` (для остальных типов игнорируется). `nextDueAt` (UTC) заполнен только при `enabled=true`, иначе `null`.
+
+`seasonalOverride` в теле `PUT` — per-plant переопределение авто-подстройки: `INHERIT` (следовать глобальной настройке пользователя), `ON` (включить только для этого растения), `OFF` (выключить только для этого растения). Отсутствие поля не меняет текущее значение.
+
+Поле `seasonal` в ответе: `active` — применяется ли сезонность для этого растения; `summerIntervalDays` / `winterIntervalDays` — эффективный интервал при соответствующем сезоне (preview, не зависит от текущего времени года).
 
 ### Locations
 

@@ -77,7 +77,7 @@ schemas:
   CareScheduleDto:
     type: object
     description: Расписание ухода растения одного типа.
-    required: [type, every, unit, enabled]
+    required: [type, every, unit, enabled, seasonal]
     properties:
       type:
         type: string
@@ -107,6 +107,9 @@ schemas:
         format: date-time
         nullable: true
         description: Ближайшее срабатывание (UTC). Заполнено только если enabled=true.
+      seasonal:
+        $ref: '#/schemas/SeasonalScheduleDto'
+        description: Сезонные параметры расписания (mobile G20, issue #188).
 
   CareScheduleUpdateRequest:
     type: object
@@ -132,6 +135,40 @@ schemas:
       enabled:
         type: boolean
         example: true
+      seasonalOverride:
+        type: string
+        pattern: '^(INHERIT|ON|OFF)$'
+        nullable: true
+        description: |
+          Per-plant переопределение авто-подстройки по сезонам.
+          INHERIT — следовать глобальной настройке пользователя;
+          ON — включить только для этого растения;
+          OFF — выключить только для этого растения.
+          Отсутствие поля — текущее значение не меняется.
+
+  SeasonalScheduleDto:
+    type: object
+    description: |
+      Сезонные параметры расписания ухода (issue #188, mobile G20).
+      Показывает, включена ли авто-подстройка и каким будет эффективный
+      интервал в каждый из двух сезонов (лето / зима).
+    required: [active, summerIntervalDays, winterIntervalDays]
+    properties:
+      active:
+        type: boolean
+        description: Активна ли авто-подстройка по сезонам для этого растения.
+      summerIntervalDays:
+        type: integer
+        format: int32
+        minimum: 1
+        maximum: 60
+        description: Эффективный интервал ухода в летний период (дней).
+      winterIntervalDays:
+        type: integer
+        format: int32
+        minimum: 1
+        maximum: 60
+        description: Эффективный интервал ухода в зимний период (дней).
 
   ScheduleInput:
     type: object

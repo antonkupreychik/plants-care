@@ -135,7 +135,7 @@ class PlantScheduleServiceTest extends IntegrationTestBase {
     void should_reflect_active_row_with_next_due_at() {
         Plant plant = plantService.createPlant(testUser, "С поливом", null, null, null);
         plantService.updateSchedule(testUser.getId(), plant.getId(),
-                TaskType.WATERING, 4, 250, true);
+                TaskType.WATERING, 4, 250, true, null);
 
         PlantService.ScheduleView watering = plantService
                 .getSchedules(testUser.getId(), plant.getId()).getFirst();
@@ -152,8 +152,8 @@ class PlantScheduleServiceTest extends IntegrationTestBase {
     void should_hide_next_due_at_for_inactive_row() {
         Plant plant = plantService.createPlant(testUser, "Выключенное", null, null, null);
         // включаем, затем выключаем — строка существует, но active=false
-        plantService.updateSchedule(testUser.getId(), plant.getId(), TaskType.MISTING, 3, null, true);
-        plantService.updateSchedule(testUser.getId(), plant.getId(), TaskType.MISTING, 3, null, false);
+        plantService.updateSchedule(testUser.getId(), plant.getId(), TaskType.MISTING, 3, null, true, null);
+        plantService.updateSchedule(testUser.getId(), plant.getId(), TaskType.MISTING, 3, null, false, null);
 
         PlantService.ScheduleView misting = plantService
                 .getSchedules(testUser.getId(), plant.getId()).get(1);
@@ -171,7 +171,7 @@ class PlantScheduleServiceTest extends IntegrationTestBase {
         Plant plant = plantService.createPlant(testUser, "Полив", null, null, null);
 
         PlantService.ScheduleView view = plantService.updateSchedule(
-                testUser.getId(), plant.getId(), TaskType.WATERING, 5, 300, true);
+                testUser.getId(), plant.getId(), TaskType.WATERING, 5, 300, true, null);
 
         assertThat(view.enabled()).isTrue();
         assertThat(view.amountMl()).isEqualTo(300);
@@ -190,10 +190,10 @@ class PlantScheduleServiceTest extends IntegrationTestBase {
     @DisplayName("updateSchedule: повторный вызов меняет interval/amount и пересчитывает nextDueAt")
     void should_update_existing_row_and_recompute_next_due_at() {
         Plant plant = plantService.createPlant(testUser, "Полив", null, null, null);
-        plantService.updateSchedule(testUser.getId(), plant.getId(), TaskType.WATERING, 5, 300, true);
+        plantService.updateSchedule(testUser.getId(), plant.getId(), TaskType.WATERING, 5, 300, true, null);
 
         PlantService.ScheduleView updated = plantService.updateSchedule(
-                testUser.getId(), plant.getId(), TaskType.WATERING, 10, 500, true);
+                testUser.getId(), plant.getId(), TaskType.WATERING, 10, 500, true, null);
 
         assertThat(updated.every()).isEqualTo(10);
         assertThat(updated.amountMl()).isEqualTo(500);
@@ -210,10 +210,10 @@ class PlantScheduleServiceTest extends IntegrationTestBase {
     @DisplayName("updateSchedule: enabled=false → строка inactive, getSchedules показывает nextDueAt=null")
     void should_disable_row_and_null_next_due_at_in_view() {
         Plant plant = plantService.createPlant(testUser, "Удобрение", null, null, null);
-        plantService.updateSchedule(testUser.getId(), plant.getId(), TaskType.FERTILIZING, 14, null, true);
+        plantService.updateSchedule(testUser.getId(), plant.getId(), TaskType.FERTILIZING, 14, null, true, null);
 
         PlantService.ScheduleView disabled = plantService.updateSchedule(
-                testUser.getId(), plant.getId(), TaskType.FERTILIZING, 14, null, false);
+                testUser.getId(), plant.getId(), TaskType.FERTILIZING, 14, null, false, null);
 
         assertThat(disabled.enabled()).isFalse();
         assertThat(disabled.nextDueAt()).isNull();
@@ -235,7 +235,7 @@ class PlantScheduleServiceTest extends IntegrationTestBase {
 
         for (TaskType type : List.of(TaskType.MISTING, TaskType.FERTILIZING, TaskType.SOIL_CHECK)) {
             PlantService.ScheduleView view = plantService.updateSchedule(
-                    testUser.getId(), plant.getId(), type, 3, 999, true);
+                    testUser.getId(), plant.getId(), type, 3, 999, true, null);
 
             assertThat(view.amountMl())
                     .as("amountMl должен игнорироваться для типа %s", type)
@@ -251,11 +251,11 @@ class PlantScheduleServiceTest extends IntegrationTestBase {
         Plant plant = plantService.createPlant(testUser, "Полив", null, null, null);
 
         assertThatThrownBy(() -> plantService.updateSchedule(
-                testUser.getId(), plant.getId(), TaskType.WATERING, 5, 0, true))
+                testUser.getId(), plant.getId(), TaskType.WATERING, 5, 0, true, null))
                 .isInstanceOf(IllegalArgumentException.class);
 
         assertThatThrownBy(() -> plantService.updateSchedule(
-                testUser.getId(), plant.getId(), TaskType.WATERING, 5, -50, true))
+                testUser.getId(), plant.getId(), TaskType.WATERING, 5, -50, true, null))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
@@ -265,11 +265,11 @@ class PlantScheduleServiceTest extends IntegrationTestBase {
         Plant plant = plantService.createPlant(testUser, "Полив", null, null, null);
 
         assertThatThrownBy(() -> plantService.updateSchedule(
-                testUser.getId(), plant.getId(), TaskType.WATERING, 0, null, true))
+                testUser.getId(), plant.getId(), TaskType.WATERING, 0, null, true, null))
                 .isInstanceOf(IllegalArgumentException.class);
 
         assertThatThrownBy(() -> plantService.updateSchedule(
-                testUser.getId(), plant.getId(), TaskType.WATERING, 366, null, true))
+                testUser.getId(), plant.getId(), TaskType.WATERING, 366, null, true, null))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
@@ -296,7 +296,7 @@ class PlantScheduleServiceTest extends IntegrationTestBase {
         User intruder = newUser(8504L, "intruder2");
 
         assertThatThrownBy(() -> plantService.updateSchedule(
-                intruder.getId(), plant.getId(), TaskType.WATERING, 5, 100, true))
+                intruder.getId(), plant.getId(), TaskType.WATERING, 5, 100, true, null))
                 .isInstanceOf(AccessDeniedException.class);
 
         assertThat(scheduleRepository.findAllByPlantId(plant.getId())).isEmpty();
@@ -366,7 +366,7 @@ class PlantScheduleServiceTest extends IntegrationTestBase {
         LocalDateTime before = LocalDateTime.now().truncatedTo(ChronoUnit.SECONDS);
 
         PlantService.ScheduleView view = plantService.updateSchedule(
-                almatyUser.getId(), plant.getId(), TaskType.WATERING, 7, 200, true);
+                almatyUser.getId(), plant.getId(), TaskType.WATERING, 7, 200, true, null);
 
         LocalDateTime after = LocalDateTime.now();
 

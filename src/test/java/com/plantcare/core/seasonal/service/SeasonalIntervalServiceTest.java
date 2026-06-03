@@ -38,7 +38,7 @@ class SeasonalIntervalServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new SeasonalIntervalService(seasonResolver);
+        service = new SeasonalIntervalService(seasonResolver, java.time.Clock.systemUTC());
 
         user = User.builder()
                 .telegramChatId(100L)
@@ -209,6 +209,135 @@ class SeasonalIntervalServiceTest {
                     .isEqualTo(1);  // clamp ≥ 1
             assertThat(service.effectiveIntervalDaysAt(plant, user, 999, now()))
                     .isEqualTo(60);  // clamp ≤ 60
+        }
+    }
+
+    // =====================================================================
+    // effectiveIntervalForSeason — новый метод (issue #188)
+    // =====================================================================
+
+    @Nested
+    @DisplayName("effectiveIntervalForSeason — preview без текущего времени")
+    class ForSeason {
+
+        @Test
+        @DisplayName("should_return_base_interval_when_seasonal_disabled")
+        void should_return_base_interval_when_seasonal_disabled() {
+            // arrange
+            user.setSeasonalEnabled(false);
+            plant.setSeasonalOverride(SeasonalOverride.INHERIT);
+
+            // act + assert
+            assertThat(service.effectiveIntervalForSeason(plant, user, 10, Season.SUMMER))
+                    .isEqualTo(10);
+            assertThat(service.effectiveIntervalForSeason(plant, user, 10, Season.WINTER))
+                    .isEqualTo(10);
+        }
+
+        @Test
+        @DisplayName("should_apply_summer_multiplier")
+        void should_apply_summer_multiplier() {
+            // arrange
+            user.setSeasonalEnabled(true);
+            user.setSeasonalMode(SeasonalMode.MULTIPLIER);
+            user.setSummerMultiplier(new BigDecimal("0.5"));
+
+            // act
+            int result = service.effectiveIntervalForSeason(plant, user, 10, Season.SUMMER);
+
+            // assert
+            assertThat(result).isEqualTo(5);
+        }
+
+        @Test
+        @DisplayName("should_apply_winter_multiplier")
+        void should_apply_winter_multiplier() {
+            // arrange
+            user.setSeasonalEnabled(true);
+            user.setSeasonalMode(SeasonalMode.MULTIPLIER);
+            user.setWinterMultiplier(new BigDecimal("2.0"));
+
+            // act
+            int result = service.effectiveIntervalForSeason(plant, user, 10, Season.WINTER);
+
+            // assert
+            assertThat(result).isEqualTo(20);
+        }
+
+        @Test
+        @DisplayName("should_apply_fixed_summer_override")
+        void should_apply_fixed_summer_override() {
+            // arrange
+            user.setSeasonalEnabled(true);
+            user.setSeasonalMode(SeasonalMode.FIXED);
+            user.setSummerIntervalOverrideDays(5);
+
+            // act
+            int result = service.effectiveIntervalForSeason(plant, user, 14, Season.SUMMER);
+
+            // assert
+            assertThat(result).isEqualTo(5);
+        }
+
+        @Test
+        @DisplayName("should_fallback_to_base_when_no_fixed_override")
+        void should_fallback_to_base_when_no_fixed_override() {
+            // arrange
+            user.setSeasonalEnabled(true);
+            user.setSeasonalMode(SeasonalMode.FIXED);
+            user.setSummerIntervalOverrideDays(null);
+
+            // act
+            int result = service.effectiveIntervalForSeason(plant, user, 14, Season.SUMMER);
+
+            // assert
+            assertThat(result).isEqualTo(14);
+        }
+
+        @Test
+        @DisplayName("should_clamp_result_to_max")
+        void should_clamp_result_to_max() {
+            // arrange
+            user.setSeasonalEnabled(true);
+            user.setSeasonalMode(SeasonalMode.MULTIPLIER);
+            user.setWinterMultiplier(new BigDecimal("3.0"));
+
+            // act
+            int result = service.effectiveIntervalForSeason(plant, user, 30, Season.WINTER);
+
+            // assert — 30 * 3.0 = 90, clamped to MAX_INTERVAL_DAYS = 60
+            assertThat(result).isEqualTo(SeasonalIntervalService.MAX_INTERVAL_DAYS);
+        }
+
+        @Test
+        @DisplayName("should_clamp_result_to_min")
+        void should_clamp_result_to_min() {
+            // arrange
+            user.setSeasonalEnabled(true);
+            user.setSeasonalMode(SeasonalMode.MULTIPLIER);
+            user.setSummerMultiplier(new BigDecimal("0.01"));
+
+            // act
+            int result = service.effectiveIntervalForSeason(plant, user, 5, Season.SUMMER);
+
+            // assert — 5 * 0.01 = 0.05 → rounds to 0, clamped to MIN_INTERVAL_DAYS = 1
+            assertThat(result).isEqualTo(SeasonalIntervalService.MIN_INTERVAL_DAYS);
+        }
+
+        @Test
+        @DisplayName("should_respect_plant_seasonal_override_on")
+        void should_respect_plant_seasonal_override_on() {
+            // arrange — глобально выключена, но у растения принудительно ON
+            user.setSeasonalEnabled(false);
+            user.setSeasonalMode(SeasonalMode.MULTIPLIER);
+            user.setSummerMultiplier(new BigDecimal("0.5"));
+            plant.setSeasonalOverride(SeasonalOverride.ON);
+
+            // act — сезонность включена через per-plant override, умножитель применяется
+            int result = service.effectiveIntervalForSeason(plant, user, 10, Season.SUMMER);
+
+            // assert
+            assertThat(result).isEqualTo(5);
         }
     }
 
