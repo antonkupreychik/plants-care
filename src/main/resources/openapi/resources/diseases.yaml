@@ -1,0 +1,83 @@
+# Публичный справочник болезней и вредителей. Без авторизации.
+
+paths:
+  Collection:
+    get:
+      tags: [Diseases]
+      operationId: listDiseases
+      summary: Список болезней / полнотекстовый поиск
+      description: |
+        Публичный справочник болезней и вредителей комнатных растений.
+        Без авторизации.
+
+        Без параметра `q` — полный список в алфавитном порядке.
+        С параметром `q` — полнотекстовый поиск (делегирует `DiseaseService.search(q, 20)`).
+      parameters:
+        - name: q
+          in: query
+          required: false
+          description: Поисковая строка. Если пустая — возвращаются все болезни.
+          schema:
+            type: string
+            default: ""
+            example: клещ
+      responses:
+        '200':
+          description: Список болезней.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/schemas/DiseaseDto'
+
+  Item:
+    get:
+      tags: [Diseases]
+      operationId: getDiseaseById
+      summary: Карточка болезни по id
+      description: Полная карточка болезни/вредителя. 404 если не найдена.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Идентификатор болезни.
+          schema:
+            type: integer
+            format: int64
+            example: 1
+      responses:
+        '200':
+          description: Болезнь найдена.
+          content:
+            application/json:
+              schema:
+                $ref: '#/schemas/DiseaseDto'
+        '404':
+          $ref: '../_common/responses.yaml#/NotFound'
+
+schemas:
+  DiseaseDto:
+    type: object
+    description: Карточка болезни/вредителя комнатных растений.
+    required: [id, name, symptoms, treatment, prevention]
+    properties:
+      id:
+        type: integer
+        format: int64
+      name:
+        type: string
+        example: Паутинный клещ
+      latinName:
+        type: string
+        nullable: true
+        example: Tetranychus urticae
+      symptoms:
+        type: string
+        example: Мелкая белёсая крапчатость на листьях…
+      treatment:
+        type: string
+        example: Промыть тёплым душем, обработать акарицидом…
+      prevention:
+        type: string
+        example: Поддерживать влажность воздуха…

@@ -20,7 +20,7 @@ import org.springframework.security.web.SecurityFilterChain;
  * верификаторы в сервисах). STATELESS, без CSRF (мобильный клиент, bearer-токены).
  *
  * <p>Публичны только {@code /api/v1/auth/**}, справочники ({@code species},
- * {@code care-types}) и {@code /api/v1/health}; остальное требует аутентификации.
+ * {@code care-types}, {@code diseases}) и {@code /api/v1/health}; остальное требует аутентификации.
  *
  * <p>{@code @Order(0)} — выше дефолтной цепочки ({@code AdminSecurityConfig},
  * @Order 3), чтобы перехватывать {@code /api/v1/**} раньше permitAll-цепочки.
@@ -47,7 +47,7 @@ public class ApiSecurityConfig {
                         .requestMatchers(HttpMethod.POST,
                                 "/api/v1/auth/logout", "/api/v1/auth/logout-all").authenticated()
                         .requestMatchers("/api/v1/auth/**").permitAll()
-                        .requestMatchers("/api/v1/species/**", "/api/v1/care-types/**").permitAll()
+                        .requestMatchers("/api/v1/species/**", "/api/v1/care-types/**", "/api/v1/diseases/**").permitAll()
                         .requestMatchers("/api/v1/health").permitAll()
                         .anyRequest().authenticated()
                 )

@@ -1,5 +1,6 @@
 package com.plantcare.api.web.exception;
 
+import com.plantcare.core.service.DiseaseNotFoundException;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.Ordered;
@@ -32,6 +33,13 @@ public class WebApiExceptionHandler {
     @ResponseStatus(HttpStatus.NOT_FOUND)
     public ApiError handleNotFound(EntityNotFoundException e) {
         log.warn("Entity not found: {}", e.getMessage());
+        return new ApiError("NOT_FOUND", e.getMessage());
+    }
+
+    @ExceptionHandler(DiseaseNotFoundException.class)
+    @ResponseStatus(HttpStatus.NOT_FOUND)
+    public ApiError handleDiseaseNotFound(DiseaseNotFoundException e) {
+        log.warn("Disease not found: {}", e.getMessage());
         return new ApiError("NOT_FOUND", e.getMessage());
     }
 
