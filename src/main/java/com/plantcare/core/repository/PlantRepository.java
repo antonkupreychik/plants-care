@@ -37,6 +37,14 @@ public interface PlantRepository extends JpaRepository<Plant, Long> {
     Optional<Plant> findByUserIdAndIdAndArchivedAtIsNull(Long userId, Long plantId);
 
     /**
+     * Сколько из переданных {@code ids} — активные (не архивированные) растения
+     * данного пользователя. Используется для проверки, что весь набор растений
+     * принадлежит владельцу перед выдачей доступа (issue #191): если число
+     * меньше размера набора — какой-то id чужой/архивный/несуществующий.
+     */
+    long countByUserIdAndArchivedAtIsNullAndIdIn(Long userId, Collection<Long> ids);
+
+    /**
      * Растение по id с подтянутыми {@code location}, {@code species} и {@code user}.
      * Используется в {@code PlantService.getPlantOrThrow}, результат которого
      * мапится в DTO вне транзакции (REST API, issue #85) — иначе ленивые
