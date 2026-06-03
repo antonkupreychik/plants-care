@@ -4,7 +4,7 @@ on:
   workflow_run:
     workflows: ["Java CI with Maven"]
     types: [completed]
-    branches: [main]
+    branches: [main, develop]
 
 jobs:
   smoke:
