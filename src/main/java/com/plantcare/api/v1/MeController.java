@@ -65,6 +65,7 @@ public class MeController implements MeApi {
                 profile.name(),
                 profile.plantsTotal(),
                 profile.tasksToday(),
+                profile.totalCareEvents(),
                 profile.notificationsUnread(),
                 profile.quietHoursStart().format(HH_MM),
                 profile.quietHoursEnd().format(HH_MM),

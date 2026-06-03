@@ -124,6 +124,18 @@ public class CareHistoryService {
     }
 
     /**
+     * Суммарное число активных (не-cancelled) записей ухода по всем растениям
+     * пользователя за всё время, включая архивированные растения (issue #226).
+     *
+     * @param userId id пользователя
+     * @return общее число уходов
+     */
+    @Transactional(readOnly = true)
+    public long countAllByUser(Long userId) {
+        return careHistoryRepository.countAllByUserId(userId);
+    }
+
+    /**
      * Сводная статистика по всей истории растения (issue #206).
      *
      * <p>Возвращает: общее число активных записей, число on-time, процент on-time,

@@ -73,6 +73,7 @@ schemas:
       - name
       - plantsTotal
       - tasksToday
+      - totalCareEvents
       - notificationsUnread
       - quietHoursStart
       - quietHoursEnd
@@ -132,6 +133,14 @@ schemas:
           пользователя: дедлайн до конца сегодняшнего дня, отметка «сделано»
           ещё не проставлена. Это pending-подмножество `GET /api/v1/today`.
         example: 3
+      totalCareEvents:
+        type: integer
+        format: int64
+        minimum: 0
+        description: |
+          Суммарное число уходов за всё время пользователя (включая архивированные
+          растения). Компенсирующие (отменённые) записи не учитываются.
+        example: 348
       notificationsUnread:
         type: integer
         format: int32
