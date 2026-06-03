@@ -8,8 +8,13 @@ paths:
       summary: Список растений пользователя
       description: |
         Возвращает страницу растений, принадлежащих текущему пользователю
-        (`sub` из bearer-токена). Архивированные (soft-deleted) растения в
-        выдачу не попадают.
+        (`sub` из bearer-токена).
+
+        По умолчанию (без `status` или `status=active`) архивированные
+        (soft-deleted) растения в выдачу **не** попадают. С `status=archived`
+        возвращаются только архивные растения, и для них дополнительно
+        заполняются поля выбытия: `archivedAt`, `gifted`, `note`,
+        `totalCareDays`, `totalCareEvents` (mobile gap G15, issue #219).
 
         Можно фильтровать по локации параметром `locationId`. Пагинация —
         классическая `offset/limit`.
@@ -21,6 +26,18 @@ paths:
       security:
         - bearerAuth: [ ]
       parameters:
+        - name: status
+          in: query
+          required: false
+          description: |
+            Фильтр по жизненному статусу растения. `active` (или отсутствие
+            параметра) — только живые (`archived_at IS NULL`). `archived` —
+            только архивные, с заполненными полями выбытия.
+          schema:
+            type: string
+            enum: [ active, archived ]
+            default: active
+            example: archived
         - name: locationId
           in: query
           required: false
@@ -160,22 +177,105 @@ paths:
     delete:
       tags: [ Plants ]
       operationId: deletePlant
-      summary: Архивировать растение (soft-delete)
+      summary: Удалить растение навсегда (hard-delete)
       description: |
-        Помечает растение как удалённое (`archived_at = now()` в UTC). Запись
-        в БД остаётся, но перестаёт появляться во всех `/api/v1/plants/*`
-        выборках. Восстановления через API в этой версии нет.
+        Безвозвратно удаляет растение и каскадно связанные данные
+        (`care_history`, `care_schedules`, `notifications_log`, годовщины,
+        предложения по пересадке). Доступно **только для уже архивированных**
+        растений (барьер от случайного удаления, mobile gap G15, issue #219):
+        активное растение сначала архивируют через
+        `PATCH /api/v1/plants/{id}/archive`.
+
+        * `204` — растение удалено;
+        * `400` — растение активно (не архивировано), hard-delete запрещён;
+        * `404` — растение не найдено или принадлежит другому пользователю.
       security:
         - bearerAuth: [ ]
       parameters:
         - $ref: '../_common/parameters.yaml#/PlantIdPath'
       responses:
         '204':
-          description: Растение архивировано. Тело ответа отсутствует.
+          description: Растение удалено навсегда. Тело ответа отсутствует.
+        '400':
+          $ref: '../_common/responses.yaml#/BadRequest'
         '403':
           $ref: '../_common/responses.yaml#/Forbidden'
         '404':
           $ref: '../_common/responses.yaml#/NotFound'
+
+  ItemArchive:
+    patch:
+      tags: [ Plants ]
+      operationId: archivePlant
+      summary: Архивировать растение (soft-delete с метаданными)
+      description: |
+        Помечает растение как выбывшее (`archived_at = now()` в UTC) и
+        сохраняет причину выбытия (mobile gap G15, issue #219). После
+        архивации растение пропадает из обычного `GET /plants` и появляется
+        в `GET /plants?status=archived`. Расписания ухода **не** удаляются —
+        остаются для ретроспективы.
+
+        * `200` — обновлённый `PlantDto` (`archived=true`, `archivedAt` задано);
+        * `404` — растение не найдено или принадлежит другому пользователю;
+        * `409` — растение уже архивировано.
+      security:
+        - bearerAuth: [ ]
+      parameters:
+        - $ref: '../_common/parameters.yaml#/PlantIdPath'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/schemas/PlantArchiveRequest'
+            example:
+              gifted: false
+              note: Залила соседка
+      responses:
+        '200':
+          description: Растение архивировано.
+          content:
+            application/json:
+              schema:
+                $ref: '#/schemas/PlantDto'
+        '403':
+          $ref: '../_common/responses.yaml#/Forbidden'
+        '404':
+          $ref: '../_common/responses.yaml#/NotFound'
+        '409':
+          $ref: '../_common/responses.yaml#/Conflict'
+
+  ItemRestore:
+    post:
+      tags: [ Plants ]
+      operationId: restorePlant
+      summary: Восстановить растение из архива
+      description: |
+        Снимает архивацию (`archived_at = NULL`) и сбрасывает метаданные
+        выбытия (mobile gap G15, issue #219). Растение снова появляется в
+        обычном `GET /plants`. Расписания ухода автоматически **не**
+        восстанавливаются — пользователь создаёт их вручную.
+
+        * `200` — обновлённый `PlantDto` (`archived=false`, `archivedAt=null`);
+        * `404` — растение не найдено или принадлежит другому пользователю;
+        * `409` — растение не в архиве.
+      security:
+        - bearerAuth: [ ]
+      parameters:
+        - $ref: '../_common/parameters.yaml#/PlantIdPath'
+      responses:
+        '200':
+          description: Растение восстановлено.
+          content:
+            application/json:
+              schema:
+                $ref: '#/schemas/PlantDto'
+        '403':
+          $ref: '../_common/responses.yaml#/Forbidden'
+        '404':
+          $ref: '../_common/responses.yaml#/NotFound'
+        '409':
+          $ref: '../_common/responses.yaml#/Conflict'
 
   ItemHealth:
     get:
@@ -463,6 +563,66 @@ schemas:
         nullable: true
         description: Конец периода акклиматизации (UTC). null если акклиматизация не активна.
         example: "2026-06-10T12:00:00Z"
+      archivedAt:
+        type: string
+        format: date-time
+        nullable: true
+        description: |
+          Момент архивации (UTC). Заполняется только в выдаче
+          `GET /plants?status=archived` и в ответах archive/restore
+          (mobile gap G15, issue #219). null для активных растений.
+        example: "2026-03-15T10:00:00Z"
+      gifted:
+        type: boolean
+        nullable: true
+        description: |
+          Причина выбытия (issue #219): true — растение подарили, false —
+          погибло. null если не указано или растение активно. Заполняется
+          только в архивной выдаче и ответах archive/restore.
+        example: false
+      note:
+        type: string
+        nullable: true
+        description: |
+          Заметка о выбытии растения (issue #219), напр. «Залила соседка».
+          null если не задана. Заполняется только в архивной выдаче и ответах
+          archive/restore. Это отдельное от `notes` поле.
+        example: Залила соседка
+      totalCareDays:
+        type: integer
+        format: int32
+        nullable: true
+        description: |
+          Сколько дней растение было с пользователем: `archivedAt - acquiredAt`
+          (или `createdAt`, если `acquiredAt` не задан). Заполняется только в
+          архивной выдаче (issue #219).
+        example: 227
+      totalCareEvents:
+        type: integer
+        format: int32
+        nullable: true
+        description: |
+          Сколько раз пользователь отмечал уход за этим растением (COUNT из
+          `care_history`). Заполняется только в архивной выдаче (issue #219).
+        example: 42
+
+  PlantArchiveRequest:
+    type: object
+    description: |
+      Тело PATCH /api/v1/plants/{id}/archive (issue #219). Оба поля
+      опциональны; само тело тоже опционально (можно архивировать без причины).
+    properties:
+      gifted:
+        type: boolean
+        nullable: true
+        description: true — растение подарили, false — погибло. null — не указано.
+        example: false
+      note:
+        type: string
+        maxLength: 2000
+        nullable: true
+        description: Свободная заметка о выбытии.
+        example: Залила соседка
 
   PlantCreateRequest:
     type: object

@@ -91,6 +91,15 @@ public interface PlantRepository extends JpaRepository<Plant, Long> {
     List<Plant> findAllByUserIdAndArchivedAtIsNotNullOrderByArchivedAtDesc(Long userId);
 
     /**
+     * Архивные растения юзера для REST-экрана «Архив» (issue #219).
+     * {@code location}/{@code species} подтягиваются через {@link EntityGraph}:
+     * DTO собирается в контроллере вне транзакции (OSIV=false), иначе ленивые
+     * связи дадут {@code no Session}. Сортировка — свежие сверху.
+     */
+    @EntityGraph(attributePaths = {"location", "species"})
+    List<Plant> findByUserIdAndArchivedAtIsNotNullOrderByArchivedAtDesc(Long userId);
+
+    /**
      * Архивное растение конкретного юзера по id.
      * Используется в карточке архива и в действиях «восстановить / удалить навсегда».
      */
