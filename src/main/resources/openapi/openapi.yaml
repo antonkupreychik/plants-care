@@ -84,6 +84,8 @@ tags:
     description: Публичный справочник видов растений. Без авторизации.
   - name: Care Types
     description: Публичный справочник типов ухода (полив, опрыскивание, и т.п.). Без авторизации.
+  - name: Diseases
+    description: Публичный справочник болезней и вредителей комнатных растений. Без авторизации.
   - name: Weather
     description: Текущий снимок погоды для рекомендаций по уходу.
   - name: Schedules
@@ -171,6 +173,11 @@ paths:
 
   /api/v1/care-types:
     $ref: './resources/care-types.yaml#/paths/Collection'
+
+  /api/v1/diseases:
+    $ref: './resources/diseases.yaml#/paths/Collection'
+  /api/v1/diseases/{id}:
+    $ref: './resources/diseases.yaml#/paths/Item'
 
   /api/v1/shopping:
     $ref: './resources/shopping.yaml#/paths/Collection'
@@ -308,6 +315,9 @@ components:
 
     CareTypeDto:
       $ref: './resources/care-types.yaml#/schemas/CareTypeDto'
+
+    DiseaseDto:
+      $ref: './resources/diseases.yaml#/schemas/DiseaseDto'
 
     CareScheduleDto:
       $ref: './resources/schedules.yaml#/schemas/CareScheduleDto'
