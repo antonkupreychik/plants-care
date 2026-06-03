@@ -90,6 +90,33 @@ class CareEventControllerTest {
     }
 
     @Test
+    void should_return_201_and_map_soil_check_when_type_is_soil_check() throws Exception {
+        // arrange — issue #222: SOIL_CHECK теперь публичный тип
+        User user = mockUserWithId(42L, 42L);
+        when(currentUserProvider.currentUser()).thenReturn(user);
+
+        CareHistory stubbedHistory = mockCareHistory(2L, 10L, "Фикус", TaskType.SOIL_CHECK);
+        when(careEventApiService.registerEvent(
+                eq(42L), eq(10L), eq(TaskType.SOIL_CHECK), any(Instant.class), any(), any()))
+                .thenReturn(stubbedHistory);
+
+        CreateCareEventRequest request = new CreateCareEventRequest(
+                10L, CareEventType.SOIL_CHECK, OffsetDateTime.parse("2026-05-22T10:00:00Z"));
+
+        // act + assert
+        mockMvc.perform(post("/api/v1/care-events")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.id").value(2))
+                .andExpect(jsonPath("$.type").value("SOIL_CHECK"));
+
+        // контроллер должен передать в сервис именно доменный SOIL_CHECK
+        verify(careEventApiService).registerEvent(
+                eq(42L), eq(10L), eq(TaskType.SOIL_CHECK), any(Instant.class), any(), any());
+    }
+
+    @Test
     void should_return_401_when_no_authenticated_user() throws Exception {
         // arrange — нет JWT в SecurityContext → провайдер бросает AuthTokenException
         when(currentUserProvider.currentUser())
@@ -228,6 +255,10 @@ class CareEventControllerTest {
      * Мок оправдан: тест проверяет только HTTP → JSON маппинг, не сохранение в БД.
      */
     private CareHistory mockCareHistory(Long historyId, Long plantId, String plantName) {
+        return mockCareHistory(historyId, plantId, plantName, TaskType.WATERING);
+    }
+
+    private CareHistory mockCareHistory(Long historyId, Long plantId, String plantName, TaskType taskType) {
         Plant plant = mock(Plant.class);
         when(plant.getId()).thenReturn(plantId);
         when(plant.getName()).thenReturn(plantName);
@@ -235,7 +266,7 @@ class CareEventControllerTest {
         CareHistory history = mock(CareHistory.class);
         when(history.getId()).thenReturn(historyId);
         when(history.getPlant()).thenReturn(plant);
-        when(history.getTaskType()).thenReturn(TaskType.WATERING);
+        when(history.getTaskType()).thenReturn(taskType);
         when(history.getDoneAt()).thenReturn(LocalDateTime.parse("2026-05-22T10:00:00"));
         when(history.isOnTime()).thenReturn(true);
         when(history.getNote()).thenReturn(null);

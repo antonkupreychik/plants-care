@@ -56,8 +56,9 @@ public class PlantHistoryController implements PlantHistoryApi {
         // Все записи принадлежат одному загруженному выше растению; мапим из него,
         // а не из ленивого history.getPlant() — нативный листинг истории plant не
         // фетчит, и обращение к прокси вне транзакции дало бы no-session (issue #86).
+        // SOIL_CHECK теперь публичный тип (issue #222) и возвращается наравне с
+        // остальными — мобильный дневник показывает проверки почвы.
         List<CareEventResponse> responseItems = items.stream()
-                .filter(h -> h.getTaskType() != TaskType.SOIL_CHECK)
                 .map(h -> CareEventController.toResponse(h, plant))
                 .toList();
 
@@ -102,20 +103,23 @@ public class PlantHistoryController implements PlantHistoryApi {
             case WATER -> TaskType.WATERING;
             case SPRAY -> TaskType.MISTING;
             case FERTILIZE -> TaskType.FERTILIZING;
+            case SOIL_CHECK -> TaskType.SOIL_CHECK;
         };
     }
 
     /**
      * Конвертирует доменный {@link TaskType} в API {@link CareEventType}.
-     * SOIL_CHECK не должен сюда попасть — фильтрация в сервисе.
+     *
+     * <p>Используется только в сводке (summary), где SOIL_CHECK заранее
+     * отфильтрован сервисом — но маппинг тотальный, чтобы не падать, если
+     * фильтр когда-нибудь снимут (issue #222).
      */
     private static CareEventType fromTaskType(TaskType type) {
         return switch (type) {
             case WATERING -> CareEventType.WATER;
             case MISTING -> CareEventType.SPRAY;
             case FERTILIZING -> CareEventType.FERTILIZE;
-            case SOIL_CHECK -> throw new IllegalStateException(
-                    "SOIL_CHECK cannot be represented as CareEventType, filter before mapping");
+            case SOIL_CHECK -> CareEventType.SOIL_CHECK;
         };
     }
 }

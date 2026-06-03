@@ -85,6 +85,7 @@ public class CareEventController implements CareEventsApi {
             case WATER -> TaskType.WATERING;
             case SPRAY -> TaskType.MISTING;
             case FERTILIZE -> TaskType.FERTILIZING;
+            case SOIL_CHECK -> TaskType.SOIL_CHECK;
         };
     }
 
@@ -93,8 +94,7 @@ public class CareEventController implements CareEventsApi {
             case WATERING -> CareEventType.WATER;
             case MISTING -> CareEventType.SPRAY;
             case FERTILIZING -> CareEventType.FERTILIZE;
-            case SOIL_CHECK -> throw new IllegalStateException(
-                    "SOIL_CHECK cannot be represented as CareEventType, filter before mapping");
+            case SOIL_CHECK -> CareEventType.SOIL_CHECK;
         };
     }
 }

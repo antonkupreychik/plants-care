@@ -145,12 +145,34 @@ class PlantHistorySummaryIT extends IntegrationTestBase {
         saveHistory(plant, TaskType.MISTING, true);
         saveHistory(plant, TaskType.MISTING, true);
 
-        // act & assert — без фильтра → все 5 записей (SOIL_CHECK контроллер фильтрует из items,
-        // здесь SOIL_CHECK нет, поэтому items.length == 5)
+        // act & assert — без фильтра → все 5 записей
         mockMvc.perform(get("/api/v1/plants/{id}/history", plant.getId())
                         .with(jwt().jwt(j -> j.claim("sub", String.valueOf(user.getId())))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.items.length()").value(5));
+    }
+
+    @Test
+    void should_include_soil_check_in_history_items_when_present() throws Exception {
+        // arrange — issue #222: SOIL_CHECK теперь публичный тип и попадает в выдачу
+        User user = saveUser(8_200_009L);
+        Plant plant = savePlant(user, "Sansevieria");
+
+        saveHistory(plant, TaskType.WATERING, true);
+        saveHistory(plant, TaskType.SOIL_CHECK, true);
+
+        // act & assert — обе записи в items, фильтр ?type=SOIL_CHECK даёт только проверку
+        mockMvc.perform(get("/api/v1/plants/{id}/history", plant.getId())
+                        .with(jwt().jwt(j -> j.claim("sub", String.valueOf(user.getId())))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items.length()").value(2));
+
+        mockMvc.perform(get("/api/v1/plants/{id}/history", plant.getId())
+                        .queryParam("type", "SOIL_CHECK")
+                        .with(jwt().jwt(j -> j.claim("sub", String.valueOf(user.getId())))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items.length()").value(1))
+                .andExpect(jsonPath("$.items[0].type").value("SOIL_CHECK"));
     }
 
     // -------------------------------------------------------------------------
