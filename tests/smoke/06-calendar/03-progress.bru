@@ -1,0 +1,25 @@
+meta {
+  name: Calendar – progress for 7-day range
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/api/v1/calendar/progress
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{accessToken}}
+}
+
+params:query {
+  from: {{calFrom}}
+  to: {{calTo}}
+}
+
+assert {
+  res.status: eq 200
+  res.body: isObject
+}

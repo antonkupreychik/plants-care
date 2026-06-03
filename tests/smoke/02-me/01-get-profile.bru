@@ -1,0 +1,26 @@
+meta {
+  name: Me – get profile
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/api/v1/me
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{accessToken}}
+}
+
+assert {
+  res.status: eq 200
+  res.body.id: isNumber
+  res.body.timezone: isDefined
+  res.body.locale: isDefined
+  res.body.quietHoursStart: isDefined
+  res.body.quietHoursEnd: isDefined
+  res.body.plantsTotal: isNumber
+  res.body.tasksToday: isNumber
+}

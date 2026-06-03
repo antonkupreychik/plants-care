@@ -1,0 +1,22 @@
+meta {
+  name: Care Types – full list
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/api/v1/care-types
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body: isArray
+}
+
+script:post-response {
+  const codes = res.body.map(t => t.code);
+  expect(codes).to.include("WATERING");
+  expect(codes).to.include("FERTILIZING");
+}

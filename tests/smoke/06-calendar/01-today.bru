@@ -1,0 +1,25 @@
+meta {
+  name: Calendar – today tasks
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/api/v1/today
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{accessToken}}
+}
+
+assert {
+  res.status: eq 200
+  res.body.tasks: isArray
+  res.body.count: isNumber
+  res.body.summary.total: isNumber
+  res.body.summary.done: isNumber
+  res.body.summary.remaining: isNumber
+  res.body.summary.overdue: isNumber
+}

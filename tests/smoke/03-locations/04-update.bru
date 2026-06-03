@@ -1,0 +1,27 @@
+meta {
+  name: Locations – update name
+  type: http
+  seq: 4
+}
+
+put {
+  url: {{baseUrl}}/api/v1/locations/{{locationId}}
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{accessToken}}
+}
+
+body:json {
+  {
+    "name": "Smoke Test Room Updated",
+    "emoji": "🌱"
+  }
+}
+
+assert {
+  res.status: eq 200
+  res.body.name: eq Smoke Test Room Updated
+}

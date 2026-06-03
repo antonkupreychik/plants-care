@@ -1,0 +1,31 @@
+meta {
+  name: Plants – filter by locationId
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/api/v1/plants
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{accessToken}}
+}
+
+params:query {
+  locationId: {{locationId}}
+  limit: 20
+  offset: 0
+}
+
+assert {
+  res.status: eq 200
+  res.body.items: isArray
+}
+
+script:post-response {
+  const allMatch = res.body.items.every(p => p.locationId === bru.getVar("locationId"));
+  expect(allMatch).to.be.true;
+}

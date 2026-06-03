@@ -1,0 +1,32 @@
+meta {
+  name: Edge – 400 invalid care event type
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{baseUrl}}/api/v1/care-events
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{accessToken}}
+}
+
+script:pre-request {
+  bru.setVar("performedAt", new Date().toISOString());
+}
+
+body:json {
+  {
+    "plantId": {{plantId}},
+    "type": "INVALID_TYPE",
+    "performedAt": "{{performedAt}}"
+  }
+}
+
+assert {
+  res.status: eq 400
+  res.body.error: isDefined
+}

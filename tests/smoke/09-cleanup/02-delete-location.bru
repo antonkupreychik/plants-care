@@ -1,0 +1,19 @@
+meta {
+  name: Cleanup – delete test location
+  type: http
+  seq: 2
+}
+
+delete {
+  url: {{baseUrl}}/api/v1/locations/{{locationId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{accessToken}}
+}
+
+assert {
+  res.status: eq 204
+}

@@ -1,0 +1,22 @@
+meta {
+  name: Species – empty search returns results
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/api/v1/species
+  body: none
+  auth: none
+}
+
+params:query {
+  q:
+  limit: 10
+  offset: 0
+}
+
+assert {
+  res.status: eq 200
+  res.body.items: isArray
+}

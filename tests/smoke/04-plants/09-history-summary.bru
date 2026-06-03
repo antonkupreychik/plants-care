@@ -1,0 +1,19 @@
+meta {
+  name: Plants – history summary
+  type: http
+  seq: 9
+}
+
+get {
+  url: {{baseUrl}}/api/v1/plants/{{plantId}}/history/summary
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{accessToken}}
+}
+
+assert {
+  res.status: eq 200
+}

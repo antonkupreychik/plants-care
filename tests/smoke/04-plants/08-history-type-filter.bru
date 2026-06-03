@@ -1,0 +1,26 @@
+meta {
+  name: Plants – history with type filter WATER
+  type: http
+  seq: 8
+}
+
+get {
+  url: {{baseUrl}}/api/v1/plants/{{plantId}}/history
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{accessToken}}
+}
+
+params:query {
+  type: WATER
+  limit: 20
+  offset: 0
+}
+
+assert {
+  res.status: eq 200
+  res.body.items: isArray
+}

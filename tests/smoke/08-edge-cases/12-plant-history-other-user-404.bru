@@ -1,0 +1,25 @@
+meta {
+  name: Edge – 404 plant history for another user's plant
+  type: http
+  seq: 12
+}
+
+get {
+  url: {{baseUrl}}/api/v1/plants/999999998/history
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{accessToken}}
+}
+
+params:query {
+  limit: 10
+  offset: 0
+}
+
+assert {
+  res.status: eq 404
+  res.body.error: isDefined
+}

@@ -1,0 +1,33 @@
+meta {
+  name: Locations – create
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/api/v1/locations
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{accessToken}}
+}
+
+body:json {
+  {
+    "name": "Smoke Test Room",
+    "emoji": "🌿"
+  }
+}
+
+assert {
+  res.status: eq 201
+  res.body.id: isNumber
+  res.body.name: eq Smoke Test Room
+  res.body.emoji: eq 🌿
+}
+
+script:post-response {
+  bru.setVar("locationId", res.body.id);
+}

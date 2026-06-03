@@ -1,0 +1,25 @@
+meta {
+  name: Locations – list contains created
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/api/v1/locations
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{accessToken}}
+}
+
+assert {
+  res.status: eq 200
+  res.body: isArray
+}
+
+script:post-response {
+  const found = res.body.find(l => l.id === bru.getVar("locationId"));
+  expect(found).to.not.be.undefined;
+}

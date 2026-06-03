@@ -1,0 +1,20 @@
+meta {
+  name: Edge – 404 plant not found
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/api/v1/plants/999999999
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{accessToken}}
+}
+
+assert {
+  res.status: eq 404
+  res.body.error: isDefined
+}

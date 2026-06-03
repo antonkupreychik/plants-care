@@ -1,0 +1,35 @@
+meta {
+  name: Plants – create with location
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/api/v1/plants
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{accessToken}}
+}
+
+body:json {
+  {
+    "name": "Smoke Test Ficus",
+    "notes": "Created by smoke test – safe to delete",
+    "locationId": {{locationId}}
+  }
+}
+
+assert {
+  res.status: eq 201
+  res.body.id: isNumber
+  res.body.name: eq Smoke Test Ficus
+  res.body.locationId: eq {{locationId}}
+  res.body.archived: eq false
+}
+
+script:post-response {
+  bru.setVar("plantId", res.body.id);
+}

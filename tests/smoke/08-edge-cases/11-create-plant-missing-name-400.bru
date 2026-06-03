@@ -1,0 +1,26 @@
+meta {
+  name: Edge – 400 create plant without name
+  type: http
+  seq: 11
+}
+
+post {
+  url: {{baseUrl}}/api/v1/plants
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{accessToken}}
+}
+
+body:json {
+  {
+    "notes": "No name provided"
+  }
+}
+
+assert {
+  res.status: eq 400
+  res.body.error: isDefined
+}

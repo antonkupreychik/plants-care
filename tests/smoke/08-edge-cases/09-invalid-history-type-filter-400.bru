@@ -1,0 +1,26 @@
+meta {
+  name: Edge – 400 invalid history type filter
+  type: http
+  seq: 9
+}
+
+get {
+  url: {{baseUrl}}/api/v1/plants/{{plantId}}/history
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{accessToken}}
+}
+
+params:query {
+  type: NOT_A_TYPE
+  limit: 10
+  offset: 0
+}
+
+assert {
+  res.status: eq 400
+  res.body.error: isDefined
+}

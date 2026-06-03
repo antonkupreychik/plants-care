@@ -1,0 +1,19 @@
+meta {
+  name: Edge – 401 with garbage token
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/api/v1/me
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: totally.invalid.token
+}
+
+assert {
+  res.status: eq 401
+}

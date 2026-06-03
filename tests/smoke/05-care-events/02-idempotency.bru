@@ -1,0 +1,33 @@
+meta {
+  name: Care Events – same clientId is idempotent
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/api/v1/care-events
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{accessToken}}
+}
+
+script:pre-request {
+  bru.setVar("performedAt", new Date().toISOString());
+}
+
+body:json {
+  {
+    "plantId": {{plantId}},
+    "type": "WATER",
+    "performedAt": "{{performedAt}}",
+    "clientId": "smoke-test-idem-001"
+  }
+}
+
+assert {
+  res.status: in [200, 201, 409]
+  res.body.clientId: eq smoke-test-idem-001
+}

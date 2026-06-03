@@ -1,0 +1,27 @@
+meta {
+  name: Plants – update notes
+  type: http
+  seq: 5
+}
+
+put {
+  url: {{baseUrl}}/api/v1/plants/{{plantId}}
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{accessToken}}
+}
+
+body:json {
+  {
+    "name": "Smoke Test Ficus",
+    "notes": "Updated by smoke test"
+  }
+}
+
+assert {
+  res.status: eq 200
+  res.body.notes: eq Updated by smoke test
+}
