@@ -111,7 +111,8 @@ echo 'testcontainers.reuse.enable=true' >> ~/.testcontainers.properties
 |---|---|---|---|
 | `/api/v1/care-events` | `POST` | 201 | Регистрация ухода (WATER/SPRAY/FERTILIZE). Поле `clientId` обеспечивает идемпотентность: повторный запрос с тем же `clientId` возвращает существующую запись без дублирования |
 | `/api/v1/care-events/{id}` | `DELETE` | 204 | Отмена события через compensation pattern: запись не удаляется физически, создаётся компенсирующая запись |
-| `/api/v1/plants/{id}/history` | `GET` | 200 | История ухода за растением с offset-пагинацией. Query params: `limit` [1–100], default 20; `offset`, default 0. Проверяет ownership растения |
+| `/api/v1/plants/{id}/history` | `GET` | 200 | История ухода за растением с offset-пагинацией. Query params: `limit` [1–100], default 20; `offset`, default 0; `type` (`WATER`/`SPRAY`/`FERTILIZE`) — фильтр по типу, если не задан — все типы. Невалидное значение `type` → 400. Проверяет ownership растения |
+| `/api/v1/plants/{id}/history/summary` | `GET` | 200 | Агрегат по всей истории: `total`, `onTimeCount`, `onTimePercent`, `byType` (разбивка по типам, ключи `WATER`/`SPRAY`/`FERTILIZE`, только типы с count > 0; `SOIL_CHECK` исключён). Учитываются только не отменённые записи. Проверяет ownership растения |
 | `/api/v1/today` | `GET` | 200 | Задачи ухода на сегодня в таймзоне пользователя |
 | `/api/v1/calendar` | `GET` | 200 | Расписание за произвольный период. Query params: `from`, `to` (ISO date). Диапазон не более 60 дней. Дни без задач в ответ не включаются |
 | `/api/v1/calendar/progress` | `GET` | 200 | Прогресс выполнения по дням за период: карта `{ "YYYY-MM-DD": { "planned", "done" } }`, где `planned` — запланированные occurrence'ы расписаний, `done` — выполненные (не отменённые) записи ухода за этот локальный день в таймзоне пользователя. Query params: `from`, `to` (ISO date), диапазон не более 60 дней. Дни без планов и без выполнений не включаются |
