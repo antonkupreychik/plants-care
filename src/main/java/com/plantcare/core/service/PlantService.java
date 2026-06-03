@@ -43,6 +43,10 @@ public class PlantService {
 
     @Transactional(readOnly = true)
     public List<Plant> listPlants(Long userId, Long locationId, int offset, int limit) {
+        return queryPlants(userId, locationId, offset, limit);
+    }
+
+    private List<Plant> queryPlants(Long userId, Long locationId, int offset, int limit) {
         int safeLimit = Math.max(1, Math.min(limit, 100));
         int safeOffset = Math.max(0, offset);
 
@@ -99,6 +103,22 @@ public class PlantService {
         }
 
         return plantRepository.countByUserIdAndArchivedAtIsNull(userId);
+    }
+
+    public record PlantWithHealth(Plant plant, HealthScoreService.HealthScore health) {}
+
+    @Transactional(readOnly = true)
+    public PlantWithHealth getPlantWithHealth(Long userId, Long plantId) {
+        Plant plant = getPlantOrThrow(userId, plantId);
+        return new PlantWithHealth(plant, healthScoreService.computeForPlant(plant));
+    }
+
+    @Transactional(readOnly = true)
+    public List<PlantWithHealth> listPlantsWithHealth(Long userId, Long locationId, int offset, int limit) {
+        List<Plant> plants = queryPlants(userId, locationId, offset, limit);
+        return plants.stream()
+                .map(p -> new PlantWithHealth(p, healthScoreService.computeForPlant(p)))
+                .toList();
     }
 
     public record PlantFamily(Plant parent, List<Plant> children) {
