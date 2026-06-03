@@ -137,6 +137,19 @@ public class PlantService {
             Long speciesId,
             Long parentPlantId
     ) {
+        return createPlant(user, name, notes, locationId, speciesId, parentPlantId, (LocalDate) null);
+    }
+
+    @Transactional
+    public Plant createPlant(
+            User user,
+            String name,
+            String notes,
+            Long locationId,
+            Long speciesId,
+            Long parentPlantId,
+            LocalDate acquiredAt
+    ) {
         Location location;
         if (locationId != null) {
             location = locationService.getUserLocationOrThrow(user.getId(), locationId);
@@ -163,21 +176,24 @@ public class PlantService {
                 .notes(notes)
                 .species(species)
                 .parent(parent)
+                .acquiredAt(acquiredAt)
                 .build();
 
         Plant saved = plantRepository.save(plant);
 
         log.info(
-                "Created plant '{}' (id={}, speciesId={}, parentPlantId={}) via REST API for user {}",
+                "Created plant '{}' (id={}, speciesId={}, parentPlantId={}, acquiredAt={}) via REST API for user {}",
                 name,
                 saved.getId(),
                 speciesId,
                 parentPlantId,
+                acquiredAt,
                 user.getId()
         );
 
         return saved;
     }
+
     @Transactional
     public Plant createPlant(
             User user,
@@ -210,10 +226,11 @@ public class PlantService {
             Long locationId,
             Long speciesId,
             Long parentPlantId,
+            LocalDate acquiredAt,
             List<ScheduleInputDto> schedules
     ) {
         // internal call — already within @Transactional boundary, proxy bypass is intentional
-        Plant plant = createPlant(user, name, notes, locationId, speciesId, parentPlantId);
+        Plant plant = createPlant(user, name, notes, locationId, speciesId, parentPlantId, acquiredAt);
 
         if (schedules == null || schedules.isEmpty()) {
             LocalDateTime now = LocalDateTime.now(clock);

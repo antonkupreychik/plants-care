@@ -10,9 +10,11 @@ import com.plantcare.core.domain.User;
 import com.plantcare.core.domain.enums.HealthZone;
 import com.plantcare.core.service.HealthScoreService;
 import com.plantcare.core.service.LocationService;
+import com.plantcare.core.service.PlantAcclimationService;
 import com.plantcare.core.service.PlantDiagnosisReportService;
 import com.plantcare.core.service.PlantService;
 import com.plantcare.core.service.UserService;
+import java.time.Clock;
 import jakarta.persistence.EntityNotFoundException;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -61,6 +63,9 @@ class PlantControllerTest {
     private PlantService plantService;
 
     @MockitoBean
+    private PlantAcclimationService plantAcclimationService;
+
+    @MockitoBean
     private UserService userService;
 
     @MockitoBean
@@ -69,9 +74,15 @@ class PlantControllerTest {
     @MockitoBean
     private CurrentUserProvider currentUserProvider;
 
+    @MockitoBean
+    private Clock clock;
+
     @org.junit.jupiter.api.BeforeEach
     void stubCurrentUser() {
         when(currentUserProvider.currentUserId()).thenReturn(1L);
+        java.time.Instant fixedNow = java.time.Instant.parse("2026-06-03T00:00:00Z");
+        when(clock.instant()).thenReturn(fixedNow);
+        when(clock.getZone()).thenReturn(java.time.ZoneOffset.UTC);
     }
 
     private Plant mockPlant(long plantId, long userId, String name) {
@@ -169,6 +180,7 @@ class PlantControllerTest {
                 isNull(),
                 isNull(),
                 isNull(),
+                isNull(),
                 isNull()
         )).thenReturn(plant);
 
@@ -202,6 +214,7 @@ class PlantControllerTest {
                 isNull(),
                 eq(7L),
                 isNull(),
+                isNull(),
                 isNull()
         )).thenReturn(plant);
 
@@ -231,6 +244,7 @@ class PlantControllerTest {
                 isNull(),
                 isNull(),
                 eq(10L),
+                isNull(),
                 isNull()
         )).thenReturn(plant);
 
@@ -583,6 +597,7 @@ class PlantControllerTest {
                 isNull(),
                 isNull(),
                 isNull(),
+                isNull(),
                 isNull()
         )).thenReturn(plant);
 
@@ -608,6 +623,7 @@ class PlantControllerTest {
         when(plantService.createPlant(
                 eq(user),
                 eq("Rose"),
+                isNull(),
                 isNull(),
                 isNull(),
                 isNull(),
@@ -643,6 +659,7 @@ class PlantControllerTest {
         when(plantService.createPlant(
                 eq(user),
                 eq("Monstera"),
+                isNull(),
                 isNull(),
                 isNull(),
                 isNull(),

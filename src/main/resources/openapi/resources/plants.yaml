@@ -446,6 +446,23 @@ schemas:
         enum: [ GREEN, YELLOW, RED ]
         nullable: true
         description: Цветовая зона. null если insufficientData.
+      acquiredAt:
+        type: string
+        format: date
+        nullable: true
+        description: Дата покупки/получения растения (ISO-8601). null если не указана.
+        example: "2026-05-20"
+      inAcclimation:
+        type: boolean
+        nullable: true
+        description: true пока acclimation_until > now(). Вычисляемое поле, в БД не хранится.
+        example: true
+      acclimationUntil:
+        type: string
+        format: date-time
+        nullable: true
+        description: Конец периода акклиматизации (UTC). null если акклиматизация не активна.
+        example: "2026-06-10T12:00:00Z"
 
   PlantCreateRequest:
     type: object
@@ -486,6 +503,17 @@ schemas:
           отводком/потомком этого растения. Родитель должен принадлежать текущему
           пользователю и не быть архивированным, иначе 404/403.
         example: 10
+      acquiredAt:
+        type: string
+        format: date
+        nullable: true
+        description: Дата покупки/получения растения (ISO-8601). Используется для годовщин и строки «С тобой с …».
+        example: "2026-05-20"
+      isNew:
+        type: boolean
+        nullable: true
+        description: Если true — включить режим акклиматизации на 21 день после создания.
+        example: true
       schedules:
         type: array
         nullable: true

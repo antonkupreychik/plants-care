@@ -16,6 +16,7 @@ import com.plantcare.core.domain.Plant;
 import com.plantcare.core.domain.User;
 import com.plantcare.core.domain.enums.TaskType;
 import com.plantcare.core.service.HealthScoreService;
+import com.plantcare.core.service.PlantAcclimationService;
 import com.plantcare.core.service.PlantDiagnosisReportService;
 import com.plantcare.core.service.PlantService;
 import com.plantcare.core.service.PlantService.ScheduleInputDto;
@@ -23,6 +24,8 @@ import com.plantcare.core.service.UserService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.time.Clock;
+import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
 
@@ -37,8 +40,10 @@ import java.util.List;
 public class PlantController implements PlantsApi {
 
     private final PlantService plantService;
+    private final PlantAcclimationService plantAcclimationService;
     private final UserService userService;
     private final CurrentUserProvider currentUserProvider;
+    private final Clock clock;
 
     @Override
     public PageResponsePlantDto listPlants(Long locationId, Integer offset, Integer limit) {
@@ -79,8 +84,16 @@ public class PlantController implements PlantsApi {
                 request.getLocationId(),
                 request.getSpeciesId(),
                 request.getParentPlantId(),
+                request.getAcquiredAt(),
                 schedules
         );
+
+        // Акклиматизация вызывается вне транзакции createPlant: она открывает свою транзакцию внутри.
+        if (Boolean.TRUE.equals(request.getIsNew())) {
+            plantAcclimationService.enable(user, plant.getId());
+            // Перечитываем растение с обновлёнными полями акклиматизации.
+            plant = plantService.getPlantOrThrow(user.getId(), plant.getId());
+        }
 
         return toDto(plant);
     }
@@ -174,7 +187,7 @@ public class PlantController implements PlantsApi {
         return response;
     }
 
-    private static PlantDto toDto(Plant plant) {
+    private PlantDto toDto(Plant plant) {
         PlantDto dto = new PlantDto(plant.getId(), plant.getName(), plant.isArchived())
                 .notes(plant.getNotes())
                 .photoFileId(plant.getPhotoFileId());
@@ -193,10 +206,20 @@ public class PlantController implements PlantsApi {
             dto.createdAt(plant.getCreatedAt().atOffset(ZoneOffset.UTC));
         }
 
+        dto.acquiredAt(plant.getAcquiredAt());
+
+        LocalDateTime now = LocalDateTime.now(clock);
+        boolean inAcclimation = plant.isInAcclimation(now);
+        dto.inAcclimation(inAcclimation);
+
+        if (plant.getAcclimationUntil() != null) {
+            dto.acclimationUntil(plant.getAcclimationUntil().atOffset(ZoneOffset.UTC));
+        }
+
         return dto;
     }
 
-    private static PlantDto toDto(Plant plant, HealthScoreService.HealthScore health) {
+    private PlantDto toDto(Plant plant, HealthScoreService.HealthScore health) {
         PlantDto dto = toDto(plant);
         if (health != null) {
             dto.healthInsufficientData(health.insufficientData());
