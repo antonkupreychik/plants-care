@@ -107,7 +107,9 @@ public class PlantController implements PlantsApi {
                 id,
                 request.getName(),
                 request.getNotes(),
-                request.getLocationId()
+                request.getLocationId(),
+                request.getSpeciesId(),
+                request.getClearSpecies()
         );
 
         return toDto(updated);
