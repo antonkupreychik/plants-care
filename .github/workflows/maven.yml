@@ -28,4 +28,6 @@ jobs:
         distribution: 'temurin'
         cache: maven
     - name: Build with Maven
-      run: mvn package
+      env:
+        MAVEN_OPTS: "-Xmx1g"
+      run: mvn package -DargLine="-Xmx1g"
