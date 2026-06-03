@@ -29,5 +29,5 @@ jobs:
         cache: maven
     - name: Build with Maven
       env:
-        MAVEN_OPTS: "-Xmx1g"
-      run: mvn package -DargLine="-Xmx1g"
+        MAVEN_OPTS: "-Xmx512m"
+      run: mvn package -DargLine="-Xmx1536m"
