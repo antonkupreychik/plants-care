@@ -26,6 +26,30 @@ paths:
             application/json:
               schema:
                 $ref: '#/schemas/MeResponse'
+    delete:
+      tags: [Me]
+      operationId: deleteMe
+      summary: Удаление аккаунта (GDPR / App Store)
+      description: |
+        Необратимо удаляет аккаунт текущего пользователя и все связанные данные
+        (растения, расписания, история ухода, локации, список покупок и т.д.) через
+        FK `ON DELETE CASCADE` на уровне БД.
+
+        **Поведение Telegram-связки**: поле `telegram_chat_id` удаляется вместе
+        со строкой пользователя. При следующем `/start` в боте для того же
+        chat\_id создаётся **новый** пользователь с нуля — история не восстанавливается.
+
+        **Идемпотентность**: повторный вызов с токеном удалённого пользователя
+        вернёт `204` (tolerant-delete), а не `500` или `404`.
+
+        Операция необратима. Требует действующего Bearer-токена.
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Аккаунт удалён. Тело ответа отсутствует.
+        '401':
+          $ref: '../_common/responses.yaml#/Unauthorized'
     patch:
       tags: [Me]
       operationId: updateMe

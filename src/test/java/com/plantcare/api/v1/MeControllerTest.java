@@ -5,6 +5,7 @@ import com.plantcare.api.CurrentUserProvider;
 import com.plantcare.api.auth.exception.AuthTokenException;
 import com.plantcare.core.domain.User;
 import com.plantcare.core.domain.enums.SeasonalMode;
+import com.plantcare.core.service.AccountDeletionService;
 import com.plantcare.core.service.UserProfileService;
 import com.plantcare.core.service.UserProfileService.Profile;
 import com.plantcare.core.service.UserProfileService.ProfileUpdate;
@@ -26,10 +27,13 @@ import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -64,6 +68,9 @@ class MeControllerTest {
     private UserProfileService userProfileService;
 
     @MockitoBean
+    private AccountDeletionService accountDeletionService;
+
+    @MockitoBean
     private CurrentUserProvider currentUserProvider;
 
     @BeforeEach
@@ -71,6 +78,7 @@ class MeControllerTest {
         User user = mock(User.class);
         when(user.getId()).thenReturn(7L);
         when(currentUserProvider.currentUser()).thenReturn(user);
+        when(currentUserProvider.currentUserId()).thenReturn(7L);
     }
 
     // ------------------------------------------------------------------ GET happy
@@ -444,6 +452,49 @@ class MeControllerTest {
 
         // act + assert
         mockMvc.perform(get("/api/v1/me"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error.code").value("TOKEN_INVALID"));
+    }
+
+    // ------------------------------------------------------------------ DELETE
+
+    @Test
+    void should_return_204_and_call_deletion_service_when_deleting_account() throws Exception {
+        // arrange
+        doNothing().when(accountDeletionService).deleteAccount(anyLong());
+
+        // act + assert
+        mockMvc.perform(delete("/api/v1/me"))
+                .andExpect(status().isNoContent());
+
+        ArgumentCaptor<Long> captor = ArgumentCaptor.forClass(Long.class);
+        verify(accountDeletionService).deleteAccount(captor.capture());
+        assertThat(captor.getValue()).isEqualTo(7L);
+    }
+
+    @Test
+    void should_return_204_and_use_user_id_not_full_user_when_deleting_account() throws Exception {
+        // arrange — deleteMe использует currentUserId(), а не currentUser() (идемпотентность:
+        // пользователь может уже не существовать → currentUser() бросил бы 404)
+        doNothing().when(accountDeletionService).deleteAccount(anyLong());
+
+        // act + assert
+        mockMvc.perform(delete("/api/v1/me"))
+                .andExpect(status().isNoContent());
+
+        // currentUser() НЕ вызывается при DELETE (только currentUserId())
+        verify(currentUserProvider, never()).currentUser();
+        verify(currentUserProvider).currentUserId();
+    }
+
+    @Test
+    void should_return_401_when_no_authenticated_user_on_delete() throws Exception {
+        // arrange — нет JWT в SecurityContext
+        when(currentUserProvider.currentUserId())
+                .thenThrow(AuthTokenException.invalid("No authenticated user in security context"));
+
+        // act + assert
+        mockMvc.perform(delete("/api/v1/me"))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.error.code").value("TOKEN_INVALID"));
     }
