@@ -6,6 +6,7 @@ import com.plantcare.api.generated.model.MeResponse;
 import com.plantcare.api.generated.model.MeUpdateRequest;
 import com.plantcare.core.domain.User;
 import com.plantcare.core.domain.enums.SeasonalMode;
+import com.plantcare.core.service.AccountDeletionService;
 import com.plantcare.core.service.UserProfileService;
 import com.plantcare.core.service.UserProfileService.Profile;
 import com.plantcare.core.service.UserProfileService.ProfileUpdate;
@@ -20,6 +21,7 @@ import java.time.format.DateTimeFormatter;
  * REST API профиля и настроек текущего пользователя (issue #182, mobile G5 + G16).
  *
  * <p>Документация и валидация полей живут в сгенерированном {@link MeApi}.
+ * DELETE /api/v1/me добавлен в issue #181 (GDPR / App Store).
  */
 @Slf4j
 @RestController
@@ -30,6 +32,7 @@ public class MeController implements MeApi {
 
     private final UserProfileService userProfileService;
     private final CurrentUserProvider currentUserProvider;
+    private final AccountDeletionService accountDeletionService;
 
     @Override
     public MeResponse getMe() {
@@ -37,6 +40,15 @@ public class MeController implements MeApi {
         log.info("GET /api/v1/me: userId={}", user.getId());
 
         return toResponse(userProfileService.getProfile(user));
+    }
+
+    @Override
+    public void deleteMe() {
+        // currentUserId() используется вместо currentUser() намеренно: пользователь мог уже
+        // быть удалён (повторный вызов — идемпотентность), поэтому не бросаем 404 через currentUser().
+        Long userId = currentUserProvider.currentUserId();
+        log.info("DELETE /api/v1/me: userId={}", userId);
+        accountDeletionService.deleteAccount(userId);
     }
 
     @Override
