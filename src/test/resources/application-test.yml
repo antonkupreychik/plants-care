@@ -38,6 +38,14 @@ plantcare:
       rate-limit:
         max-attempts: 5
         window-seconds: 300
+  # Issue #215: тестовые значения для well-known эндпоинтов.
+  deep-link:
+    ios:
+      app-ids: TESTTEAM123.com.plantcare.test
+      paths: /auth/verify*
+    android:
+      package-name: com.plantcare.test
+      sha256-cert-fingerprints: AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99
 
 logging:
   level:

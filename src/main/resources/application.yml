@@ -107,6 +107,23 @@ plantcare:
         max-attempts: 5
         window-seconds: 300
 
+  # Issue #215: Universal Links (iOS) / App Links (Android) для magic-link диплинков.
+  # Значения зависят от мобильного приложения и различаются на dev/prod.
+  # Требуются реальные данные от app-команды (Team ID, bundle id, SHA-256 fingerprints).
+  deep-link:
+    ios:
+      # appID в формате <TeamID>.<BundleId>. Может быть несколько (dev/prod разные bundle id).
+      # Пример: TEAMID1234.com.example.plantcare
+      app-ids: ${DEEP_LINK_IOS_APP_IDS:PLACEHOLDER_TEAM_ID.com.example.plantcare}
+      # Пути, которые AASA разрешает открывать в приложении.
+      paths: ${DEEP_LINK_IOS_PATHS:/auth/verify*}
+    android:
+      # Package name Android-приложения. Пример: com.example.plantcare
+      package-name: ${DEEP_LINK_ANDROID_PACKAGE_NAME:com.example.plantcare}
+      # SHA-256 отпечатки подписи приложения (debug и release).
+      # Формат: AA:BB:CC:... (hex через двоеточие). Может быть несколько.
+      sha256-cert-fingerprints: ${DEEP_LINK_ANDROID_SHA256_CERT_FINGERPRINTS:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99}
+
 admin:
   username: ${ADMIN_USERNAME:}
   password-bcrypt-hash: ${ADMIN_PASSWORD_BCRYPT_HASH:}
