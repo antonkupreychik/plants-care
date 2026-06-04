@@ -376,11 +376,98 @@ class PlantControllerTest {
     }
 
     @Test
-    void should_delete_plant_and_return_204() throws Exception {
-        doNothing().when(plantService).archivePlant(1L, 1L);
+    void should_hard_delete_archived_plant_and_return_204() throws Exception {
+        doNothing().when(plantService).hardDeletePlant(1L, 1L);
 
         mockMvc.perform(delete("/api/v1/plants/1"))
                 .andExpect(status().isNoContent());
+    }
+
+    @Test
+    void should_return_400_when_hard_deleting_active_plant() throws Exception {
+        org.mockito.Mockito.doThrow(new IllegalArgumentException("Active plant cannot be hard-deleted"))
+                .when(plantService).hardDeletePlant(1L, 1L);
+
+        mockMvc.perform(delete("/api/v1/plants/1"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.code").value("BAD_REQUEST"));
+    }
+
+    @Test
+    void should_archive_plant_with_reason_and_return_archive_fields() throws Exception {
+        Plant archived = mockPlant(1L, 1L, "Монстера");
+        when(archived.getArchivedAt()).thenReturn(java.time.LocalDateTime.parse("2026-03-15T10:00:00"));
+        when(archived.getArchiveGifted()).thenReturn(false);
+        when(archived.getArchiveNote()).thenReturn("Залила соседка");
+        when(archived.isArchived()).thenReturn(true);
+        when(plantService.archivePlantWithReason(eq(1L), eq(1L), eq(false), eq("Залила соседка")))
+                .thenReturn(archived);
+
+        String body = "{\"gifted\":false,\"note\":\"Залила соседка\"}";
+
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .patch("/api/v1/plants/1/archive")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.archived").value(true))
+                .andExpect(jsonPath("$.gifted").value(false))
+                .andExpect(jsonPath("$.note").value("Залила соседка"))
+                .andExpect(jsonPath("$.archivedAt").exists());
+    }
+
+    @Test
+    void should_return_409_when_archiving_already_archived_plant() throws Exception {
+        org.mockito.Mockito.doThrow(new IllegalStateException("Plant already archived"))
+                .when(plantService).archivePlantWithReason(eq(1L), eq(1L), isNull(), isNull());
+
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .patch("/api/v1/plants/1/archive")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error.code").value("CONFLICT"));
+    }
+
+    @Test
+    void should_restore_plant_and_return_200() throws Exception {
+        Plant restored = mockPlant(1L, 1L, "Монстера");
+        when(restored.isArchived()).thenReturn(false);
+        when(plantService.restorePlant(1L, 1L)).thenReturn(restored);
+
+        mockMvc.perform(post("/api/v1/plants/1/restore"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.archived").value(false));
+    }
+
+    @Test
+    void should_return_409_when_restoring_active_plant() throws Exception {
+        org.mockito.Mockito.doThrow(new IllegalStateException("Plant is not archived"))
+                .when(plantService).restorePlant(1L, 1L);
+
+        mockMvc.perform(post("/api/v1/plants/1/restore"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error.code").value("CONFLICT"));
+    }
+
+    @Test
+    void should_list_archived_plants_with_aggregates() throws Exception {
+        Plant p = mockPlant(42L, 1L, "Монстера");
+        when(p.getArchivedAt()).thenReturn(java.time.LocalDateTime.parse("2026-03-15T10:00:00"));
+        when(p.getArchiveGifted()).thenReturn(false);
+        when(p.getArchiveNote()).thenReturn("Залила соседка");
+        when(p.isArchived()).thenReturn(true);
+        when(plantService.listArchivedPlants(1L))
+                .thenReturn(List.of(new PlantService.ArchivedPlant(p, 227, 42)));
+
+        mockMvc.perform(get("/api/v1/plants").param("status", "archived"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items.length()").value(1))
+                .andExpect(jsonPath("$.items[0].id").value(42))
+                .andExpect(jsonPath("$.items[0].totalCareDays").value(227))
+                .andExpect(jsonPath("$.items[0].totalCareEvents").value(42))
+                .andExpect(jsonPath("$.items[0].gifted").value(false))
+                .andExpect(jsonPath("$.items[0].note").value("Залила соседка"));
     }
 
     @Test

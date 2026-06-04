@@ -133,6 +133,10 @@ paths:
     $ref: './resources/plants.yaml#/paths/Collection'
   /api/v1/plants/{id}:
     $ref: './resources/plants.yaml#/paths/Item'
+  /api/v1/plants/{id}/archive:
+    $ref: './resources/plants.yaml#/paths/ItemArchive'
+  /api/v1/plants/{id}/restore:
+    $ref: './resources/plants.yaml#/paths/ItemRestore'
   /api/v1/plants/{id}/history:
     $ref: './resources/plant-history.yaml#/paths/ItemHistory'
   /api/v1/plants/{id}/history/summary:
@@ -272,6 +276,8 @@ components:
       $ref: './resources/plants.yaml#/schemas/PlantCreateRequest'
     PlantUpdateRequest:
       $ref: './resources/plants.yaml#/schemas/PlantUpdateRequest'
+    PlantArchiveRequest:
+      $ref: './resources/plants.yaml#/schemas/PlantArchiveRequest'
     PageResponsePlantDto:
       $ref: './resources/plants.yaml#/schemas/PageResponsePlantDto'
     PlantDiagnosisDto:

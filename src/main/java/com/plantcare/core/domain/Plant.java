@@ -77,6 +77,20 @@ public class Plant extends BaseEntity {
     private LocalDateTime archivedAt;
 
     /**
+     * Причина выбытия (issue #219): {@code true} — растение подарили,
+     * {@code false} — погибло. {@code null} пока растение активно.
+     */
+    @Column(name = "archive_gifted")
+    private Boolean archiveGifted;
+
+    /**
+     * Свободная заметка о выбытии растения (issue #219), напр. «Залила соседка».
+     * {@code null} — не задана. Сбрасывается при восстановлении из архива.
+     */
+    @Column(name = "archive_note", columnDefinition = "text")
+    private String archiveNote;
+
+    /**
      * Дата, когда юзер «завёл» растение (issue #117). NULL = юзер не указал,
      * в годовщинах не участвует и строка «С тобой с …» в карточке не печатается.
      * Тип — {@link LocalDate}, в БД хранится как DATE (без TZ): юбилеи привязаны
@@ -143,6 +157,30 @@ public class Plant extends BaseEntity {
 
     public void archive() {
         this.archivedAt = LocalDateTime.now();
+    }
+
+    /**
+     * Архивация с метаданными выбытия (issue #219). Момент архивации задаётся
+     * вызывающим (сервис с инжектируемым {@link java.time.Clock}).
+     *
+     * @param at     момент архивации (UTC)
+     * @param gifted true — подарили, false — погибло, null — не указано
+     * @param note   свободная заметка, может быть null
+     */
+    public void archive(LocalDateTime at, Boolean gifted, String note) {
+        this.archivedAt = at;
+        this.archiveGifted = gifted;
+        this.archiveNote = note;
+    }
+
+    /**
+     * Восстановление из архива (issue #219): сбрасывает дату архивации и
+     * метаданные выбытия. Расписания при этом не трогаются.
+     */
+    public void restore() {
+        this.archivedAt = null;
+        this.archiveGifted = null;
+        this.archiveNote = null;
     }
 
     /** issue #75: true, если сейчас активен режим акклиматизации. */

@@ -882,6 +882,120 @@ public class PlantService {
         log.info("Archived plant {} (user {})", plantId, userId);
     }
 
+    /**
+     * Находит растение, принадлежащее юзеру, независимо от статуса архивации.
+     * Чужое или несуществующее растение трактуется как 404 (issue #219:
+     * «404 если растение не найдено или принадлежит другому пользователю»).
+     */
+    @Transactional(readOnly = true)
+    public Plant getOwnedPlantOrThrow(Long userId, Long plantId) {
+        Plant plant = plantRepository.findByIdWithLocationAndSpecies(plantId)
+                .orElseThrow(() -> new EntityNotFoundException("Plant not found: " + plantId));
+
+        if (!plant.getUser().getId().equals(userId)) {
+            throw new EntityNotFoundException("Plant not found: " + plantId);
+        }
+
+        return plant;
+    }
+
+    /**
+     * Архивация растения с метаданными выбытия (issue #219, mobile G15).
+     * Устанавливает {@code archived_at = now()} (через инжектируемый Clock).
+     * Расписания ухода не удаляются. Повторная архивация → 409.
+     *
+     * @return обновлённое растение (для маппинга в DTO вне транзакции)
+     */
+    @Transactional
+    public Plant archivePlantWithReason(Long userId, Long plantId, Boolean gifted, String note) {
+        Plant plant = getOwnedPlantOrThrow(userId, plantId);
+
+        if (plant.isArchived()) {
+            throw new IllegalStateException("Plant already archived: " + plantId);
+        }
+
+        plant.archive(LocalDateTime.now(clock), gifted, note);
+        Plant saved = plantRepository.save(plant);
+
+        log.info("Archived plant {} (user {}, gifted={})", plantId, userId, gifted);
+        return saved;
+    }
+
+    /**
+     * Восстановление растения из архива (issue #219, mobile G15).
+     * Сбрасывает {@code archived_at} и метаданные выбытия. Расписания
+     * автоматически не восстанавливаются. Вызов на активном → 409.
+     *
+     * @return обновлённое растение
+     */
+    @Transactional
+    public Plant restorePlant(Long userId, Long plantId) {
+        Plant plant = getOwnedPlantOrThrow(userId, plantId);
+
+        if (!plant.isArchived()) {
+            throw new IllegalStateException("Plant is not archived: " + plantId);
+        }
+
+        plant.restore();
+        Plant saved = plantRepository.save(plant);
+
+        log.info("Restored plant {} (user {})", plantId, userId);
+        return saved;
+    }
+
+    /**
+     * Безвозвратное удаление растения с каскадом по связанным таблицам
+     * (issue #219, mobile G15). Доступно только для архивных растений —
+     * активное → 400 (барьер от случайного hard-delete). Не найдено → 404.
+     */
+    @Transactional
+    public void hardDeletePlant(Long userId, Long plantId) {
+        Plant plant = getOwnedPlantOrThrow(userId, plantId);
+
+        if (!plant.isArchived()) {
+            throw new IllegalArgumentException(
+                    "Active plant cannot be hard-deleted; archive it first: " + plantId);
+        }
+
+        plantRepository.delete(plant);
+
+        log.info("Hard-deleted plant {} (user {})", plantId, userId);
+    }
+
+    /** Архивное растение вместе с агрегатами для экрана «Архив» (issue #219). */
+    public record ArchivedPlant(Plant plant, int totalCareDays, int totalCareEvents) {}
+
+    /**
+     * Список архивных растений юзера с агрегатами выбытия (issue #219, mobile G15).
+     * Сортировка — свежие сверху (по {@code archived_at DESC}).
+     */
+    @Transactional(readOnly = true)
+    public List<ArchivedPlant> listArchivedPlants(Long userId) {
+        return plantRepository.findByUserIdAndArchivedAtIsNotNullOrderByArchivedAtDesc(userId).stream()
+                .map(plant -> {
+                    long events = careHistoryRepository.countActiveByPlantId(plant.getId());
+                    int days = computeTotalCareDays(plant);
+                    return new ArchivedPlant(plant, days, (int) events);
+                })
+                .toList();
+    }
+
+    /**
+     * Сколько дней растение было с пользователем: {@code archivedAt - acquiredAt}
+     * (или {@code createdAt}, если {@code acquiredAt} не задан). Не меньше 0.
+     */
+    private int computeTotalCareDays(Plant plant) {
+        if (plant.getArchivedAt() == null) {
+            return 0;
+        }
+        LocalDate end = plant.getArchivedAt().toLocalDate();
+        LocalDate start = plant.getAcquiredAt() != null
+                ? plant.getAcquiredAt()
+                : (plant.getCreatedAt() != null ? plant.getCreatedAt().toLocalDate() : end);
+        long days = java.time.temporal.ChronoUnit.DAYS.between(start, end);
+        return (int) Math.max(0, days);
+    }
+
     @Transactional
     public CareSchedule updateScheduleInterval(
             Long userId,

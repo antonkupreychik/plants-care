@@ -575,6 +575,119 @@ class PlantServiceTest extends IntegrationTestBase {
         assertThat(plantRepository.findById(plant.getId()).orElseThrow().getArchivedAt()).isNotNull();
     }
 
+    // ==================== Архив: archive/restore/hardDelete/list (issue #219) ====================
+
+    @Test
+    @DisplayName("archivePlantWithReason: ставит archived_at + gifted/note, возвращает растение")
+    void archivePlantWithReason_setsReason() {
+        Plant plant = createTestPlant("X");
+
+        Plant archived = plantService.archivePlantWithReason(
+                testUser.getId(), plant.getId(), false, "Залила соседка");
+
+        assertThat(archived.isArchived()).isTrue();
+        Plant reloaded = plantRepository.findById(plant.getId()).orElseThrow();
+        assertThat(reloaded.getArchivedAt()).isNotNull();
+        assertThat(reloaded.getArchiveGifted()).isFalse();
+        assertThat(reloaded.getArchiveNote()).isEqualTo("Залила соседка");
+    }
+
+    @Test
+    @DisplayName("archivePlantWithReason: повторная архивация → IllegalStateException (409)")
+    void archivePlantWithReason_rejectsAlreadyArchived() {
+        Plant plant = createTestPlant("X");
+        plantService.archivePlantWithReason(testUser.getId(), plant.getId(), true, null);
+
+        assertThatThrownBy(() -> plantService.archivePlantWithReason(
+                testUser.getId(), plant.getId(), true, null))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    @DisplayName("archivePlantWithReason: чужое растение → EntityNotFoundException (404)")
+    void archivePlantWithReason_otherUserIsNotFound() {
+        Plant plant = createTestPlant("X");
+        Long otherUserId = userRepository.save(User.builder()
+                .telegramChatId(999L).username("other").build()).getId();
+
+        assertThatThrownBy(() -> plantService.archivePlantWithReason(
+                otherUserId, plant.getId(), null, null))
+                .isInstanceOf(EntityNotFoundException.class);
+    }
+
+    @Test
+    @DisplayName("restorePlant: сбрасывает archived_at и метаданные выбытия")
+    void restorePlant_clearsArchive() {
+        Plant plant = createTestPlant("X");
+        plantService.archivePlantWithReason(testUser.getId(), plant.getId(), false, "Погибла");
+
+        Plant restored = plantService.restorePlant(testUser.getId(), plant.getId());
+
+        assertThat(restored.isArchived()).isFalse();
+        Plant reloaded = plantRepository.findById(plant.getId()).orElseThrow();
+        assertThat(reloaded.getArchivedAt()).isNull();
+        assertThat(reloaded.getArchiveGifted()).isNull();
+        assertThat(reloaded.getArchiveNote()).isNull();
+    }
+
+    @Test
+    @DisplayName("restorePlant: на активном растении → IllegalStateException (409)")
+    void restorePlant_rejectsActive() {
+        Plant plant = createTestPlant("X");
+
+        assertThatThrownBy(() -> plantService.restorePlant(testUser.getId(), plant.getId()))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    @DisplayName("hardDeletePlant: архивное удаляется насовсем вместе с расписаниями")
+    void hardDeletePlant_deletesArchived() {
+        Plant plant = createTestPlant("X");
+        plantService.archivePlantWithReason(testUser.getId(), plant.getId(), true, null);
+
+        plantService.hardDeletePlant(testUser.getId(), plant.getId());
+
+        assertThat(plantRepository.findById(plant.getId())).isEmpty();
+        assertThat(scheduleRepository.findByPlantIdAndTaskType(plant.getId(), TaskType.WATERING))
+                .isEmpty();
+    }
+
+    @Test
+    @DisplayName("hardDeletePlant: активное растение → IllegalArgumentException (400)")
+    void hardDeletePlant_rejectsActive() {
+        Plant plant = createTestPlant("X");
+
+        assertThatThrownBy(() -> plantService.hardDeletePlant(testUser.getId(), plant.getId()))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThat(plantRepository.findById(plant.getId())).isPresent();
+    }
+
+    @Test
+    @DisplayName("listArchivedPlants: возвращает только архивные с totalCareDays/Events")
+    void listArchivedPlants_returnsAggregates() {
+        Plant active = createTestPlant("Активное");
+        Plant gone = createTestPlant("Выбывшее");
+
+        careHistoryRepository.save(com.plantcare.core.domain.CareHistory.builder()
+                .plant(gone).taskType(TaskType.WATERING)
+                .doneAt(LocalDateTime.now().minusDays(10)).onTime(true).build());
+        careHistoryRepository.save(com.plantcare.core.domain.CareHistory.builder()
+                .plant(gone).taskType(TaskType.WATERING)
+                .doneAt(LocalDateTime.now().minusDays(5)).onTime(true).build());
+
+        plantService.archivePlantWithReason(testUser.getId(), gone.getId(), false, "Погибла");
+
+        List<PlantService.ArchivedPlant> archived =
+                plantService.listArchivedPlants(testUser.getId());
+
+        assertThat(archived).hasSize(1);
+        PlantService.ArchivedPlant a = archived.get(0);
+        assertThat(a.plant().getId()).isEqualTo(gone.getId());
+        assertThat(a.totalCareEvents()).isEqualTo(2);
+        assertThat(a.totalCareDays()).isGreaterThanOrEqualTo(0);
+        assertThat(active.isArchived()).isFalse();
+    }
+
     @Test
     @DisplayName("updateScheduleInterval: меняет interval_days, не трогает next_due_at")
     void updateScheduleInterval_changesIntervalOnly() {

@@ -9,6 +9,7 @@ import com.plantcare.api.generated.model.PlantDiagnosisDto;
 import com.plantcare.api.generated.model.PlantDto;
 import com.plantcare.api.generated.model.PlantFamilyMemberDto;
 import com.plantcare.api.generated.model.PlantFamilyResponse;
+import com.plantcare.api.generated.model.PlantArchiveRequest;
 import com.plantcare.api.generated.model.PlantHealthDto;
 import com.plantcare.api.generated.model.PlantUpdateRequest;
 import com.plantcare.api.generated.model.ScheduleInput;
@@ -46,8 +47,17 @@ public class PlantController implements PlantsApi {
     private final Clock clock;
 
     @Override
-    public PageResponsePlantDto listPlants(Long locationId, Integer offset, Integer limit) {
+    public PageResponsePlantDto listPlants(String status, Long locationId, Integer offset, Integer limit) {
         Long userId = currentUserProvider.currentUserId();
+
+        if ("archived".equalsIgnoreCase(status)) {
+            List<PlantDto> archived = plantService.listArchivedPlants(userId).stream()
+                    .map(this::toArchivedDto)
+                    .toList();
+            // Архивная выдача не пагинируется на сервере (экран показывает весь список):
+            // отдаём всё одной страницей, total = размеру списка.
+            return new PageResponsePlantDto(archived, archived.size(), 0, archived.size());
+        }
 
         int safeLimit = Math.min(Math.max(limit, 1), 100);
         int safeOffset = Math.max(offset, 0);
@@ -61,6 +71,28 @@ public class PlantController implements PlantsApi {
                 .toList();
 
         return new PageResponsePlantDto(items, (int) total, safeOffset, safeLimit);
+    }
+
+    @Override
+    public PlantDto archivePlant(Long id, PlantArchiveRequest request) {
+        Long userId = currentUserProvider.currentUserId();
+
+        Boolean gifted = request != null ? request.getGifted() : null;
+        String note = request != null ? request.getNote() : null;
+
+        Plant archived = plantService.archivePlantWithReason(userId, id, gifted, note);
+
+        PlantDto dto = toDto(archived);
+        applyArchiveReason(dto, archived);
+        return dto;
+    }
+
+    @Override
+    public PlantDto restorePlant(Long id) {
+        Long userId = currentUserProvider.currentUserId();
+
+        Plant restored = plantService.restorePlant(userId, id);
+        return toDto(restored);
     }
 
     @Override
@@ -131,7 +163,7 @@ public class PlantController implements PlantsApi {
     @Override
     public void deletePlant(Long id) {
         Long userId = currentUserProvider.currentUserId();
-        plantService.archivePlant(userId, id);
+        plantService.hardDeletePlant(userId, id);
     }
 
     @Override
@@ -229,6 +261,29 @@ public class PlantController implements PlantsApi {
             }
         }
         return dto;
+    }
+
+    /**
+     * Архивное растение с агрегатами для экрана «Архив» (issue #219).
+     * Поверх базового DTO добавляет поля выбытия и счётчики.
+     */
+    private PlantDto toArchivedDto(PlantService.ArchivedPlant archived) {
+        Plant plant = archived.plant();
+
+        PlantDto dto = toDto(plant);
+        applyArchiveReason(dto, plant);
+        dto.totalCareDays(archived.totalCareDays())
+                .totalCareEvents(archived.totalCareEvents());
+        return dto;
+    }
+
+    /** Заполняет поля выбытия (archivedAt/gifted/note) из растения (issue #219). */
+    private void applyArchiveReason(PlantDto dto, Plant plant) {
+        if (plant.getArchivedAt() != null) {
+            dto.archivedAt(plant.getArchivedAt().atOffset(ZoneOffset.UTC));
+        }
+        dto.gifted(plant.getArchiveGifted())
+                .note(plant.getArchiveNote());
     }
 
     private static PlantFamilyMemberDto toFamilyMemberDto(Plant plant) {
