@@ -1,0 +1,132 @@
+# Совместный уход (issue #191, mobile G22, экран 26).
+#
+# Владелец растений приглашает соухаживающего по контакту (@username / телефон),
+# выбирает набор растений и решает, может ли приглашённый отмечать уход.
+# GET /sharing — текущие соухаживающие со статусом; POST /sharing/invites —
+# создать приглашение. Все эндпоинты в scope текущего пользователя (bearer.sub).
+
+paths:
+  Collection:
+    get:
+      tags: [Sharing]
+      operationId: listSharingMembers
+      summary: Соухаживающие текущего пользователя
+      description: |
+        Возвращает приглашения, выпущенные текущим пользователем
+        (`sub` из bearer-токена), со статусом (`PENDING`/`ACCEPTED`),
+        правом `canLogCare` и набором растений каждого приглашения.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Список соухаживающих.
+          content:
+            application/json:
+              schema:
+                $ref: '#/schemas/SharingMembersResponse'
+        '401':
+          $ref: '../_common/responses.yaml#/Unauthorized'
+
+  Invites:
+    post:
+      tags: [Sharing]
+      operationId: createSharingInvite
+      summary: Пригласить соухаживающего
+      description: |
+        Создаёт приглашение на набор растений с правом `canLogCare`.
+        Растения должны принадлежать текущему пользователю — иначе 404.
+        Пустой набор растений или пустой контакт — 400.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/schemas/SharingInviteCreateRequest'
+            example:
+              plantIds: [23, 24]
+              inviteeContact: '@anna'
+              canLogCare: true
+      responses:
+        '201':
+          description: Приглашение создано.
+          content:
+            application/json:
+              schema:
+                $ref: '#/schemas/SharingMemberDto'
+        '400':
+          $ref: '../_common/responses.yaml#/BadRequest'
+        '401':
+          $ref: '../_common/responses.yaml#/Unauthorized'
+        '404':
+          $ref: '../_common/responses.yaml#/NotFound'
+
+schemas:
+  SharingStatus:
+    type: string
+    description: Статус приглашения соухаживающего.
+    enum: [PENDING, ACCEPTED]
+    example: PENDING
+
+  SharingMemberDto:
+    type: object
+    description: Соухаживающий — приглашение, выпущенное владельцем.
+    required: [id, contact, status, canLogCare, plantIds]
+    properties:
+      id:
+        type: integer
+        format: int64
+        description: Идентификатор приглашения (membership).
+        example: 5
+      contact:
+        type: string
+        description: Контакт приглашённого (@username или телефон).
+        example: '@anna'
+      status:
+        $ref: '#/schemas/SharingStatus'
+      canLogCare:
+        type: boolean
+        description: Может ли приглашённый отмечать уход за растениями набора.
+        example: true
+      plantIds:
+        type: array
+        description: Растения, на которые распространяется приглашение.
+        items:
+          type: integer
+          format: int64
+        example: [23, 24]
+
+  SharingMembersResponse:
+    type: object
+    description: Обёртка над списком соухаживающих.
+    required: [members]
+    properties:
+      members:
+        type: array
+        items:
+          $ref: '#/schemas/SharingMemberDto'
+
+  SharingInviteCreateRequest:
+    type: object
+    required: [plantIds, inviteeContact]
+    properties:
+      plantIds:
+        type: array
+        description: Растения, на которые выдаётся доступ. Минимум одно.
+        minItems: 1
+        items:
+          type: integer
+          format: int64
+        example: [23, 24]
+      inviteeContact:
+        type: string
+        description: Контакт приглашённого — @username или телефон.
+        minLength: 1
+        maxLength: 255
+        example: '@anna'
+      canLogCare:
+        type: boolean
+        description: Дать ли приглашённому право отмечать уход. По умолчанию false.
+        default: false
+        example: true
