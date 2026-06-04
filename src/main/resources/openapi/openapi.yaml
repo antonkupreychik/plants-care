@@ -104,6 +104,12 @@ tags:
     description: |
       Персистентный inbox уведомлений пользователя для мобильного приложения
       (gap G17): лента со счётчиком непрочитанных и идемпотентная отметка прочтения.
+  - name: Vacation
+    description: |
+      Режим отпуска (issue #189, mobile G21, экран 25): пользователь задаёт
+      диапазон дат отъезда; на этот период напоминания приостанавливаются.
+      Дедлайны не переносятся — просроченные задачи показываются в сводке
+      «С возвращением!» после окончания отпуска.
   - name: Sharing
     description: |
       Совместный уход (gap G22, экран 26): владелец приглашает соухаживающего
@@ -203,6 +209,9 @@ paths:
     $ref: './resources/notifications.yaml#/paths/Collection'
   /api/v1/notifications/{id}/read:
     $ref: './resources/notifications.yaml#/paths/Item'
+
+  /api/v1/vacation:
+    $ref: './resources/vacation.yaml#/paths/Vacation'
 
   /api/v1/me:
     $ref: './resources/me.yaml#/paths/Me'
@@ -378,6 +387,11 @@ components:
       $ref: './resources/notifications.yaml#/schemas/NotificationDto'
     NotificationsResponse:
       $ref: './resources/notifications.yaml#/schemas/NotificationsResponse'
+
+    VacationRequest:
+      $ref: './resources/vacation.yaml#/schemas/VacationRequest'
+    VacationResponse:
+      $ref: './resources/vacation.yaml#/schemas/VacationResponse'
 
     SharingStatus:
       $ref: './resources/sharing.yaml#/schemas/SharingStatus'

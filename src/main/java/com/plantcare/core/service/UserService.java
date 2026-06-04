@@ -10,7 +10,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
@@ -171,6 +173,47 @@ public class UserService {
     public User endVacation(User user) {
         user.setPausedUntil(null);
         log.info("Vacation ended for user {}", user.getTelegramChatId());
+        return userRepository.save(user);
+    }
+
+    /**
+     * Включить отпуск по диапазону дат (issue #189, REST API).
+     *
+     * <p>{@code from} — начало отпуска (дата), {@code to} — конец (включительно).
+     * {@code paused_until} устанавливается на конец дня {@code to} в таймзоне юзера
+     * (23:59:59), переведённое в UTC. Это гарантирует паузу до полуночи дня
+     * возвращения в локальном времени пользователя.
+     *
+     * <p>Дедлайны расписаний не переносятся — просроченные задачи показываются
+     * в сводке «С возвращением!» после окончания отпуска (VacationSchedulerService).
+     *
+     * @param from начало отпуска (обычно сегодня или в будущем)
+     * @param to   конец отпуска (включительно), должен быть ≥ from
+     * @throws IllegalArgumentException если to < from или длительность > {@value #MAX_VACATION_DAYS} дней
+     */
+    @Transactional
+    public User startVacationByDateRange(User user, LocalDate from, LocalDate to) {
+        if (to.isBefore(from)) {
+            throw new IllegalArgumentException(
+                    "'to' date must not be before 'from' date: from=" + from + ", to=" + to);
+        }
+        long days = from.until(to, java.time.temporal.ChronoUnit.DAYS) + 1; // включительно
+        if (days > MAX_VACATION_DAYS) {
+            throw new IllegalArgumentException(
+                    "Vacation duration must not exceed " + MAX_VACATION_DAYS + " days, got: " + days);
+        }
+
+        ZoneId userZone = resolveZone(user.getTimezone());
+        // Конец дня 'to' в таймзоне юзера → UTC
+        LocalDateTime pausedUntilUtc = ZonedDateTime.of(to, LocalTime.of(23, 59, 59), userZone)
+                .withZoneSameInstant(ZoneOffset.UTC)
+                .toLocalDateTime();
+
+        user.setPausedUntil(pausedUntilUtc);
+        log.info(
+                "Vacation started (date-range) for user {}: from={} to={}, paused_until={} UTC (tz={})",
+                user.getId(), from, to, pausedUntilUtc, userZone
+        );
         return userRepository.save(user);
     }
 
