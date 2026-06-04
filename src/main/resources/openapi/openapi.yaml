@@ -115,6 +115,11 @@ tags:
       Совместный уход (gap G22, экран 26): владелец приглашает соухаживающего
       по контакту (@username / телефон), выбирает растения и даёт право
       отмечать уход.
+  - name: Devices
+    description: |
+      Регистрация и отвязка мобильных устройств для push-уведомлений
+      (issue #175, ADR-014). Хранит push-токены (FCM / APNs) для будущей
+      отправки уведомлений.
 
 paths:
   /api/v1/auth/apple:
@@ -220,6 +225,11 @@ paths:
     $ref: './resources/sharing.yaml#/paths/Collection'
   /api/v1/sharing/invites:
     $ref: './resources/sharing.yaml#/paths/Invites'
+
+  /api/v1/devices:
+    $ref: './resources/devices.yaml#/paths/Collection'
+  /api/v1/devices/{id}:
+    $ref: './resources/devices.yaml#/paths/Item'
 
 components:
   securitySchemes:
@@ -401,6 +411,11 @@ components:
       $ref: './resources/sharing.yaml#/schemas/SharingMembersResponse'
     SharingInviteCreateRequest:
       $ref: './resources/sharing.yaml#/schemas/SharingInviteCreateRequest'
+
+    DeviceRegisterRequest:
+      $ref: './resources/devices.yaml#/schemas/DeviceRegisterRequest'
+    DeviceDto:
+      $ref: './resources/devices.yaml#/schemas/DeviceDto'
 
     ApiErrorResponse:
       $ref: './_common/errors.yaml#/schemas/ApiErrorResponse'

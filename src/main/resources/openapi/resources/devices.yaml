@@ -1,0 +1,103 @@
+# Регистрация и отвязка мобильных устройств для push-уведомлений (issue #175, ADR-014).
+
+paths:
+  Collection:
+    post:
+      tags: [Devices]
+      operationId: registerDevice
+      summary: Зарегистрировать устройство
+      description: |
+        Регистрирует push-токен устройства для текущего пользователя (из bearer-токена).
+        Идемпотентно: повторный вызов с тем же `pushToken` обновляет `lastSeenAt`
+        и возвращает 201. FCM-отправка — отдельная задача.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/schemas/DeviceRegisterRequest'
+      responses:
+        '201':
+          description: Устройство зарегистрировано (или обновлён lastSeenAt).
+          content:
+            application/json:
+              schema:
+                $ref: '#/schemas/DeviceDto'
+        '400':
+          $ref: '../_common/responses.yaml#/BadRequest'
+        '401':
+          $ref: '../_common/responses.yaml#/Unauthorized'
+
+  Item:
+    delete:
+      tags: [Devices]
+      operationId: unregisterDevice
+      summary: Отвязать устройство
+      description: |
+        Удаляет push-токен устройства текущего пользователя. Чужое или
+        несуществующее устройство → 404.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Идентификатор устройства.
+          schema:
+            type: integer
+            format: int64
+            example: 7
+      responses:
+        '204':
+          description: Устройство отвязано.
+        '401':
+          $ref: '../_common/responses.yaml#/Unauthorized'
+        '404':
+          $ref: '../_common/responses.yaml#/NotFound'
+
+schemas:
+  DeviceRegisterRequest:
+    type: object
+    description: Запрос на регистрацию устройства.
+    required: [platform, pushToken]
+    properties:
+      platform:
+        type: string
+        description: Мобильная платформа.
+        enum: [IOS, ANDROID]
+        example: ANDROID
+      pushToken:
+        type: string
+        description: Push-токен устройства (FCM / APNs).
+        minLength: 1
+        maxLength: 512
+        example: fZd9kQ...
+
+  DeviceDto:
+    type: object
+    description: Зарегистрированное устройство.
+    required: [id, platform, pushToken, createdAt, lastSeenAt]
+    properties:
+      id:
+        type: integer
+        format: int64
+        example: 7
+      platform:
+        type: string
+        enum: [IOS, ANDROID]
+        example: ANDROID
+      pushToken:
+        type: string
+        example: fZd9kQ...
+      createdAt:
+        type: string
+        format: date-time
+        description: Момент регистрации в UTC.
+        example: '2026-06-01T10:00:00Z'
+      lastSeenAt:
+        type: string
+        format: date-time
+        description: Последнее обновление токена в UTC.
+        example: '2026-06-04T08:00:00Z'
