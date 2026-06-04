@@ -94,7 +94,8 @@ class MeControllerTest {
                 "Europe/Moscow", "ru",
                 true, SeasonalMode.FIXED, true,
                 Map.of("sharing", "true"),
-                true, false, true, true);
+                true, false, true, true,
+                "https://plants-care.example.com/calendar/abc123.ics");
         when(userProfileService.getProfile(any(User.class))).thenReturn(profile);
 
         // act + assert
@@ -121,7 +122,29 @@ class MeControllerTest {
                 .andExpect(jsonPath("$.appleLinked").value(true))
                 .andExpect(jsonPath("$.googleLinked").value(false))
                 .andExpect(jsonPath("$.emailLinked").value(true))
-                .andExpect(jsonPath("$.telegramLinked").value(true));
+                .andExpect(jsonPath("$.telegramLinked").value(true))
+                .andExpect(jsonPath("$.calendarSubscriptionUrl")
+                        .value("https://plants-care.example.com/calendar/abc123.ics"));
+    }
+
+    @Test
+    void should_return_null_calendar_subscription_url_when_token_not_yet_generated() throws Exception {
+        // arrange — edge (issue #208): calendarSubscriptionUrl null, если токен ещё не создан
+        Profile profile = new Profile(
+                42L, "user@example.com", true, CREATED_AT,
+                "Антон", null, 0, 0, 0L, 0,
+                LocalTime.of(22, 0), LocalTime.of(8, 0),
+                "Europe/Moscow", "ru",
+                false, SeasonalMode.MULTIPLIER, false,
+                Map.of(),
+                false, false, true, true,
+                null);
+        when(userProfileService.getProfile(any(User.class))).thenReturn(profile);
+
+        // act + assert
+        mockMvc.perform(get("/api/v1/me"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.calendarSubscriptionUrl").value(org.hamcrest.Matchers.nullValue()));
     }
 
     @Test
@@ -137,7 +160,8 @@ class MeControllerTest {
                 "Europe/Moscow", "ru",
                 false, SeasonalMode.MULTIPLIER, false,
                 Map.of(),
-                true, false, true, true);
+                true, false, true, true,
+                null);
         when(userProfileService.getProfile(any(User.class))).thenReturn(profile);
 
         // act + assert
@@ -165,7 +189,8 @@ class MeControllerTest {
                 "UTC", "ru",
                 false, SeasonalMode.MULTIPLIER, false,
                 Map.of(),
-                false, false, false, true);
+                false, false, false, true,
+                null);
         when(userProfileService.getProfile(any(User.class))).thenReturn(profile);
 
         // act + assert
@@ -252,7 +277,8 @@ class MeControllerTest {
                 "Europe/Moscow", "ru",
                 true, SeasonalMode.FIXED, true,
                 Map.of(),
-                false, false, true, true);
+                false, false, true, true,
+                null);
         when(userProfileService.updateProfile(any(User.class), any(ProfileUpdate.class)))
                 .thenReturn(updated);
 
@@ -314,7 +340,8 @@ class MeControllerTest {
                 "Asia/Almaty", "ru",
                 false, SeasonalMode.MULTIPLIER, false,
                 Map.of(),
-                false, false, true, true);
+                false, false, true, true,
+                null);
         when(userProfileService.updateProfile(any(User.class), any(ProfileUpdate.class)))
                 .thenReturn(updated);
 
@@ -515,7 +542,8 @@ class MeControllerTest {
                 "Europe/Moscow", "ru",
                 false, SeasonalMode.MULTIPLIER, false,
                 Map.of(),
-                false, false, true, true);
+                false, false, true, true,
+                null);
     }
 
     private ProfileUpdate captureUpdate() {
