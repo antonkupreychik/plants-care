@@ -30,4 +30,4 @@ jobs:
     - name: Build with Maven
       env:
         MAVEN_OPTS: "-Xmx512m"
-      run: mvn package -DargLine="-Xmx1536m"
+      run: mvn package -DargLine="-Xmx3g"
