@@ -445,6 +445,72 @@ quiet hours), бот шлёт мягкую нотификацию с кнопк�
 `supplies` (по умолчанию «Грунт», «Дренаж») и `message-template` задаются списком/строкой
 в `application.yml`, env-override для них не предусмотрен.
 
+## Universal Links (iOS) / App Links (Android) — magic-link диплинки (issue #215)
+
+Magic-link письма теперь используют `https://`-ссылки вместо кастомной схемы `plantcare://`.
+Это позволяет почтовым клиентам (Gmail, Apple Mail) делать ссылки кликабельными и открывать
+мобильное приложение напрямую через Universal Links (iOS) / App Links (Android).
+
+### Как это работает
+
+1. Бэкенд отдаёт `.well-known`-файлы, которые ОС запрашивает при установке приложения.
+2. При клике на `https://<домен>/auth/verify?token=...` ОС открывает приложение напрямую.
+3. Если приложение не установлено — браузер показывает фоллбэк-страницу с инструкцией.
+
+### Env-переменные
+
+#### Magic-link URL (уже существующая переменная)
+
+| Переменная | Дефолт | Описание |
+|---|---|---|
+| `AUTH_MAGIC_LINK_BASE_URL` | `https://plants-care.up.railway.app/auth/verify` | Базовый URL magic-link в письме |
+
+Для дев-стенда: `https://plants-care-development.up.railway.app/auth/verify`
+
+#### iOS Universal Links (AASA)
+
+Требуется от app-команды: Team ID и bundle ID приложения.
+
+| Переменная | Пример | Описание |
+|---|---|---|
+| `DEEP_LINK_IOS_APP_IDS` | `TEAMID1234.com.example.plantcare` | appID(ы) в формате `<TeamID>.<BundleId>`, через запятую если несколько |
+| `DEEP_LINK_IOS_PATHS` | `/auth/verify*` | Пути, которые AASA разрешает открывать в приложении |
+
+#### Android App Links (assetlinks.json)
+
+Требуется от app-команды: package name и SHA-256 отпечатки подписи.
+
+| Переменная | Пример | Описание |
+|---|---|---|
+| `DEEP_LINK_ANDROID_PACKAGE_NAME` | `com.example.plantcare` | Package name Android-приложения |
+| `DEEP_LINK_ANDROID_SHA256_CERT_FINGERPRINTS` | `AA:BB:CC:...,DD:EE:FF:...` | SHA-256 отпечатки сертификата подписи (debug + release), через запятую |
+
+### Проверка (curl + валидаторы)
+
+```bash
+# Apple App Site Association (iOS)
+curl -i https://plants-care.up.railway.app/.well-known/apple-app-site-association
+# Ожидаем: HTTP/2 200, Content-Type: application/json, тело с "applinks"
+
+# Digital Asset Links (Android)
+curl -i https://plants-care.up.railway.app/.well-known/assetlinks.json
+# Ожидаем: HTTP/2 200, Content-Type: application/json, тело с "delegate_permission/common.handle_all_urls"
+
+# Fallback-страница
+curl -i https://plants-care.up.railway.app/auth/verify
+# Ожидаем: HTTP/2 200, Content-Type: text/html; без токена — показывает инструкцию "открой на телефоне"
+```
+
+Онлайн-валидаторы:
+- iOS: [https://branch.io/resources/aasa-validator/](https://branch.io/resources/aasa-validator/)
+- Android: [https://digitalassetlinks.googleapis.com/v1/statements:list?source.web.site=https://plants-care.up.railway.app&relation=delegate_permission/common.handle_all_urls](https://digitalassetlinks.googleapis.com/v1/statements:list?source.web.site=https://plants-care.up.railway.app&relation=delegate_permission/common.handle_all_urls)
+
+### Настройка мобильного приложения
+
+Бэкенд готов. Для полной интеграции app-команда должна добавить:
+- **iOS**: `Associated Domains` → `applinks:<домен>` в entitlements.
+- **Android**: `intent-filter` с `autoVerify="true"` в `AndroidManifest.xml`.
+
 ## Деплой на Railway
 
 ### Первичная настройка
