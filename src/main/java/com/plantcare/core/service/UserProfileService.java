@@ -28,6 +28,10 @@ import java.util.Map;
  * <p>Смена таймзоны делегируется {@link UserSettingsService#changeTimezone(User, ZoneId)},
  * чтобы сохранить пересчёт активных расписаний (локальное время дня не «съезжает»).
  * Внешних вызовов (Telegram) внутри транзакции нет — только чтение/запись БД.
+ *
+ * <p>{@code calendarSubscriptionUrl} читается из уже существующего {@code calendar_token} юзера
+ * (lazy — токен генерируется только при первом обращении к {@code GET /calendar/{token}.ics}).
+ * При {@code null}-токене поле {@code calendarSubscriptionUrl} тоже {@code null} (issue #208).
  */
 @Slf4j
 @Service
@@ -39,6 +43,7 @@ public class UserProfileService {
     private final TodayApiService todayApiService;
     private final UserSettingsService userSettingsService;
     private final CareHistoryService careHistoryService;
+    private final CalendarExportService calendarExportService;
 
     /**
      * Собранный профиль пользователя для {@code GET /api/v1/me}.
@@ -46,6 +51,8 @@ public class UserProfileService {
      * <p>{@code avatar} — плейсхолдер: в схеме нет колонки под аватар, поэтому
      * всегда {@code null}. {@code notificationsUnread} — плейсхолдер {@code 0}:
      * фид уведомлений (issue #183) ещё не влит в эту ветку.
+     * <p>{@code calendarSubscriptionUrl} — {@code null}, если у юзера нет токена
+     * (токен создаётся лениво при первом обращении к эндпоинту {@code .ics}).
      */
     public record Profile(
             long id,
@@ -69,7 +76,8 @@ public class UserProfileService {
             boolean appleLinked,
             boolean googleLinked,
             boolean emailLinked,
-            boolean telegramLinked
+            boolean telegramLinked,
+            String calendarSubscriptionUrl
     ) {
     }
 
@@ -113,6 +121,12 @@ public class UserProfileService {
                 ? null
                 : user.getCreatedAt().atOffset(ZoneOffset.UTC);
 
+        // calendarSubscriptionUrl — только если токен уже существует (не создаём его здесь,
+        // read-only транзакция). Токен генерируется лениво при первом обращении к .ics.
+        String calendarSubscriptionUrl = user.getCalendarToken() != null
+                ? calendarExportService.buildCalendarUrl(user.getCalendarToken())
+                : null;
+
         return new Profile(
                 user.getId(),
                 user.getEmail(),
@@ -135,7 +149,8 @@ public class UserProfileService {
                 user.getAppleSubject() != null,
                 user.getGoogleSubject() != null,
                 user.getEmail() != null,
-                user.getTelegramChatId() != null
+                user.getTelegramChatId() != null,
+                calendarSubscriptionUrl
         );
     }
 

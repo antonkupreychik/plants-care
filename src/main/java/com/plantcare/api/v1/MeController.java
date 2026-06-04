@@ -93,7 +93,8 @@ public class MeController implements MeApi {
                 profile.telegramLinked()
         )
                 .email(profile.email())
-                .avatar(profile.avatar());
+                .avatar(profile.avatar())
+                .calendarSubscriptionUrl(profile.calendarSubscriptionUrl());
     }
 
     private static SeasonalMode toSeasonalMode(String value) {

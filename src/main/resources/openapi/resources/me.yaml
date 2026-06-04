@@ -229,6 +229,14 @@ schemas:
         type: boolean
         description: Привязан ли Telegram-аккаунт.
         example: true
+      calendarSubscriptionUrl:
+        type: string
+        nullable: true
+        description: |
+          Готовый URL подписки на .ics-календарь вида `https://.../calendar/{token}.ics`.
+          `null`, если токен ещё не создан — он генерируется лениво при первом запросе
+          к эндпоинту `GET /calendar/{token}.ics` (issue #79, #208).
+        example: 'https://plants-care.up.railway.app/calendar/abc123.ics'
 
   MeUpdateRequest:
     type: object

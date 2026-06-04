@@ -435,6 +435,44 @@ class UserProfileServiceTest extends IntegrationTestBase {
         assertThat(updated.quietHoursEnd()).isEqualTo(LocalTime.of(7, 0));
     }
 
+    // ------------------------------------------------------------------ calendar subscription (issue #208)
+
+    @Test
+    @DisplayName("should_return_null_calendar_subscription_url_when_token_not_set")
+    void should_return_null_calendar_subscription_url_when_token_not_set() {
+        // arrange — токен ещё не создан (lazy-create не произошёл)
+        User user = savedUser(8020L, "UTC", LocalTime.of(22, 0), LocalTime.of(9, 0), "ru");
+
+        // act
+        Profile profile = service.getProfile(user);
+
+        // assert — URL отсутствует, пока токен null
+        assertThat(profile.calendarSubscriptionUrl()).isNull();
+    }
+
+    @Test
+    @DisplayName("should_return_calendar_subscription_url_when_token_already_exists")
+    void should_return_calendar_subscription_url_when_token_already_exists() {
+        // arrange — у пользователя уже есть токен (был сгенерирован ранее через .ics-эндпоинт)
+        User user = userRepository.save(User.builder()
+                .telegramChatId(8021L)
+                .username("user-8021")
+                .timezone("UTC")
+                .quietHoursStart(LocalTime.of(22, 0))
+                .quietHoursEnd(LocalTime.of(9, 0))
+                .locale("ru")
+                .calendarToken("test-stable-token-abc")
+                .blocked(false)
+                .build());
+
+        // act
+        Profile profile = service.getProfile(user);
+
+        // assert — URL содержит стабильный токен
+        assertThat(profile.calendarSubscriptionUrl()).isNotNull();
+        assertThat(profile.calendarSubscriptionUrl()).contains("test-stable-token-abc");
+    }
+
     // ===================== helpers =====================
 
     private User savedUser(Long chatId, String timezone, LocalTime quietStart, LocalTime quietEnd, String locale) {
