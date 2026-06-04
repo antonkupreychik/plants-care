@@ -83,3 +83,16 @@ Conflict:
         error:
           code: CONFLICT
           message: Operation not allowed in the current state
+
+UnprocessableEntity:
+  description: |
+    Тело запроса синтаксически корректно, но семантически невалидно — например,
+    значение enum вне допустимого набора. Код `VALIDATION_ERROR`.
+  content:
+    application/json:
+      schema:
+        $ref: './errors.yaml#/schemas/ApiErrorResponse'
+      example:
+        error:
+          code: VALIDATION_ERROR
+          message: Validation failed

@@ -1,0 +1,158 @@
+# Журнал событий растения (issue #220): редкие разовые события — пересадка,
+# замена грунта, обрезка, обработка от вредителей. В отличие от истории ухода
+# (plant-history.yaml) — без расписаний и рекомендаций, просто факты на шкале.
+
+paths:
+  Collection:
+    get:
+      tags: [Plant Events]
+      operationId: getPlantEvents
+      summary: Журнал событий растения
+      description: |
+        Возвращает страницу журнала событий растения, принадлежащего текущему
+        пользователю (`sub` из bearer-токена). Сортировка — по дате события
+        (`eventDate`) по убыванию (свежие сверху).
+
+        Доступ только к неархивированному растению текущего пользователя.
+        Если растение не найдено, архивировано или принадлежит другому
+        пользователю — 404.
+
+        Пагинация — `limit/offset`. `limit` нормализуется в диапазон [1, 100]
+        (по умолчанию 5 — совпадает с размером страницы журнала). `offset` < 0
+        нормализуется в 0.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '../_common/parameters.yaml#/PlantIdPath'
+        - name: limit
+          in: query
+          required: false
+          description: Размер страницы. Нормализуется в [1, 100]. По умолчанию 5.
+          schema:
+            type: integer
+            format: int32
+            default: 5
+            minimum: 1
+            maximum: 100
+        - name: offset
+          in: query
+          required: false
+          description: Сдвиг от начала журнала. Значения < 0 нормализуются в 0.
+          schema:
+            type: integer
+            format: int32
+            default: 0
+            minimum: 0
+      responses:
+        '200':
+          description: Страница журнала событий.
+          content:
+            application/json:
+              schema:
+                $ref: '#/schemas/PlantEventPageResponse'
+        '400':
+          $ref: '../_common/responses.yaml#/BadRequest'
+        '404':
+          $ref: '../_common/responses.yaml#/NotFound'
+
+    post:
+      tags: [Plant Events]
+      operationId: createPlantEvent
+      summary: Добавить событие в журнал растения
+      description: |
+        Создаёт событие журнала текущей датой (UTC) для растения текущего
+        пользователя. Одно нажатие = одно событие; `comment` в v1 не принимается.
+
+        ## Дедуп
+
+        Повторный запрос того же `eventType` для того же растения в окне 60
+        секунд считается двойным нажатием и возвращает 409 без повторной вставки.
+
+        Доступ только к неархивированному растению текущего пользователя —
+        иначе 404. Неизвестный `eventType` — 422.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '../_common/parameters.yaml#/PlantIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/schemas/PlantEventRequest'
+            example:
+              eventType: TRANSPLANT
+      responses:
+        '201':
+          description: Событие создано.
+          content:
+            application/json:
+              schema:
+                $ref: '#/schemas/PlantEventDto'
+        '404':
+          $ref: '../_common/responses.yaml#/NotFound'
+        '409':
+          $ref: '../_common/responses.yaml#/Conflict'
+        '422':
+          $ref: '../_common/responses.yaml#/UnprocessableEntity'
+
+schemas:
+  PlantEventType:
+    type: string
+    description: |
+      Тип события в журнале растения. Редкие разовые события (не регулярный
+      уход): пересадка, замена грунта, обрезка, обработка от вредителей.
+    enum: [TRANSPLANT, SOIL_CHANGE, PRUNING, PEST_TREATMENT]
+    example: TRANSPLANT
+
+  PlantEventDto:
+    type: object
+    description: Запись журнала событий растения.
+    required: [id, eventType, eventDate]
+    properties:
+      id:
+        type: integer
+        format: int64
+        example: 7
+      eventType:
+        $ref: '#/schemas/PlantEventType'
+      eventDate:
+        type: string
+        format: date-time
+        description: Момент события в UTC.
+        example: 2026-05-10T14:30:00Z
+      comment:
+        type: string
+        nullable: true
+        description: Необязательный комментарий. В v1 всегда null.
+
+  PlantEventRequest:
+    type: object
+    description: Тело POST /api/v1/plants/{id}/events.
+    required: [eventType]
+    properties:
+      eventType:
+        $ref: '#/schemas/PlantEventType'
+
+  PlantEventPageResponse:
+    type: object
+    description: Страница журнала событий растения с метаданными пагинации.
+    required: [items, total, limit, offset]
+    properties:
+      items:
+        type: array
+        items:
+          $ref: '#/schemas/PlantEventDto'
+      total:
+        type: integer
+        format: int64
+        description: Общее количество событий растения.
+        example: 5
+      limit:
+        type: integer
+        format: int32
+        example: 5
+      offset:
+        type: integer
+        format: int32
+        example: 0
