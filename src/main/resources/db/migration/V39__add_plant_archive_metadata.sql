@@ -1,4 +1,4 @@
--- V38__add_plant_archive_metadata.sql
+-- V39__add_plant_archive_metadata.sql
 -- Issue #219 (mobile G15): метаданные выбытия растения для экрана «Архив».
 --
 -- Колонка archived_at уже есть (используется как soft-delete с самого начала).
