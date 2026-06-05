@@ -101,6 +101,9 @@ class NotificationSchedulerServiceTest {
     @Mock
     private NotificationDeliveryCallbacks deliveryCallbacks;
 
+    @Mock
+    private com.plantcare.core.service.LocationSharingService locationSharingService;
+
     /**
      * Реальный экземпляр, не мок: проверки в тестах смотрят на содержимое
      * клавиатуры (число кнопок, callback_data). Фабрика — pure-функция без

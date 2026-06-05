@@ -1,6 +1,7 @@
 package com.plantcare.bot.command.impl;
 
 import com.plantcare.core.domain.User;
+import com.plantcare.core.service.LocationSharingService;
 import com.plantcare.core.service.MessageService;
 import com.plantcare.core.service.UserService;
 import org.junit.jupiter.api.DisplayName;
@@ -43,6 +44,9 @@ class StartCommandTest {
 
     @Mock
     private MessageService messageService;
+
+    @Mock
+    private LocationSharingService locationSharingService;
 
     @InjectMocks
     private StartCommand startCommand;
@@ -98,6 +102,33 @@ class StartCommandTest {
 
         verify(telegramClient, never()).execute(any(SendMessage.class));
         verify(userService, never()).setStateData(any(), any(), any());
+        verify(menuCommand).execute(update, telegramClient);
+    }
+
+    @Test
+    @DisplayName("/start invite_<token> принимает приглашение и шлёт сообщение «Вас пригласили…»")
+    void shouldAcceptInviteFromDeepLink() throws Exception {
+        Long chatId = 100L;
+
+        User user = User.builder()
+                .telegramChatId(chatId)
+                .timezone("Europe/Minsk")
+                .stateData(new HashMap<String, Object>())
+                .build();
+
+        when(update.getMessage()).thenReturn(message);
+        when(message.getChatId()).thenReturn(chatId);
+        when(update.hasMessage()).thenReturn(true);
+        when(message.hasText()).thenReturn(true);
+        when(message.getText()).thenReturn("/start invite_abc123");
+        when(userService.findByChatId(chatId)).thenReturn(Optional.of(user));
+        when(locationSharingService.acceptInvite(eq("abc123"), eq(user)))
+                .thenReturn(LocationSharingService.AcceptResult.accepted("🛋 Гостиная"));
+
+        startCommand.execute(update, telegramClient);
+
+        verify(locationSharingService).acceptInvite("abc123", user);
+        verify(telegramClient).execute(any(SendMessage.class));
         verify(menuCommand).execute(update, telegramClient);
     }
 }
