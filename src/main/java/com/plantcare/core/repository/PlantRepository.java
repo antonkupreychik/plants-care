@@ -229,4 +229,46 @@ public interface PlantRepository extends JpaRepository<Plant, Long> {
             Long userId,
             Long parentId
     );
+
+    // ===== Офлайн-синк (issue #91) =====
+
+    /**
+     * Активные (не архивированные и не удалённые) растения юзера, изменённые после {@code since}.
+     * {@code location} и {@code species} подтягиваются JOIN FETCH: нужны в DTO вне транзакции.
+     */
+    @Query("""
+            SELECT p FROM Plant p
+            LEFT JOIN FETCH p.location
+            LEFT JOIN FETCH p.species
+            WHERE p.user.id = :userId
+              AND p.archivedAt IS NULL
+              AND p.deletedAt IS NULL
+              AND p.updatedAt > :since
+            ORDER BY p.updatedAt ASC
+            """)
+    List<Plant> findChangedSince(
+            @Param("userId") Long userId,
+            @Param("since") java.time.LocalDateTime since
+    );
+
+    /**
+     * Удалённые растения юзера (deletedAt IS NOT NULL), удалённые после {@code since}.
+     */
+    @Query("""
+            SELECT p.id AS id, p.deletedAt AS deletedAt
+            FROM Plant p
+            WHERE p.user.id = :userId
+              AND p.deletedAt IS NOT NULL
+              AND p.deletedAt > :since
+            """)
+    List<DeletedRecord> findDeletedSince(
+            @Param("userId") Long userId,
+            @Param("since") java.time.LocalDateTime since
+    );
+
+    /** Проекция для списка deletions в sync-ответе (issue #91). */
+    interface DeletedRecord {
+        Long getId();
+        java.time.LocalDateTime getDeletedAt();
+    }
 }

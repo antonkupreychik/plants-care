@@ -12,6 +12,9 @@ import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import org.hibernate.annotations.UpdateTimestamp;
+
+import java.time.LocalDateTime;
 
 @Entity
 @Table(name = "locations")
@@ -38,6 +41,27 @@ public class Location extends BaseEntity {
     @Column(name = "is_default", nullable = false)
     @Builder.Default
     private boolean defaultLocation = false;
+
+    /**
+     * Когда запись была изменена. Обновляется Hibernate при каждом UPDATE (issue #91).
+     */
+    @UpdateTimestamp
+    @Column(name = "updated_at", nullable = false)
+    private LocalDateTime updatedAt;
+
+    /**
+     * Момент физического удаления для синк-протокола (issue #91).
+     * NULL = не удалено.
+     */
+    @Column(name = "deleted_at")
+    private LocalDateTime deletedAt;
+
+    /**
+     * UUID от мобильного клиента для идемпотентности (issue #91).
+     * NULL для записей Telegram-бота. Partial unique index на стороне БД.
+     */
+    @Column(name = "client_id", length = 64)
+    private String clientId;
 
     public String getDisplayName() {
         if (emoji == null || emoji.isBlank()) {

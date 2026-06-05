@@ -376,4 +376,24 @@ public interface CareHistoryRepository extends JpaRepository<CareHistory, Long> 
         String getPlantName();
         long getCount();
     }
+
+    // ===== Офлайн-синк (issue #91) =====
+
+    /**
+     * Активные (не-cancelled) записи ухода по всем растениям юзера,
+     * изменённые после {@code since}. Используется в {@code GET /api/v1/sync}.
+     * {@code plant} подтягивается JOIN FETCH для маппинга в DTO вне транзакции.
+     */
+    @Query("""
+            SELECT h FROM CareHistory h
+            JOIN FETCH h.plant p
+            WHERE p.user.id = :userId
+              AND h.cancelledBy IS NULL
+              AND h.updatedAt > :since
+            ORDER BY h.updatedAt ASC
+            """)
+    List<CareHistory> findChangedSince(
+            @Param("userId") Long userId,
+            @Param("since") LocalDateTime since
+    );
 }

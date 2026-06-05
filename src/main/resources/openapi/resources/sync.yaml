@@ -1,0 +1,252 @@
+# Офлайн-синхронизация: инкрементальная выдача изменений (issue #91).
+#
+# ## Протокол синхронизации
+#
+# 1. Первый синк (full sync): клиент вызывает `GET /api/v1/sync` без `since`.
+#    Сервер возвращает ВСЕ активные данные пользователя + `serverTime`.
+#
+# 2. Инкрементальный синк: клиент передаёт `since = serverTime` из предыдущего ответа.
+#    Сервер возвращает только изменения (updated_at > since) и новые удаления.
+#
+# 3. Clock drift: клиент НИКОГДА не использует своё локальное время как `since`.
+#    Только `serverTime` из предыдущего ответа. Это гарантирует отсутствие пропусков
+#    из-за расхождения часов.
+#
+# ### Псевдокод алгоритма синка на клиенте
+#
+# ```
+# lastSyncTime = storage.get("lastSyncTime")  // null при первом запуске
+# response = GET /api/v1/sync?since=lastSyncTime
+#
+# for plant in response.plants:
+#     localDb.upsert(plant)           // по id
+# for location in response.locations:
+#     localDb.upsert(location)
+# for careEvent in response.careEvents:
+#     localDb.upsert(careEvent)
+# for deletion in response.deletions:
+#     localDb.delete(deletion.entityType, deletion.id)
+#
+# storage.set("lastSyncTime", response.serverTime)  // сохранить для следующего вызова
+# ```
+#
+# ### Конфликт-резолюция
+#
+# Server timestamp wins (last write wins). Локальные изменения, сделанные в офлайне,
+# должны быть отправлены через соответствующие POST-эндпоинты перед синком.
+# Иначе они могут быть перезаписаны данными сервера.
+
+paths:
+  Collection:
+    get:
+      tags: [Sync]
+      operationId: getSync
+      summary: Инкрементальный офлайн-синк
+      description: |
+        Возвращает все изменения, произошедшие после `since`.
+
+        Если `since` не передан — возвращает все активные данные пользователя
+        (full sync при первом запуске или восстановлении).
+
+        ## Как использовать
+
+        Клиент сохраняет `serverTime` из ответа и использует его как `since`
+        при следующем вызове. Это защищает от ошибок clock drift.
+
+        ## Конфликт-резолюция
+
+        Server timestamp wins. Локальные изменения, не отправленные через
+        POST-эндпоинты, могут быть перезаписаны.
+
+        ## Идемпотентность POST
+
+        Перед синком клиент должен отправить все локальные изменения через
+        POST /api/v1/care-events с `clientId`. Повторный POST с тем же `clientId`
+        возвращает существующую запись без дублирования.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: since
+          in: query
+          required: false
+          description: |
+            Момент, начиная с которого вернуть изменения (UTC, ISO-8601).
+            Если не передан — full sync (все данные пользователя).
+            Клиент использует `serverTime` из предыдущего ответа.
+          schema:
+            type: string
+            format: date-time
+            example: 2026-06-01T12:00:00Z
+      responses:
+        '200':
+          description: Инкрементальная выдача изменений.
+          content:
+            application/json:
+              schema:
+                $ref: '#/schemas/SyncResponse'
+        '400':
+          $ref: '../_common/responses.yaml#/BadRequest'
+        '401':
+          $ref: '../_common/responses.yaml#/Unauthorized'
+
+schemas:
+  SyncResponse:
+    type: object
+    description: |
+      Ответ `GET /api/v1/sync`. Содержит все изменения с момента `since`.
+      `serverTime` — клиент обязан использовать это значение как `since`
+      при следующем вызове (защита от clock drift).
+    required: [plants, locations, careEvents, deletions, serverTime]
+    properties:
+      plants:
+        type: array
+        description: Растения, изменённые после `since` (active, not deleted).
+        items:
+          $ref: '#/schemas/SyncPlantDto'
+      locations:
+        type: array
+        description: Локации, изменённые после `since` (active, not deleted).
+        items:
+          $ref: '#/schemas/SyncLocationDto'
+      careEvents:
+        type: array
+        description: Активные события ухода, изменённые после `since`.
+        items:
+          $ref: '#/schemas/SyncCareEventDto'
+      deletions:
+        type: array
+        description: |
+          Удалённые сущности. Клиент удаляет их из локальной БД по `entityType` + `id`.
+          Сортировка по `deletedAt` ASC.
+        items:
+          $ref: '#/schemas/SyncDeletionDto'
+      serverTime:
+        type: string
+        format: date-time
+        description: |
+          Серверное время на момент обработки запроса.
+          Клиент сохраняет это значение и передаёт как `since` при следующем вызове.
+        example: 2026-06-05T14:30:00Z
+
+  SyncPlantDto:
+    type: object
+    description: Снапшот растения для офлайн-синка.
+    required: [id, name, locationId, archived, updatedAt]
+    properties:
+      id:
+        type: integer
+        format: int64
+        example: 10
+      name:
+        type: string
+        example: Монстера
+      notes:
+        type: string
+        nullable: true
+      locationId:
+        type: integer
+        format: int64
+        example: 1
+      locationName:
+        type: string
+        nullable: true
+        example: Гостиная
+      speciesId:
+        type: integer
+        format: int64
+        nullable: true
+      speciesName:
+        type: string
+        nullable: true
+      archived:
+        type: boolean
+        description: Признак архивации (soft-delete на стороне бизнес-логики).
+      clientId:
+        type: string
+        nullable: true
+        description: UUID, сгенерированный клиентом при создании. Null для записей из бота.
+      updatedAt:
+        type: string
+        format: date-time
+        description: Момент последнего изменения (UTC).
+
+  SyncLocationDto:
+    type: object
+    description: Снапшот локации для офлайн-синка.
+    required: [id, name, isDefault, updatedAt]
+    properties:
+      id:
+        type: integer
+        format: int64
+        example: 1
+      name:
+        type: string
+        example: Гостиная
+      emoji:
+        type: string
+        nullable: true
+        example: 🌿
+      isDefault:
+        type: boolean
+      clientId:
+        type: string
+        nullable: true
+        description: UUID, сгенерированный клиентом при создании. Null для записей из бота.
+      updatedAt:
+        type: string
+        format: date-time
+        description: Момент последнего изменения (UTC).
+
+  SyncCareEventDto:
+    type: object
+    description: Снапшот события ухода для офлайн-синка.
+    required: [id, plantId, type, performedAt, onTime, updatedAt]
+    properties:
+      id:
+        type: integer
+        format: int64
+      plantId:
+        type: integer
+        format: int64
+      type:
+        $ref: './care-events.yaml#/schemas/CareEventType'
+      performedAt:
+        type: string
+        format: date-time
+        description: Момент выполнения ухода (UTC).
+      onTime:
+        type: boolean
+      note:
+        type: string
+        nullable: true
+      clientId:
+        type: string
+        nullable: true
+        description: UUID от клиента при создании. Null для событий из бота.
+      updatedAt:
+        type: string
+        format: date-time
+        description: Момент последнего изменения (UTC).
+
+  SyncDeletionDto:
+    type: object
+    description: |
+      Запись об удалённой сущности. Клиент удаляет её из локальной БД
+      по сочетанию `entityType` + `id`.
+    required: [entityType, id, deletedAt]
+    properties:
+      entityType:
+        type: string
+        description: Тип сущности.
+        enum: [plant, location]
+        example: plant
+      id:
+        type: integer
+        format: int64
+        description: Идентификатор удалённой сущности.
+        example: 42
+      deletedAt:
+        type: string
+        format: date-time
+        description: Момент удаления (UTC).
+        example: 2026-06-01T09:00:00Z
