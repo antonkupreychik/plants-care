@@ -120,6 +120,12 @@ tags:
       Регистрация и отвязка мобильных устройств для push-уведомлений
       (issue #175, ADR-014). Хранит push-токены (FCM / APNs) для будущей
       отправки уведомлений.
+  - name: Sync
+    description: |
+      Офлайн-синхронизация (issue #91): инкрементальная выдача изменений для
+      мобильного приложения. Клиент передаёт `since` (серверное время из предыдущего
+      ответа) и получает все сущности, изменённые после этого момента, а также
+      список удалений. Server timestamp wins при конфликтах.
 
 paths:
   /api/v1/auth/apple:
@@ -230,6 +236,9 @@ paths:
     $ref: './resources/devices.yaml#/paths/Collection'
   /api/v1/devices/{id}:
     $ref: './resources/devices.yaml#/paths/Item'
+
+  /api/v1/sync:
+    $ref: './resources/sync.yaml#/paths/Collection'
 
 components:
   securitySchemes:
@@ -416,6 +425,17 @@ components:
       $ref: './resources/devices.yaml#/schemas/DeviceRegisterRequest'
     DeviceDto:
       $ref: './resources/devices.yaml#/schemas/DeviceDto'
+
+    SyncResponse:
+      $ref: './resources/sync.yaml#/schemas/SyncResponse'
+    SyncPlantDto:
+      $ref: './resources/sync.yaml#/schemas/SyncPlantDto'
+    SyncLocationDto:
+      $ref: './resources/sync.yaml#/schemas/SyncLocationDto'
+    SyncCareEventDto:
+      $ref: './resources/sync.yaml#/schemas/SyncCareEventDto'
+    SyncDeletionDto:
+      $ref: './resources/sync.yaml#/schemas/SyncDeletionDto'
 
     ApiErrorResponse:
       $ref: './_common/errors.yaml#/schemas/ApiErrorResponse'

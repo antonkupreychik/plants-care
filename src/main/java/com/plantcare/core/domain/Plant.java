@@ -16,6 +16,7 @@ import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import org.hibernate.annotations.UpdateTimestamp;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -150,6 +151,32 @@ public class Plant extends BaseEntity {
     @OneToMany(mappedBy = "plant")
     @Builder.Default
     private List<CareSchedule> schedules = new ArrayList<>();
+
+    /**
+     * Когда запись была изменена. Обновляется автоматически Hibernate при каждом UPDATE.
+     * Используется в офлайн-синке (issue #91): клиент передаёт `since`, сервер возвращает
+     * всё, что изменилось позднее.
+     */
+    @UpdateTimestamp
+    @Column(name = "updated_at", nullable = false)
+    private LocalDateTime updatedAt;
+
+    /**
+     * Момент физического удаления для синк-протокола (issue #91).
+     * NULL означает «не удалено». Отличается от {@code archivedAt}: архивация —
+     * пользовательский soft-delete внутри приложения, а deletedAt проставляется
+     * когда запись совсем исчезает из пользовательского контекста.
+     * В фазе MVP используется только в {@code GET /api/v1/sync} для списка deletions.
+     */
+    @Column(name = "deleted_at")
+    private LocalDateTime deletedAt;
+
+    /**
+     * UUID от мобильного клиента для идемпотентности (issue #91).
+     * NULL для записей из Telegram-бота. Partial unique index на стороне БД.
+     */
+    @Column(name = "client_id", length = 64)
+    private String clientId;
 
     public boolean isArchived() {
         return archivedAt != null;
