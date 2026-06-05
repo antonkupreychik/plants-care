@@ -17,9 +17,10 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Smoke-тест публичной доступности /actuator/prometheus в test-профиле.
+ * Smoke-тест публичной доступности /actuator/prometheus в test-профиле
+ * без admin-кредов.
  *
- * <p>В тестовом конфиге admin-креды не заданы → {@code prometheusSecurityFilterChain}
+ * <p>Когда admin.username/password-bcrypt-hash пусты → {@code prometheusSecurityFilterChain}
  * c {@link org.springframework.boot.autoconfigure.condition.ConditionalOnExpression}
  * не регистрируется, и эндпоинт падает в default chain (permitAll). Это
  * ожидаемое поведение — реальная защита через basic-auth проверяется только
@@ -55,13 +56,19 @@ class PrometheusEndpointIntegrationTest {
         registry.add("spring.datasource.url", POSTGRES::getJdbcUrl);
         registry.add("spring.datasource.username", POSTGRES::getUsername);
         registry.add("spring.datasource.password", POSTGRES::getPassword);
+        // Explicitly disable admin panel so prometheusSecurityFilterChain is NOT registered
+        // and /actuator/prometheus remains public (falls through to the default permitAll chain).
+        // This overrides the admin.* defaults set in application-test.yml, which exist to
+        // stabilise context-cache keys for the full-context admin integration tests.
+        registry.add("admin.username", () -> "");
+        registry.add("admin.password-bcrypt-hash", () -> "");
     }
 
     @Autowired private TestRestTemplate restTemplate;
     @Autowired private MetricsService metricsService;
 
     @Test
-    @DisplayName("Endpoint отдаёт 200 OK в test-профиле (без admin-кредов)")
+    @DisplayName("Endpoint отдаёт 200 OK когда admin отключён (пустые креды)")
     void should_return_200_when_admin_disabled_in_test_profile() {
         ResponseEntity<String> response = restTemplate.getForEntity("/actuator/prometheus", String.class);
 

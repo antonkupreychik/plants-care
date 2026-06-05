@@ -12,21 +12,17 @@ import com.plantcare.core.repository.LocationRepository;
 import com.plantcare.core.repository.PlantRepository;
 import com.plantcare.core.repository.UserRepository;
 import com.plantcare.core.service.TodayApiService.TodayTask;
+import com.plantcare.bot.support.FixedClockTestConfig;
 import com.plantcare.bot.support.IntegrationTestBase;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.TestConfiguration;
-import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
-import org.springframework.context.annotation.Primary;
 
-import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
 
@@ -39,32 +35,21 @@ import static org.assertj.core.api.SoftAssertions.assertSoftly;
  * {@code care_history} ↔ {@code care_schedules} проверяются на настоящих записях,
  * а не на моках репозитория.
  *
- * <p>{@link Clock}-бин подменён фиксированным {@link #FIXED_NOW}, чтобы границы окна
- * «сегодня» в TZ юзера были детерминированными.
+ * <p>{@link com.plantcare.bot.support.FixedClockTestConfig} подменяет {@code Clock}-бин
+ * фиксированным моментом {@link FixedClockTestConfig#FIXED_NOW}, чтобы границы окна
+ * «сегодня» в TZ юзера были детерминированными. Общий конфиг обеспечивает совместное
+ * использование {@code ApplicationContext} между тестами (issue #239).
  *
  * <p>Покрывает AC #184: pending; done-сегодня (с уехавшим вперёд nextDueAt);
  * дедуп pending+done; ретро-отметка (вчера) не считается сегодня; cancelled не
  * считается; пустой день; не-UTC TZ на границе суток.
  */
 @DisplayName("TodayApiService — done-фид /today (issue #184)")
-@Import(TodayApiServiceTest.FixedClockConfig.class)
+@Import(FixedClockTestConfig.class)
 class TodayApiServiceTest extends IntegrationTestBase {
 
-    /**
-     * Фиксированный «сейчас» 00:30 UTC: для восточных TZ (Almaty UTC+5) локальная
-     * дата уже «сегодня», а UTC-полночь окна и локальная-полночь расходятся на день —
-     * это проверяет TZ-кейс на границе суток.
-     */
-    static final Instant FIXED_NOW = Instant.parse("2026-05-25T00:30:00Z");
-
-    @TestConfiguration
-    static class FixedClockConfig {
-        @Bean
-        @Primary
-        Clock fixedClock() {
-            return Clock.fixed(FIXED_NOW, ZoneOffset.UTC);
-        }
-    }
+    /** Фиксированный «сейчас» — делегируем к общей конфигурации. */
+    static final Instant FIXED_NOW = FixedClockTestConfig.FIXED_NOW;
 
     @Autowired private TodayApiService service;
 
