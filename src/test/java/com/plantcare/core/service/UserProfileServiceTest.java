@@ -1,5 +1,6 @@
 package com.plantcare.core.service;
 
+import com.plantcare.bot.support.FixedClockTestConfig;
 import com.plantcare.bot.support.IntegrationTestBase;
 import com.plantcare.core.domain.CareHistory;
 import com.plantcare.core.domain.CareSchedule;
@@ -19,17 +20,12 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.TestConfiguration;
-import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
-import org.springframework.context.annotation.Primary;
 
-import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
-import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.Map;
 
@@ -52,24 +48,11 @@ import static org.assertj.core.api.SoftAssertions.assertSoftly;
  * IANA-tz → IllegalArgumentException.
  */
 @DisplayName("UserProfileService — профиль и настройки /me (issue #182 + #180)")
-@Import(UserProfileServiceTest.FixedClockConfig.class)
+@Import(FixedClockTestConfig.class)
 class UserProfileServiceTest extends IntegrationTestBase {
 
-    /**
-     * Фиксированный «сейчас» 00:30 UTC. Для восточных TZ (Almaty UTC+5) локальная дата
-     * уже «сегодня», а UTC-полночь и локальная-полночь расходятся на день — это и
-     * проверяет граничный TZ-кейс счётчика tasksToday.
-     */
-    static final Instant FIXED_NOW = Instant.parse("2026-05-25T00:30:00Z");
-
-    @TestConfiguration
-    static class FixedClockConfig {
-        @Bean
-        @Primary
-        Clock fixedClock() {
-            return Clock.fixed(FIXED_NOW, ZoneOffset.UTC);
-        }
-    }
+    /** Фиксированный «сейчас» — делегируем к общей конфигурации. */
+    static final Instant FIXED_NOW = FixedClockTestConfig.FIXED_NOW;
 
     @Autowired private UserProfileService service;
 

@@ -30,4 +30,11 @@ jobs:
     - name: Build with Maven
       env:
         MAVEN_OPTS: "-Xmx512m"
-      run: mvn package -DargLine="-Xmx3g"
+      # Issue #239: TimeZoneEngine теперь единый синглтон на весь прогон JVM
+      # (TimeZoneEngineBean.Holder), поэтому тест-форк больше не держит N копий
+      # гео-датасета и укладывается в дефолтный heap без -Xmx-распухания.
+      # ВАЖНО: не задавать -DargLine здесь — это перезаписывает argLine, в который
+      # jacoco:prepare-agent внедряет свой java-agent, и тогда покрытие не
+      # инструментируется и jacoco:check падает. Heap при необходимости — через
+      # MAVEN_OPTS форка, а не через argLine.
+      run: mvn package

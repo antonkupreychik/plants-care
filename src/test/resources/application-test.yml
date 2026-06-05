@@ -48,6 +48,15 @@ plantcare:
       package-name: com.plantcare.test
       sha256-cert-fingerprints: AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99
 
+# Issue #239: фиксированные admin-credentials для тестового профиля.
+# Хеш вычислен однократно (bcrypt cost 10, пароль "test-admin-password").
+# Статическое значение гарантирует стабильный ключ кэша ApplicationContext:
+# тесты, использующие только эти свойства, переиспользуют один контекст
+# вместо создания нового контекста на каждый класс.
+admin:
+  username: admin
+  password-bcrypt-hash: "$2y$10$upAKCz5ubY566NaebWzo0Ory65gtZad52dMeGc9u625aXmpcyFiWe"
+
 logging:
   level:
     org.hibernate.SQL: WARN

@@ -14,17 +14,14 @@ import com.plantcare.core.repository.UserRepository;
 import com.plantcare.core.service.PlantDiagnosisReportService.DiagnosisReport;
 import com.plantcare.core.service.PlantDiagnosisReportService.Issue;
 import com.plantcare.core.service.PlantDiagnosisReportService.Severity;
+import com.plantcare.bot.support.FixedClockTestConfig;
 import com.plantcare.bot.support.IntegrationTestBase;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.TestConfiguration;
-import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
-import org.springframework.context.annotation.Primary;
 
-import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -58,24 +55,11 @@ import static org.assertj.core.api.SoftAssertions.assertSoftly;
  * </ul>
  */
 @DisplayName("PlantDiagnosisReportService — пассивная диагностика (issue #193)")
-@Import(PlantDiagnosisReportServiceTest.FixedClockConfig.class)
+@Import(FixedClockTestConfig.class)
 class PlantDiagnosisReportServiceTest extends IntegrationTestBase {
 
-    /**
-     * Фиксированный «сейчас». 00:30 UTC специально: для восточных TZ (Almaty UTC+5)
-     * локальная дата уже «сегодня», а UTC-полночь и локальная-полночь расходятся на
-     * день — это и эксплуатирует TZ-кейс.
-     */
-    static final Instant FIXED_NOW = Instant.parse("2026-05-25T00:30:00Z");
-
-    @TestConfiguration
-    static class FixedClockConfig {
-        @Bean
-        @Primary
-        Clock fixedClock() {
-            return Clock.fixed(FIXED_NOW, ZoneOffset.UTC);
-        }
-    }
+    /** Фиксированный «сейчас» — делегируем к общей конфигурации. */
+    static final Instant FIXED_NOW = FixedClockTestConfig.FIXED_NOW;
 
     @Autowired private PlantDiagnosisReportService service;
 

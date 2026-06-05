@@ -9,9 +9,6 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
-import org.springframework.test.context.DynamicPropertyRegistry;
-import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -24,14 +21,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @AutoConfigureMockMvc
 @DisplayName("Admin Dashboard — метрики и Stuck/Recent блоки")
 class AdminDashboardTest extends IntegrationTestBase {
-
-    private static final String BCRYPT_HASH = new BCryptPasswordEncoder(12).encode("anything");
-
-    @DynamicPropertySource
-    static void adminProps(DynamicPropertyRegistry registry) {
-        registry.add("admin.username", () -> "admin");
-        registry.add("admin.password-bcrypt-hash", () -> BCRYPT_HASH);
-    }
 
     @Autowired
     private MockMvc mockMvc;
