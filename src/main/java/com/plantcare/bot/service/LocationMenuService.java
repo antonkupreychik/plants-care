@@ -213,6 +213,14 @@ public class LocationMenuService {
             )));
         }
 
+        // Совместный уход (issue #77): поделиться доступом к этой комнате.
+        rows.add(new InlineKeyboardRow(List.of(
+                InlineKeyboardButton.builder()
+                        .text("🤝 Поделиться доступом")
+                        .callbackData("LOCATION:SHARE:" + location.getId())
+                        .build()
+        )));
+
         rows.add(new InlineKeyboardRow(List.of(
                 InlineKeyboardButton.builder()
                         .text("✏️ Переименовать")

@@ -69,6 +69,7 @@ public class MenuCallbackService {
     private final UserService userService;
     private final PlantService plantService;
     private final LocationMenuService locationMenuService;
+    private final LocationSharingMenuService locationSharingMenuService;
     private final LocationService locationService;
     private final MainMenuService mainMenuService;
     private final PlantMenuService plantMenuService;
@@ -503,6 +504,14 @@ public class MenuCallbackService {
         if (data.startsWith("LOCATION:VIEW:")) {
             Long locationId = Long.parseLong(data.substring("LOCATION:VIEW:".length()));
             locationMenuService.sendLocationScreen(user, locationId, client);
+            answerCallback(client, callbackId, "");
+            return;
+        }
+
+        // Совместный уход (issue #77): сгенерировать одноразовый deep link.
+        if (data.startsWith("LOCATION:SHARE:")) {
+            Long locationId = Long.parseLong(data.substring("LOCATION:SHARE:".length()));
+            locationSharingMenuService.sendInviteLink(user, locationId, client);
             answerCallback(client, callbackId, "");
             return;
         }

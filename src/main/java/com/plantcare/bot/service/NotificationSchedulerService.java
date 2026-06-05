@@ -55,6 +55,7 @@ public class NotificationSchedulerService {
     private final MetricsService metricsService;
     private final RateLimitedTelegramSender telegramSender;
     private final NotificationDeliveryCallbacks deliveryCallbacks;
+    private final com.plantcare.core.service.LocationSharingService locationSharingService;
 
     @Scheduled(fixedRate = 60_000)
     @Transactional
@@ -332,6 +333,39 @@ public class NotificationSchedulerService {
                             plantId, chatId, inAcclimation);
                 },
                 e -> deliveryCallbacks.onFailed(chatId, e)));
+
+        // Совместный уход (issue #77): тот же push веером уходит caretaker'ам с
+        // доступом к локации растения. Клавиатура завязана на scheduleId, а callback
+        // «Полил» не скоупится по юзеру — значит, кто угодно из них может закрыть
+        // задачу и она закроется у всех. Bookkeeping/дедуп ведём только по
+        // основной отправке владельцу (выше), чтобы не задвоить метрики.
+        fanOutToCaretakers(plant, text, keyboard);
+    }
+
+    /**
+     * Веерная рассылка готового push'а всем caretaker'ам локации растения
+     * (issue #77). Никакого нового bookkeeping — это копия уведомления владельца.
+     */
+    private void fanOutToCaretakers(Plant plant, String text, InlineKeyboardMarkup keyboard) {
+        Long locationId = plant.getLocation() != null ? plant.getLocation().getId() : null;
+        if (locationId == null) {
+            return;
+        }
+
+        List<Long> caretakerChatIds = locationSharingService.caretakerChatIdsForLocation(locationId);
+        for (Long caretakerChatId : caretakerChatIds) {
+            SendMessage copy = SendMessage.builder()
+                    .chatId(caretakerChatId.toString())
+                    .text(text)
+                    .replyMarkup(keyboard)
+                    .build();
+            final long targetChatId = caretakerChatId;
+            telegramSender.enqueue(copy, new SendCallbacks(
+                    () -> log.info("Fanned out notification for plant id={} to caretaker chat {}",
+                            plant.getId(), targetChatId),
+                    e -> log.warn("Failed to fan out notification to caretaker chat {}: {}",
+                            targetChatId, e.getMessage())));
+        }
     }
 
     private String buildAcclimationWateringText(Plant plant) {
@@ -398,6 +432,33 @@ public class NotificationSchedulerService {
                             digestId, taskCount, chatId);
                 },
                 e -> deliveryCallbacks.onFailed(chatId, e)));
+
+        // Совместный уход (issue #77): дайджест веером уходит caretaker'ам всех
+        // локаций, чьи растения попали в дайджест. Клавиатура завязана на digestId
+        // и закрывает задачи у всех участников. Дедуп по chatId — один caretaker
+        // может иметь доступ к нескольким локациям в одном дайджесте.
+        String digestText = buildDigestText(items);
+        InlineKeyboardMarkup digestKeyboard = buildDigestKeyboard(digestId);
+        java.util.Set<Long> caretakerChatIds = new java.util.LinkedHashSet<>();
+        schedules.stream()
+                .map(s -> s.getPlant().getLocation() != null ? s.getPlant().getLocation().getId() : null)
+                .filter(java.util.Objects::nonNull)
+                .distinct()
+                .forEach(locationId ->
+                        caretakerChatIds.addAll(locationSharingService.caretakerChatIdsForLocation(locationId)));
+
+        for (Long caretakerChatId : caretakerChatIds) {
+            SendMessage copy = SendMessage.builder()
+                    .chatId(caretakerChatId.toString())
+                    .text(digestText)
+                    .replyMarkup(digestKeyboard)
+                    .build();
+            final long targetChatId = caretakerChatId;
+            telegramSender.enqueue(copy, new SendCallbacks(
+                    () -> log.info("Fanned out digest id={} to caretaker chat {}", digestId, targetChatId),
+                    e -> log.warn("Failed to fan out digest to caretaker chat {}: {}",
+                            targetChatId, e.getMessage())));
+        }
     }
 
     private String buildDigestText(List<DigestTaskItem> items) {
