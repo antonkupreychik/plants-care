@@ -111,6 +111,12 @@
                     </a>
                 </li>
                 <li>
+                    <a th:href="@{/admin/rate-limits}"
+                       th:classappend="${activeMenu == 'rate-limits'} ? 'active' : ''">
+                        Rate Limits
+                    </a>
+                </li>
+                <li>
                     <a th:href="@{/admin/broadcast}"
                        th:classappend="${activeMenu == 'broadcast'} ? 'active' : ''">
                         Broadcast

@@ -107,6 +107,17 @@ plantcare:
         max-attempts: 5
         window-seconds: 300
 
+    # Issue #92: Bucket4j per-IP/per-user rate limits for the REST API.
+    # All values configurable via env vars on Railway.
+    api:
+      rate-limit:
+        unauthenticated-per-minute: ${API_RL_UNAUTH_PER_MIN:100}
+        authenticated-per-minute: ${API_RL_AUTH_PER_MIN:1000}
+        auth-endpoint-per-minute: ${API_RL_AUTH_EP_PER_MIN:10}
+        magic-link-per-minute: ${API_RL_MAGIC_LINK_PER_MIN:3}
+        magic-link-per-hour: ${API_RL_MAGIC_LINK_PER_HOUR:5}
+        max-buckets: ${API_RL_MAX_BUCKETS:100000}
+
   # Issue #215: Universal Links (iOS) / App Links (Android) для magic-link диплинков.
   # Значения зависят от мобильного приложения и различаются на dev/prod.
   # Требуются реальные данные от app-команды (Team ID, bundle id, SHA-256 fingerprints).
