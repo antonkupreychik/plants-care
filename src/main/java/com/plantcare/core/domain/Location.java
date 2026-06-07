@@ -14,6 +14,7 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 import org.hibernate.annotations.UpdateTimestamp;
 
+import java.time.Instant;
 import java.time.LocalDateTime;
 
 @Entity
@@ -63,11 +64,39 @@ public class Location extends BaseEntity {
     @Column(name = "client_id", length = 64)
     private String clientId;
 
+    /**
+     * Если задано — уведомления по растениям этой локации не шлются до этого момента.
+     * NULL = локация активна (не на паузе). Хранится в UTC (TIMESTAMPTZ).
+     */
+    @Column(name = "paused_until")
+    private Instant pausedUntil;
+
+    /**
+     * Soft-delete: локация архивирована, не показывается в основном списке.
+     * NULL = не архивирована.
+     */
+    @Column(name = "archived_at")
+    private Instant archivedAt;
+
     public String getDisplayName() {
         if (emoji == null || emoji.isBlank()) {
             return name;
         }
 
         return emoji + " " + name;
+    }
+
+    /**
+     * Проверяет, находится ли локация на паузе прямо сейчас.
+     */
+    public boolean isPaused() {
+        return pausedUntil != null && Instant.now().isBefore(pausedUntil);
+    }
+
+    /**
+     * Проверяет, архивирована ли локация.
+     */
+    public boolean isArchived() {
+        return archivedAt != null;
     }
 }

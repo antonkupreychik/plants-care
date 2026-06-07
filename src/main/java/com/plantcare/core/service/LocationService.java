@@ -5,15 +5,20 @@ import com.plantcare.core.domain.Plant;
 import com.plantcare.core.domain.User;
 import com.plantcare.core.repository.LocationRepository;
 import com.plantcare.core.repository.PlantRepository;
+import com.plantcare.core.repository.UserRepository;
 import com.plantcare.core.util.EmojiValidator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -26,6 +31,7 @@ public class LocationService {
 
     private final LocationRepository locationRepository;
     private final PlantRepository plantRepository;
+    private final UserRepository userRepository;
     private final AnalyticsService analyticsService;
 
     @Transactional(readOnly = true)
@@ -331,6 +337,83 @@ public class LocationService {
                 plants.size(),
                 targetLocationId
         );
+    }
+
+    // ===== Мультидомность (issue #70) =====
+
+    /**
+     * Переключить активную локацию пользователя.
+     * После переключения меню перерисовывается в контексте новой локации.
+     */
+    @Transactional
+    public Location setActiveLocation(User user, Long locationId) {
+        Location location = getUserLocationOrThrow(user.getId(), locationId);
+        user.setActiveLocation(location);
+        userRepository.save(user);
+
+        log.info("User {} switched active location to {}", user.getId(), locationId);
+
+        analyticsService.track(user.getId(), "location_switched", Map.of(
+                "location_id", locationId
+        ));
+
+        return location;
+    }
+
+    /**
+     * Поставить локацию на паузу на указанное количество дней.
+     * На время паузы уведомления и «сегодняшние дела» по этой локации не показываются.
+     *
+     * @param days от 1 до 180
+     */
+    @Transactional
+    public Location pauseLocation(User user, Long locationId, int days) {
+        if (days < 1 || days > 180) {
+            throw new IllegalArgumentException("Количество дней должно быть от 1 до 180");
+        }
+
+        Location location = getUserLocationOrThrow(user.getId(), locationId);
+        Instant pauseUntil = Instant.now().truncatedTo(ChronoUnit.SECONDS).plus(days, ChronoUnit.DAYS);
+        location.setPausedUntil(pauseUntil);
+        Location saved = locationRepository.save(location);
+
+        log.info("Paused location {} for user {} until {}", locationId, user.getId(), pauseUntil);
+
+        analyticsService.track(user.getId(), "location_paused", Map.of(
+                "location_id", locationId,
+                "days", days
+        ));
+
+        return saved;
+    }
+
+    /**
+     * Снять паузу с локации.
+     */
+    @Transactional
+    public Location resumeLocation(User user, Long locationId) {
+        Location location = getUserLocationOrThrow(user.getId(), locationId);
+        location.setPausedUntil(null);
+        Location saved = locationRepository.save(location);
+
+        log.info("Resumed location {} for user {}", locationId, user.getId());
+
+        analyticsService.track(user.getId(), "location_resumed", Map.of(
+                "location_id", locationId
+        ));
+
+        return saved;
+    }
+
+    /**
+     * Возвращает множество id локаций пользователя, находящихся на паузе прямо сейчас.
+     * Используется в шедулере для фильтрации уведомлений.
+     */
+    @Transactional(readOnly = true)
+    public Set<Long> getPausedLocationIds(Long userId) {
+        return locationRepository.findPausedLocationIdsByUserId(userId, Instant.now())
+                .stream()
+                .collect(Collectors.toSet());
     }
 
     private String normalizeName(String name) {

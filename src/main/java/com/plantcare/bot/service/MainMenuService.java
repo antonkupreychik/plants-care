@@ -22,10 +22,10 @@ import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 import org.telegram.telegrambots.meta.generics.TelegramClient;
 
 import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDateTime;
-import java.time.LocalTime;
 import java.time.ZoneId;
-import java.time.ZonedDateTime;
+import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -40,6 +40,8 @@ public class MainMenuService {
 
     private static final DateTimeFormatter VACATION_DATE_FMT =
             DateTimeFormatter.ofPattern("dd.MM");
+    private static final DateTimeFormatter PAUSE_DATE_FMT =
+            DateTimeFormatter.ofPattern("dd.MM.yyyy");
 
     private final PlantRepository plantRepository;
     private final CareScheduleRepository careScheduleRepository;
@@ -53,10 +55,14 @@ public class MainMenuService {
 
         LocalDateTime endOfTodayUtc = TimeUtils.endOfTodayInUtc(user.getTimezone(), clock);
 
-        List<CareSchedule> todaySchedules = careScheduleRepository.findUserSchedulesDueBefore(
+        // Issue #70: загружаем все задачи, но потом фильтруем по активной локации
+        List<CareSchedule> allTodaySchedules = careScheduleRepository.findUserSchedulesDueBefore(
                 user.getId(),
                 endOfTodayUtc
         );
+
+        Location activeLocation = user.getActiveLocation();
+        List<CareSchedule> todaySchedules = filterByActiveLocation(allTodaySchedules, activeLocation);
 
         List<Location> locations = locationService.getUserLocations(user.getId());
 
@@ -64,7 +70,7 @@ public class MainMenuService {
         // короткие серии не должны давить на эго в духе "ваш стрик 1 день".
         int userStreak = careHistoryService.computeUserStreak(user.getId(), user.getTimezone());
 
-        String text = buildMenuText(plantCount, todaySchedules, locations, userStreak, user);
+        String text = buildMenuText(plantCount, todaySchedules, locations, userStreak, user, activeLocation);
 
         // Погодная подсказка для блока полива (issue #69). Одна строка на меню,
         // а не на каждую задачу — иначе текст растёт линейно по количеству
@@ -79,7 +85,7 @@ public class MainMenuService {
                 .chatId(user.getTelegramChatId().toString())
                 .text(text)
                 .parseMode("Markdown")
-                .replyMarkup(buildMenuKeyboard(user))
+                .replyMarkup(buildMenuKeyboard(user, activeLocation))
                 .build();
 
         try {
@@ -88,6 +94,28 @@ public class MainMenuService {
         } catch (TelegramApiException e) {
             log.error("Failed to send menu to user {}: {}", user.getTelegramChatId(), e.getMessage(), e);
         }
+    }
+
+    /**
+     * Если активная локация задана — показываем задачи только из неё.
+     * Иначе показываем все задачи (backward-compat для старых пользователей
+     * без active_location_id).
+     */
+    private List<CareSchedule> filterByActiveLocation(
+            List<CareSchedule> schedules,
+            Location activeLocation
+    ) {
+        if (activeLocation == null) {
+            return schedules;
+        }
+
+        Long activeLocationId = activeLocation.getId();
+
+        return schedules.stream()
+                .filter(s -> s.getPlant() != null
+                        && s.getPlant().getLocation() != null
+                        && activeLocationId.equals(s.getPlant().getLocation().getId()))
+                .toList();
     }
 
     /**
@@ -112,13 +140,26 @@ public class MainMenuService {
             List<CareSchedule> todaySchedules,
             List<Location> locations,
             int userStreak,
-            User user
+            User user,
+            Location activeLocation
     ) {
         StringBuilder sb = new StringBuilder();
 
         sb.append("🏠 *Главное меню*\n\n");
 
-        // issue #53: баннер отпуска идёт первой строкой, чтобы юзер сразу видел статус.
+        // Issue #70: строка активной локации (если есть выбранная).
+        if (activeLocation != null) {
+            sb.append("📍 Локация: *").append(activeLocation.getDisplayName()).append("*\n\n");
+
+            // Баннер паузы для активной локации.
+            if (activeLocation.isPaused()) {
+                String pauseDate = formatInstantAsDate(activeLocation.getPausedUntil(), user.getTimezone());
+                sb.append("⏸ *").append(activeLocation.getDisplayName())
+                        .append(" на паузе до ").append(pauseDate).append("*\n\n");
+            }
+        }
+
+        // issue #53: баннер отпуска идёт следующей строкой.
         if (user.isPaused()) {
             String date = TimezoneSupport.dateInUserZone(user.getPausedUntil(), user)
                     .format(VACATION_DATE_FMT);
@@ -132,6 +173,12 @@ public class MainMenuService {
 
         sb.append("🌿 Растений: ").append(plantCount).append("\n\n");
 
+        // Если локация на паузе — сегодняшние дела не показываем.
+        if (activeLocation != null && activeLocation.isPaused()) {
+            sb.append("Уведомления по этой локации приостановлены 🌙");
+            return sb.toString();
+        }
+
         if (todaySchedules.isEmpty()) {
             sb.append("Сегодня всё в порядке 🌱");
             return sb.toString();
@@ -139,13 +186,26 @@ public class MainMenuService {
 
         sb.append("📋 *Сегодня нужно сделать:*\n");
 
-        if (locations.size() < 2) {
+        // Если активная локация задана или только одна локация — показываем плоский список.
+        boolean singleContext = activeLocation != null || locations.size() < 2;
+
+        if (singleContext) {
             appendFlatTasks(sb, todaySchedules);
             return sb.toString();
         }
 
         appendGroupedTasks(sb, todaySchedules, locations);
         return sb.toString();
+    }
+
+    private String formatInstantAsDate(Instant instant, String timezone) {
+        try {
+            return instant
+                    .atZone(ZoneId.of(timezone))
+                    .format(PAUSE_DATE_FMT);
+        } catch (Exception e) {
+            return instant.atOffset(ZoneOffset.UTC).format(PAUSE_DATE_FMT);
+        }
     }
 
     /**
@@ -239,8 +299,27 @@ public class MainMenuService {
         };
     }
 
-    private InlineKeyboardMarkup buildMenuKeyboard(User user) {
+    private InlineKeyboardMarkup buildMenuKeyboard(User user, Location activeLocation) {
         InlineKeyboardMarkup.InlineKeyboardMarkupBuilder<?, ?> builder = InlineKeyboardMarkup.builder();
+
+        // Issue #70: кнопка «Сменить локацию» сверху, если активная локация задана.
+        if (activeLocation != null) {
+            if (activeLocation.isPaused()) {
+                // Локация на паузе — кнопка «Возобновить».
+                builder.keyboardRow(new InlineKeyboardRow(List.of(
+                        InlineKeyboardButton.builder()
+                                .text("▶️ Возобновить " + activeLocation.getDisplayName())
+                                .callbackData("LOC_RESUME:" + activeLocation.getId())
+                                .build()
+                )));
+            }
+            builder.keyboardRow(new InlineKeyboardRow(List.of(
+                    InlineKeyboardButton.builder()
+                            .text("📍 " + activeLocation.getDisplayName() + " [Сменить]")
+                            .callbackData("LOC_SWITCH_LIST")
+                            .build()
+            )));
+        }
 
         // issue #53: верхняя строка-баннер с возвратом из отпуска, если активен.
         if (user.isPaused()) {
@@ -265,7 +344,7 @@ public class MainMenuService {
                                 .callbackData("MENU:ALL_PLANTS")
                                 .build(),
                         InlineKeyboardButton.builder()
-                                .text("📍 Комнаты")
+                                .text("📍 Локации")
                                 .callbackData("MENU:LOCATIONS")
                                 .build()
                 )))
@@ -292,23 +371,5 @@ public class MainMenuService {
                                 .build()
                 )))
                 .build();
-    }
-
-    private LocalDateTime getEndOfTodayInUtc(String timezone) {
-        ZoneId userZone;
-
-        try {
-            userZone = ZoneId.of(timezone);
-        } catch (Exception e) {
-            log.warn("Invalid timezone '{}', defaulting to UTC", timezone);
-            userZone = ZoneId.of("UTC");
-        }
-
-        ZonedDateTime endOfDay = ZonedDateTime.now(userZone)
-                .toLocalDate()
-                .atTime(LocalTime.of(23, 59, 59))
-                .atZone(userZone);
-
-        return endOfDay.withZoneSameInstant(ZoneId.of("UTC")).toLocalDateTime();
     }
 }

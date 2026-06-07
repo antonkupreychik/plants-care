@@ -6,6 +6,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -13,7 +14,13 @@ import java.util.Optional;
 @Repository
 public interface LocationRepository extends JpaRepository<Location, Long> {
 
-    List<Location> findAllByUserIdOrderByDefaultLocationAscCreatedAtAsc(Long userId);
+    /** Все незаархивированные локации пользователя — дефолтная первой, потом по дате создания. */
+    @Query("""
+            SELECT l FROM Location l
+            WHERE l.user.id = :userId AND l.archivedAt IS NULL
+            ORDER BY l.defaultLocation DESC, l.createdAt ASC
+            """)
+    List<Location> findAllByUserIdOrderByDefaultLocationAscCreatedAtAsc(@Param("userId") Long userId);
 
     Optional<Location> findByUserIdAndId(Long userId, Long locationId);
 
@@ -62,4 +69,20 @@ public interface LocationRepository extends JpaRepository<Location, Long> {
         Long getId();
         LocalDateTime getDeletedAt();
     }
+
+    // ===== Мультидомность (issue #70) =====
+
+    /**
+     * Активные (не заархивированные) локации, у которых пауза ещё не истекла —
+     * для фильтрации уведомлений по растениям.
+     */
+    @Query("""
+            SELECT l.id FROM Location l
+            WHERE l.user.id = :userId
+              AND l.archivedAt IS NULL
+              AND l.pausedUntil IS NOT NULL
+              AND l.pausedUntil > :now
+            """)
+    List<Long> findPausedLocationIdsByUserId(@Param("userId") Long userId, @Param("now") Instant now);
+
 }

@@ -706,6 +706,75 @@ class NotificationSchedulerServiceTest {
         return d;
     }
 
+    // ===== Issue #70: пауза по локации =====
+
+    @Nested
+    @DisplayName("Фильтрация: пауза по локации (issue #70)")
+    class PausedLocation {
+
+        @Test
+        @DisplayName("Не ставит в очередь, если локация растения на паузе (Asia/Almaty)")
+        void should_skipNotification_when_plantLocationIsPaused() {
+            com.plantcare.core.domain.Location pausedLocation =
+                    com.plantcare.core.domain.Location.builder()
+                            .user(user)
+                            .name("Дача")
+                            .emoji("🏡")
+                            .defaultLocation(false)
+                            .build();
+            ReflectionTestUtils.setField(pausedLocation, "id", 99L);
+            // Пауза на 7 дней в будущем
+            pausedLocation.setPausedUntil(Instant.now().plusSeconds(60 * 60 * 24 * 7));
+
+            plant.setLocation(pausedLocation);
+
+            when(careScheduleRepository.findDueSchedules(any())).thenReturn(List.of(schedule));
+
+            service.checkAndSendNotifications();
+
+            verifyNoInteractions(telegramSender);
+        }
+
+        @Test
+        @DisplayName("Ставит в очередь, если пауза локации уже истекла")
+        void should_sendNotification_when_locationPauseExpired() {
+            com.plantcare.core.domain.Location expiredPauseLocation =
+                    com.plantcare.core.domain.Location.builder()
+                            .user(user)
+                            .name("Дача")
+                            .emoji("🏡")
+                            .defaultLocation(false)
+                            .build();
+            ReflectionTestUtils.setField(expiredPauseLocation, "id", 98L);
+            // Пауза истекла 1 час назад
+            expiredPauseLocation.setPausedUntil(Instant.now().minusSeconds(3600));
+
+            plant.setLocation(expiredPauseLocation);
+
+            when(careScheduleRepository.findDueSchedules(any())).thenReturn(List.of(schedule));
+            when(notificationLogRepository.existsByPlantIdAndTaskTypeAndSentAtAfter(any(), any(), any()))
+                    .thenReturn(false);
+
+            service.checkAndSendNotifications();
+
+            verify(telegramSender).enqueue(any(SendMessage.class), any(SendCallbacks.class));
+        }
+
+        @Test
+        @DisplayName("Ставит в очередь, если у растения нет локации")
+        void should_sendNotification_when_plantHasNoLocation() {
+            plant.setLocation(null);
+
+            when(careScheduleRepository.findDueSchedules(any())).thenReturn(List.of(schedule));
+            when(notificationLogRepository.existsByPlantIdAndTaskTypeAndSentAtAfter(any(), any(), any()))
+                    .thenReturn(false);
+
+            service.checkAndSendNotifications();
+
+            verify(telegramSender).enqueue(any(SendMessage.class), any(SendCallbacks.class));
+        }
+    }
+
     private User secondUser() {
         User secondUser = User.builder()
                 .telegramChatId(200L)
