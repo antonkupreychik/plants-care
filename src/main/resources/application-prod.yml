@@ -1,6 +1,12 @@
 spring:
   jpa:
     show-sql: false
+  # Issue #278, эпик #277 фаза 0: на проде Redis-подключение через REDIS_URL
+  # (Railway reference variable на внутренний адрес сервиса, redis://...:6379).
+  # REQUIRED: если REDIS_URL не задан, старт упадёт fail-fast (Redis включён всегда).
+  data:
+    redis:
+      url: ${REDIS_URL}
 
 logging:
   level:
