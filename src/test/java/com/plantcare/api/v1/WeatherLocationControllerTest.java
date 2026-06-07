@@ -3,6 +3,7 @@ package com.plantcare.api.v1;
 import com.plantcare.api.ApiExceptionHandler;
 import com.plantcare.api.CurrentUserProvider;
 import com.plantcare.core.domain.User;
+import com.plantcare.core.seasonal.service.SeasonalSettingsService;
 import com.plantcare.core.service.AccountDeletionService;
 import com.plantcare.core.service.UserProfileService;
 import org.junit.jupiter.api.BeforeEach;
@@ -48,6 +49,9 @@ class WeatherLocationControllerTest {
 
     @MockitoBean
     private AccountDeletionService accountDeletionService;
+
+    @MockitoBean
+    private SeasonalSettingsService seasonalSettingsService;
 
     @BeforeEach
     void setUp() {
