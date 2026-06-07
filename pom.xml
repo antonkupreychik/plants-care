@@ -122,6 +122,11 @@
             <artifactId>spring-boot-starter-cache</artifactId>
         </dependency>
 
+        <!-- Issue #92: Rate limiting per-IP and per-user.
+             Implemented with a sliding-window counter backed by Caffeine (already on classpath).
+             bucket4j was initially planned but is not yet cached locally; Caffeine provides
+             equivalent in-memory sliding-window semantics with zero new transitive deps. -->
+
         <dependency>
             <groupId>org.telegram</groupId>
             <artifactId>telegrambots-springboot-longpolling-starter</artifactId>
