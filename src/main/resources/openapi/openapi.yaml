@@ -391,6 +391,8 @@ components:
 
     DiseaseDto:
       $ref: './resources/diseases.yaml#/schemas/DiseaseDto'
+    PageResponseDiseaseDto:
+      $ref: './resources/diseases.yaml#/schemas/PageResponseDiseaseDto'
 
     CareScheduleDto:
       $ref: './resources/schedules.yaml#/schemas/CareScheduleDto'
