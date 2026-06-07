@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.plantcare.api.generated.model.LocationDto;
 import com.plantcare.api.generated.model.PageResponsePlantDto;
 import com.plantcare.api.generated.model.PlantDto;
+import com.plantcare.api.generated.model.TaskDto;
 import com.plantcare.api.generated.model.TodayResponse;
 import com.plantcare.api.generated.model.TodaySummary;
 import com.plantcare.api.generated.model.WeatherSnapshotDto;
@@ -66,7 +67,11 @@ class UiViewServiceTest {
                         .fromCache(false));
 
         lenient().when(todayController.getToday()).thenReturn(
-                new TodayResponse(List.of(), 3, new TodaySummary(3, 1, 2, 1)));
+                new TodayResponse(
+                        List.of(new TaskDto(
+                                1L, 42L, "Фикус", "FERTILIZING",
+                                OffsetDateTime.of(2026, 5, 27, 9, 0, 0, 0, ZoneOffset.UTC))),
+                        3, new TodaySummary(3, 1, 2, 1)));
 
         lenient().when(locationController.listLocations()).thenReturn(List.of(
                 new LocationDto(5L, "Гостиная", true, true).emoji("🛋️")));
@@ -104,11 +109,11 @@ class UiViewServiceTest {
     @Test
     @DisplayName("should_build_full_home_from_composition_when_no_catalog_version")
     void should_build_full_home_from_composition_when_no_catalog_version() {
-        // arrange — композиция из 4 динамических блоков, как в сиде V47
+        // arrange — композиция из 4 динамических блоков, как в сиде V48
         seedHomeView("""
                 { "screenId":"home","version":1,"blocks":[
                   {"type":"weather_strip","minCatalogVersion":1},
-                  {"type":"today_summary","minCatalogVersion":1},
+                  {"type":"today_tasks","minCatalogVersion":1},
                   {"type":"location_chips","minCatalogVersion":1},
                   {"type":"plant_grid","minCatalogVersion":1} ] }""", 1);
 
@@ -120,12 +125,21 @@ class UiViewServiceTest {
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> blocks = (List<Map<String, Object>>) screen.get("blocks");
         assertThat(blocks).extracting(b -> b.get("type"))
-                .containsExactly("weather_strip", "today_summary", "location_chips", "plant_grid");
+                .containsExactly("weather_strip", "today_tasks", "location_chips", "plant_grid");
 
-        // гидрация: weather + today + chips + grid с action-descriptor «полить»
+        // гидрация: weather + today_tasks (counts + тапабельный список) + chips + grid
         assertThat(blocks.get(0)).containsEntry("available", true).containsEntry("humidityPercent", 82)
                 .containsEntry("recommendation", "DEFER_OK");
-        assertThat(blocks.get(1)).containsEntry("total", 3).containsEntry("overdue", 1);
+        assertThat(blocks.get(1)).containsEntry("completedCount", 1).containsEntry("totalCount", 3);
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> todayTasks = (List<Map<String, Object>>) blocks.get(1).get("tasks");
+        assertThat(todayTasks).hasSize(1);
+        assertThat(todayTasks.get(0))
+                .containsEntry("scheduleId", 1L)
+                .containsEntry("plantId", 42L)
+                .containsEntry("plantName", "Фикус")
+                .containsEntry("type", "FERTILIZE")   // FERTILIZING → FERTILIZE (нормализация)
+                .containsEntry("dueAt", OffsetDateTime.of(2026, 5, 27, 9, 0, 0, 0, ZoneOffset.UTC));
 
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> chips = (List<Map<String, Object>>) blocks.get(2).get("locations");
@@ -179,6 +193,65 @@ class UiViewServiceTest {
         assertThat(blocks).hasSize(1);
         assertThat(blocks.get(0)).containsEntry("type", "banner").containsEntry("text", "Привет")
                 .containsEntry("dismissible", true);
+    }
+
+    @Test
+    @DisplayName("should_normalize_domain_task_type_to_public_dictionary_in_today_tasks")
+    void should_normalize_domain_task_type_to_public_dictionary_in_today_tasks() {
+        // arrange — внутренние доменные типы (ловушка контракта) во всех вариантах
+        when(todayController.getToday()).thenReturn(new TodayResponse(
+                List.of(
+                        task(1L, "WATERING"),
+                        task(2L, "MISTING"),
+                        task(3L, "FERTILIZING"),
+                        task(4L, "SOIL_CHECK")),
+                4, new TodaySummary(4, 0, 4, 0)));
+        seedHomeView("""
+                { "screenId":"home","version":1,"blocks":[
+                  {"type":"today_tasks","minCatalogVersion":1} ] }""", 1);
+
+        // act
+        Map<String, Object> screen = service.buildScreen("home", null);
+
+        // assert — WATERING→WATER, MISTING→SPRAY, FERTILIZING→FERTILIZE, SOIL_CHECK как есть
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> blocks = (List<Map<String, Object>>) screen.get("blocks");
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> tasks = (List<Map<String, Object>>) blocks.get(0).get("tasks");
+        assertThat(tasks).extracting(t -> t.get("type"))
+                .containsExactly("WATER", "SPRAY", "FERTILIZE", "SOIL_CHECK");
+    }
+
+    @Test
+    @DisplayName("should_render_empty_today_tasks_when_no_tasks_today")
+    void should_render_empty_today_tasks_when_no_tasks_today() {
+        // arrange — задач на сегодня нет
+        when(todayController.getToday()).thenReturn(
+                new TodayResponse(List.of(), 0, new TodaySummary(0, 0, 0, 0)));
+        seedHomeView("""
+                { "screenId":"home","version":1,"blocks":[
+                  {"type":"today_tasks","minCatalogVersion":1} ] }""", 1);
+
+        // act
+        Map<String, Object> screen = service.buildScreen("home", null);
+
+        // assert — блок есть, counts нулевые, список пустой (а не null)
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> blocks = (List<Map<String, Object>>) screen.get("blocks");
+        assertThat(blocks).hasSize(1);
+        assertThat(blocks.get(0))
+                .containsEntry("type", "today_tasks")
+                .containsEntry("completedCount", 0)
+                .containsEntry("totalCount", 0);
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> tasks = (List<Map<String, Object>>) blocks.get(0).get("tasks");
+        assertThat(tasks).isEmpty();
+    }
+
+    private static TaskDto task(Long scheduleId, String domainTaskType) {
+        return new TaskDto(
+                scheduleId, 42L, "Фикус", domainTaskType,
+                OffsetDateTime.of(2026, 5, 27, 9, 0, 0, 0, ZoneOffset.UTC));
     }
 
     @Test

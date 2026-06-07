@@ -70,7 +70,7 @@ class UiViewRepositoryTest {
         JsonNode blocks = layout.path("blocks");
         assertThat(blocks).hasSize(4);
         assertThat(blocks.get(0).path("type").asText()).isEqualTo("weather_strip");
-        assertThat(blocks.get(1).path("type").asText()).isEqualTo("today_summary");
+        assertThat(blocks.get(1).path("type").asText()).isEqualTo("today_tasks");
         assertThat(blocks.get(2).path("type").asText()).isEqualTo("location_chips");
         assertThat(blocks.get(3).path("type").asText()).isEqualTo("plant_grid");
     }

@@ -3,6 +3,7 @@ package com.plantcare.api.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.plantcare.api.generated.model.LocationDto;
 import com.plantcare.api.generated.model.PlantDto;
+import com.plantcare.api.generated.model.TaskDto;
 import com.plantcare.api.generated.model.TodayResponse;
 import com.plantcare.api.generated.model.TodaySummary;
 import com.plantcare.api.generated.model.WeatherSnapshotDto;
@@ -40,6 +41,7 @@ import java.util.Map;
  *   <tr><th>type</th><th>источник</th></tr>
  *   <tr><td>{@code weather_strip}</td><td>WeatherService</td></tr>
  *   <tr><td>{@code today_summary}</td><td>TodayApiService</td></tr>
+ *   <tr><td>{@code today_tasks}</td><td>TodayApiService (тапабельный список)</td></tr>
  *   <tr><td>{@code location_chips}</td><td>LocationService</td></tr>
  *   <tr><td>{@code plant_grid}</td><td>PlantService</td></tr>
  * </table>
@@ -57,6 +59,7 @@ public class UiViewService {
 
     private static final String TYPE_WEATHER_STRIP = "weather_strip";
     private static final String TYPE_TODAY_SUMMARY = "today_summary";
+    private static final String TYPE_TODAY_TASKS = "today_tasks";
     private static final String TYPE_LOCATION_CHIPS = "location_chips";
     private static final String TYPE_PLANT_GRID = "plant_grid";
 
@@ -127,6 +130,7 @@ public class UiViewService {
         return switch (type) {
             case TYPE_WEATHER_STRIP -> weatherStripBlock();
             case TYPE_TODAY_SUMMARY -> todaySummaryBlock();
+            case TYPE_TODAY_TASKS -> todayTasksBlock();
             case TYPE_LOCATION_CHIPS -> locationChipsBlock();
             case TYPE_PLANT_GRID -> plantGridBlock();
             // Статичный блок: отдаём шаблон verbatim (без гидрации).
@@ -159,6 +163,71 @@ public class UiViewService {
         block.put("remaining", summary.getRemaining());
         block.put("overdue", summary.getOverdue());
         return block;
+    }
+
+    /**
+     * {@code today_tasks} — тапабельный список задач на сегодня из
+     * {@link TodayController} (тот же источник, что {@code GET /today}) плюс
+     * прогресс ({@code completedCount}/{@code totalCount}).
+     *
+     * <p>Возвращает обогащённый блок взамен счётчикового {@code today_summary}:
+     * на home нужен интерактив — тап задачи открывает нативный sheet ухода,
+     * для предвыбора типа достаточно нормализованного {@code type}.
+     *
+     * <p>{@code type} НОРМАЛИЗОВАН в публичный словарь {@code WATER/SPRAY/
+     * FERTILIZE/SOIL_CHECK} (как action-descriptor {@code plant_grid}), а не
+     * во внутренний {@code TaskType} ({@code WATERING/MISTING/...}).
+     */
+    private Map<String, Object> todayTasksBlock() {
+        TodayResponse today = todayController.getToday();
+        TodaySummary summary = today.getSummary();
+
+        List<Map<String, Object>> tasks = today.getTasks().stream()
+                .map(UiViewService::toTodayTask)
+                .toList();
+
+        Map<String, Object> block = new LinkedHashMap<>();
+        block.put("type", TYPE_TODAY_TASKS);
+        block.put("completedCount", summary.getDone());
+        block.put("totalCount", summary.getTotal());
+        block.put("tasks", tasks);
+        return block;
+    }
+
+    /**
+     * Маппинг {@link TaskDto} → запись задачи блока {@code today_tasks}.
+     * {@code dueAt} — ISO-8601 UTC ({@code nextDueAt}). {@code type}
+     * нормализуется через {@link #normalizeTaskType(String)}.
+     */
+    private static Map<String, Object> toTodayTask(TaskDto task) {
+        Map<String, Object> entry = new LinkedHashMap<>();
+        entry.put("scheduleId", task.getScheduleId());
+        entry.put("plantId", task.getPlantId());
+        entry.put("plantName", task.getPlantName());
+        entry.put("type", normalizeTaskType(task.getTaskType()));
+        entry.put("dueAt", task.getNextDueAt());
+        return entry;
+    }
+
+    /**
+     * Нормализация внутреннего {@code TaskType} в публичный словарь типов ухода
+     * ({@code CareEventType}). «Ловушка контракта»: доменные имена
+     * ({@code WATERING/MISTING/FERTILIZING}) НЕ совпадают с публичными
+     * ({@code WATER/SPRAY/FERTILIZE}) — мапим здесь, на бэкенде, как в
+     * {@code CareEventController.fromTaskType}. {@code SOIL_CHECK} совпадает.
+     * Неизвестный тип отдаём как есть (forward-compat).
+     */
+    private static String normalizeTaskType(String domainTaskType) {
+        if (domainTaskType == null) {
+            return null;
+        }
+        return switch (domainTaskType) {
+            case "WATERING" -> "WATER";
+            case "MISTING" -> "SPRAY";
+            case "FERTILIZING" -> "FERTILIZE";
+            case "SOIL_CHECK" -> "SOIL_CHECK";
+            default -> domainTaskType;
+        };
     }
 
     /** {@code location_chips} — локации пользователя из {@link LocationController}. */
