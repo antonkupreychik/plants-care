@@ -1,0 +1,280 @@
+# Шеринг доступа к локациям — REST API (issue #251).
+#
+# Модель SUBO: Subject (пользователь) получает роль (OWNER/CARETAKER) на объекте (локации).
+# OWNER создаёт одноразовый инвайт → приглашённый принимает токен → становится CARETAKER.
+# Все эндпоинты в scope текущего пользователя (bearer.sub).
+
+paths:
+  CreateInvite:
+    post:
+      tags: [LocationSharing]
+      operationId: createLocationInvite
+      summary: Создать приглашение к локации
+      description: |
+        Генерирует одноразовый токен приглашения к локации. Только OWNER локации
+        (`locations.user_id = current user`) может создавать приглашения.
+        Токен действует 7 дней. Повторная попытка принять использованный токен → 410.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Идентификатор локации.
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '201':
+          description: Приглашение создано.
+          content:
+            application/json:
+              schema:
+                $ref: '#/schemas/LocationInviteResponse'
+        '401':
+          $ref: '../_common/responses.yaml#/Unauthorized'
+        '403':
+          $ref: '../_common/responses.yaml#/Forbidden'
+        '404':
+          $ref: '../_common/responses.yaml#/NotFound'
+
+  AcceptInvite:
+    post:
+      tags: [LocationSharing]
+      operationId: acceptLocationInvite
+      summary: Принять приглашение к локации
+      description: |
+        Принимает одноразовый токен приглашения и выдаёт роль CARETAKER текущему пользователю.
+        Идемпотентно: повторный accept тем же пользователем возвращает 200.
+        Токен просрочен → 410. Токен уже использован другим пользователем → 410.
+        Владелец не может принять собственное приглашение → 403.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: token
+          in: path
+          required: true
+          description: Одноразовый токен приглашения.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Приглашение принято, доступ выдан.
+          content:
+            application/json:
+              schema:
+                $ref: '#/schemas/AcceptInviteResponse'
+        '401':
+          $ref: '../_common/responses.yaml#/Unauthorized'
+        '403':
+          $ref: '../_common/responses.yaml#/Forbidden'
+        '404':
+          $ref: '../_common/responses.yaml#/NotFound'
+        '410':
+          description: Токен уже использован или просрочен.
+          content:
+            application/json:
+              schema:
+                $ref: '../_common/errors.yaml#/schemas/ApiErrorResponse'
+
+  Members:
+    get:
+      tags: [LocationSharing]
+      operationId: listLocationMembers
+      summary: Список участников локации
+      description: |
+        Возвращает всех участников локации (OWNER + CARETAKER) с ролями.
+        Доступно OWNER'у и CARETAKER'ам локации.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Идентификатор локации.
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: Список участников.
+          content:
+            application/json:
+              schema:
+                $ref: '#/schemas/LocationMembersResponse'
+        '401':
+          $ref: '../_common/responses.yaml#/Unauthorized'
+        '403':
+          $ref: '../_common/responses.yaml#/Forbidden'
+        '404':
+          $ref: '../_common/responses.yaml#/NotFound'
+
+  RevokeAccess:
+    delete:
+      tags: [LocationSharing]
+      operationId: revokeLocationAccess
+      summary: Отозвать доступ участника
+      description: |
+        Удаляет доступ пользователя к локации. Только OWNER может отзывать доступ.
+        Нельзя удалить последнего OWNER'а локации → 409.
+        OWNER не может удалить себя (нельзя удалить последнего OWNER) → 409.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Идентификатор локации.
+          schema:
+            type: integer
+            format: int64
+        - name: userId
+          in: path
+          required: true
+          description: Идентификатор пользователя, у которого отзывается доступ.
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '204':
+          description: Доступ отозван.
+        '401':
+          $ref: '../_common/responses.yaml#/Unauthorized'
+        '403':
+          $ref: '../_common/responses.yaml#/Forbidden'
+        '404':
+          $ref: '../_common/responses.yaml#/NotFound'
+        '409':
+          $ref: '../_common/responses.yaml#/Conflict'
+
+  SharedLocations:
+    get:
+      tags: [LocationSharing]
+      operationId: listSharedLocations
+      summary: Локации с доступом CARETAKER
+      description: |
+        Возвращает локации, к которым у текущего пользователя есть доступ
+        как CARETAKER (т.е. не его собственные, а те, куда его пригласили).
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Список расшаренных локаций.
+          content:
+            application/json:
+              schema:
+                $ref: '#/schemas/SharedLocationsResponse'
+        '401':
+          $ref: '../_common/responses.yaml#/Unauthorized'
+
+schemas:
+  LocationAccessRole:
+    type: string
+    description: Роль участника в локации.
+    enum: [OWNER, CARETAKER]
+    example: CARETAKER
+
+  LocationMemberDto:
+    type: object
+    description: Участник локации (Subject + role).
+    required: [userId, role, joinedAt]
+    properties:
+      userId:
+        type: integer
+        format: int64
+        description: Идентификатор пользователя.
+        example: 42
+      displayName:
+        type: string
+        nullable: true
+        description: Отображаемое имя пользователя (username или email).
+        example: '@anna'
+      role:
+        $ref: '#/schemas/LocationAccessRole'
+      joinedAt:
+        type: string
+        format: date-time
+        description: Когда появился доступ (UTC).
+        example: '2025-01-15T10:00:00Z'
+
+  LocationMembersResponse:
+    type: object
+    required: [members]
+    properties:
+      members:
+        type: array
+        items:
+          $ref: '#/schemas/LocationMemberDto'
+
+  LocationInviteResponse:
+    type: object
+    description: Результат создания приглашения.
+    required: [token, expiresAt]
+    properties:
+      token:
+        type: string
+        description: Одноразовый токен приглашения.
+        example: 'abc123xyz'
+      expiresAt:
+        type: string
+        format: date-time
+        description: Когда токен истекает (UTC).
+        example: '2025-01-22T10:00:00Z'
+
+  AcceptInviteResponse:
+    type: object
+    description: Результат принятия приглашения.
+    required: [locationId, locationName, role]
+    properties:
+      locationId:
+        type: integer
+        format: int64
+        description: Идентификатор локации, к которой выдан доступ.
+        example: 7
+      locationName:
+        type: string
+        description: Отображаемое имя локации.
+        example: '🪴 Гостиная'
+      role:
+        $ref: '#/schemas/LocationAccessRole'
+
+  SharedLocationDto:
+    type: object
+    description: Локация, к которой у пользователя есть доступ CARETAKER.
+    required: [id, name, ownerUserId, role, joinedAt]
+    properties:
+      id:
+        type: integer
+        format: int64
+        description: Идентификатор локации.
+        example: 7
+      name:
+        type: string
+        description: Название локации.
+        example: 'Гостиная'
+      emoji:
+        type: string
+        nullable: true
+        description: Emoji локации.
+        example: '🪴'
+      ownerUserId:
+        type: integer
+        format: int64
+        description: Идентификатор владельца локации.
+        example: 5
+      role:
+        $ref: '#/schemas/LocationAccessRole'
+      joinedAt:
+        type: string
+        format: date-time
+        description: Когда появился доступ (UTC).
+        example: '2025-01-15T10:00:00Z'
+
+  SharedLocationsResponse:
+    type: object
+    required: [locations]
+    properties:
+      locations:
+        type: array
+        items:
+          $ref: '#/schemas/SharedLocationDto'

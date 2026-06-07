@@ -1,6 +1,7 @@
 package com.plantcare.api;
 
 import com.plantcare.api.auth.exception.AuthTokenException;
+import com.plantcare.api.auth.exception.GuestConvertException;
 import com.plantcare.api.auth.exception.RateLimitExceededException;
 import com.plantcare.api.dto.ApiErrorResponse;
 import com.plantcare.api.dto.FieldError;
@@ -17,6 +18,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.HandlerMethodValidationException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.server.ResponseStatusException;
 
 /**
  * Глобальный обработчик ошибок REST API ({@code /api/**}).
@@ -90,6 +92,16 @@ public class ApiExceptionHandler {
                 .body(ApiErrorResponse.of(e.getCode().name(), e.getMessage()));
     }
 
+    @ExceptionHandler(GuestConvertException.class)
+    public ResponseEntity<ApiErrorResponse> handleGuestConvert(GuestConvertException e) {
+        HttpStatus status = switch (e.getCode()) {
+            case NOT_A_GUEST -> HttpStatus.FORBIDDEN;
+            case IDENTITY_ALREADY_TAKEN -> HttpStatus.CONFLICT;
+        };
+        return ResponseEntity.status(status)
+                .body(ApiErrorResponse.of(e.getCode().name(), e.getMessage()));
+    }
+
     @ExceptionHandler(RateLimitExceededException.class)
     public ResponseEntity<ApiErrorResponse> handleRateLimit(RateLimitExceededException e) {
         return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
@@ -105,7 +117,7 @@ public class ApiExceptionHandler {
 
     @ExceptionHandler(LocationNotEmptyException.class)
     public ResponseEntity<ApiErrorResponse> handleLocationNotEmpty(LocationNotEmptyException e) {
-        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+        return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(ApiErrorResponse.of("LOCATION_NOT_EMPTY", e.getMessage()));
     }
 
@@ -113,6 +125,18 @@ public class ApiExceptionHandler {
     public ResponseEntity<ApiErrorResponse> handleConflict(IllegalStateException e) {
         return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(ApiErrorResponse.of("CONFLICT", e.getMessage()));
+    }
+
+    /**
+     * {@link ResponseStatusException} — используется для HTTP-статусов без стандартного
+     * исключения (например, 410 Gone для просроченного/использованного инвайта).
+     * Пробрасывает статус из исключения, формат ответа — единый ApiErrorResponse.
+     */
+    @ExceptionHandler(ResponseStatusException.class)
+    public ResponseEntity<ApiErrorResponse> handleResponseStatus(ResponseStatusException e) {
+        String code = e.getStatusCode().value() == 410 ? "GONE" : e.getStatusCode().toString();
+        return ResponseEntity.status(e.getStatusCode())
+                .body(ApiErrorResponse.of(code, e.getReason() != null ? e.getReason() : e.getMessage()));
     }
 
     @ExceptionHandler(RuntimeException.class)

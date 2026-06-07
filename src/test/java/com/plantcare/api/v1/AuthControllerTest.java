@@ -1,9 +1,12 @@
 package com.plantcare.api.v1;
 
 import com.plantcare.api.auth.exception.AuthTokenException;
+import com.plantcare.api.auth.exception.GuestConvertException;
 import com.plantcare.api.auth.exception.RateLimitExceededException;
+import com.plantcare.api.auth.ratelimit.GuestRateLimiter;
 import com.plantcare.api.auth.ratelimit.MagicLinkRateLimiter;
 import com.plantcare.api.auth.service.AuthService;
+import com.plantcare.api.auth.service.GuestAuthService;
 import com.plantcare.api.auth.service.LogoutService;
 import com.plantcare.api.auth.service.MagicLinkService;
 import com.plantcare.api.auth.service.RefreshService;
@@ -27,6 +30,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -78,6 +82,12 @@ class AuthControllerTest {
 
     @MockitoBean
     private MagicLinkRateLimiter rateLimiter;
+
+    @MockitoBean
+    private GuestAuthService guestAuthService;
+
+    @MockitoBean
+    private GuestRateLimiter guestRateLimiter;
 
     private static User userMock(long id) {
         User user = mock(User.class);
@@ -374,5 +384,134 @@ class AuthControllerTest {
                 .andExpect(status().isNoContent());
 
         verify(logoutService).logoutAll(99L);
+    }
+
+    // ===================== POST /auth/guest (issue #227) =====================
+
+    @Test
+    void should_return_200_with_token_pair_and_is_new_user_true_when_new_guest_created() throws Exception {
+        // arrange
+        when(guestRateLimiter.isBlocked(anyString())).thenReturn(false);
+        var result = new GuestAuthService.GuestLoginResult(pair(), true);
+        when(guestAuthService.loginOrRestore("550e8400-e29b-41d4-a716-446655440000")).thenReturn(result);
+
+        // act + assert
+        mockMvc.perform(post("/api/v1/auth/guest")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"deviceId\": \"550e8400-e29b-41d4-a716-446655440000\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.accessToken").value("access-jwt"))
+                .andExpect(jsonPath("$.refreshToken").value("refresh-jwt"))
+                .andExpect(jsonPath("$.isNewUser").value(true));
+
+        verify(guestRateLimiter).recordNew(anyString());
+    }
+
+    @Test
+    void should_return_200_with_is_new_user_false_when_existing_device_id() throws Exception {
+        // arrange
+        when(guestRateLimiter.isBlocked(anyString())).thenReturn(false);
+        var result = new GuestAuthService.GuestLoginResult(pair(), false);
+        when(guestAuthService.loginOrRestore("550e8400-e29b-41d4-a716-446655440000")).thenReturn(result);
+
+        // act + assert
+        mockMvc.perform(post("/api/v1/auth/guest")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"deviceId\": \"550e8400-e29b-41d4-a716-446655440000\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.isNewUser").value(false));
+
+        // restore не фиксируется в rate-limiter
+        verify(guestRateLimiter, never()).recordNew(anyString());
+    }
+
+    @Test
+    void should_return_429_when_guest_rate_limit_exceeded() throws Exception {
+        // arrange — IP заблокирован
+        when(guestRateLimiter.isBlocked(anyString())).thenReturn(true);
+        when(guestRateLimiter.getWindowSeconds()).thenReturn(3600L);
+
+        // act + assert
+        mockMvc.perform(post("/api/v1/auth/guest")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"deviceId\": \"550e8400-e29b-41d4-a716-446655440000\"}"))
+                .andExpect(status().isTooManyRequests())
+                .andExpect(jsonPath("$.error.code").value("RATE_LIMITED"));
+
+        verify(guestAuthService, never()).loginOrRestore(anyString());
+    }
+
+    @Test
+    void should_return_400_when_device_id_is_invalid_uuid() throws Exception {
+        // act + assert — невалидный UUID4 → Bean Validation → 400
+        mockMvc.perform(post("/api/v1/auth/guest")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"deviceId\": \"not-a-uuid\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.code").value("VALIDATION_ERROR"));
+    }
+
+    // ===================== POST /auth/guest/convert (issue #227) =====================
+
+    @Test
+    void should_return_200_with_email_sent_status_when_converting_via_email() throws Exception {
+        // arrange
+        User guest = userMock(10L);
+        when(guest.isGuest()).thenReturn(true);
+        when(currentUserProvider.currentUser()).thenReturn(guest);
+
+        // act + assert
+        mockMvc.perform(post("/api/v1/auth/guest/convert")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"provider\": \"EMAIL\", \"email\": \"new@example.com\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("EMAIL_SENT"));
+
+        verify(guestAuthService).convertViaEmail(guest, "new@example.com");
+    }
+
+    @Test
+    void should_return_403_when_converting_non_guest_account() throws Exception {
+        // arrange — токен реального юзера
+        User real = userMock(20L);
+        when(currentUserProvider.currentUser()).thenReturn(real);
+        doThrow(GuestConvertException.notAGuest("User is not a guest"))
+                .when(guestAuthService).convertViaEmail(any(), anyString());
+
+        // act + assert
+        mockMvc.perform(post("/api/v1/auth/guest/convert")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"provider\": \"EMAIL\", \"email\": \"other@example.com\"}"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.error.code").value("NOT_A_GUEST"));
+    }
+
+    @Test
+    void should_return_409_when_identity_already_taken_during_convert() throws Exception {
+        // arrange — email уже занят другим аккаунтом
+        User guest = userMock(30L);
+        when(currentUserProvider.currentUser()).thenReturn(guest);
+        doThrow(GuestConvertException.identityAlreadyTaken("Email already taken"))
+                .when(guestAuthService).convertViaEmail(any(), anyString());
+
+        // act + assert
+        mockMvc.perform(post("/api/v1/auth/guest/convert")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"provider\": \"EMAIL\", \"email\": \"taken@example.com\"}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error.code").value("IDENTITY_ALREADY_TAKEN"));
+    }
+
+    @Test
+    void should_return_400_when_email_missing_for_email_provider() throws Exception {
+        // arrange
+        User guest = userMock(40L);
+        when(currentUserProvider.currentUser()).thenReturn(guest);
+
+        // act + assert — email обязателен для provider=EMAIL
+        mockMvc.perform(post("/api/v1/auth/guest/convert")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"provider\": \"EMAIL\"}"))
+                .andExpect(status().isBadRequest());
     }
 }

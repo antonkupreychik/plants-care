@@ -166,6 +166,15 @@ public class MenuCallbackService {
             return;
         }
 
+        // Мультидомность (issue #70): переключение активной локации и пауза.
+        if ("LOC_SWITCH_LIST".equals(data)
+                || data.startsWith("LOC_PICK:")
+                || data.startsWith("LOC_PAUSE:")
+                || data.startsWith("LOC_RESUME:")) {
+            handleLocationSwitchCallback(data, callbackId, client, user);
+            return;
+        }
+
         answerCallback(client, callbackId, "❌ Неизвестная команда");
     }
 
@@ -602,7 +611,73 @@ public class MenuCallbackService {
             return;
         }
 
+        // Issue #70: меню выбора длительности паузы для локации.
+        if (data.startsWith("LOCATION:PAUSE_MENU:")) {
+            Long locationId = parseLong(data.substring("LOCATION:PAUSE_MENU:".length()));
+            if (locationId == null) {
+                answerCallback(client, callbackId, "❌ Неверный ID");
+                return;
+            }
+            sendLocationPauseMenu(user, locationId, client);
+            answerCallback(client, callbackId, "");
+            return;
+        }
+
+        // Issue #70: запуск паузы по локации с выбранной длительностью.
+        if (data.startsWith("LOCATION:PAUSE_CONFIRM:")) {
+            String payload = data.substring("LOCATION:PAUSE_CONFIRM:".length());
+            String[] parts = payload.split(":");
+            if (parts.length < 2) {
+                answerCallback(client, callbackId, "❌ Неверная команда");
+                return;
+            }
+            Long locationId = parseLong(parts[0]);
+            Integer days = parseInteger(parts[1]);
+            if (locationId == null || days == null) {
+                answerCallback(client, callbackId, "❌ Неверный ID или дни");
+                return;
+            }
+            try {
+                locationService.pauseLocation(user, locationId, days);
+                locationMenuService.sendLocationScreen(user, locationId, client);
+                answerCallback(client, callbackId, "⏸ Пауза " + days + " дн.");
+            } catch (IllegalArgumentException e) {
+                answerCallback(client, callbackId, "❌ " + e.getMessage());
+            }
+            return;
+        }
+
         answerCallback(client, callbackId, "❌ Неизвестная команда");
+    }
+
+    /**
+     * Отправляет меню выбора длительности паузы локации (7 / 14 / 30 / Другое).
+     */
+    private void sendLocationPauseMenu(User user, Long locationId, TelegramClient client) {
+        InlineKeyboardMarkup keyboard = InlineKeyboardMarkup.builder()
+                .keyboardRow(new InlineKeyboardRow(List.of(
+                        InlineKeyboardButton.builder().text("7 дней")
+                                .callbackData("LOCATION:PAUSE_CONFIRM:" + locationId + ":7").build(),
+                        InlineKeyboardButton.builder().text("14 дней")
+                                .callbackData("LOCATION:PAUSE_CONFIRM:" + locationId + ":14").build(),
+                        InlineKeyboardButton.builder().text("30 дней")
+                                .callbackData("LOCATION:PAUSE_CONFIRM:" + locationId + ":30").build()
+                )))
+                .keyboardRow(new InlineKeyboardRow(List.of(
+                        InlineKeyboardButton.builder().text("⬅️ Отмена")
+                                .callbackData("LOCATION:VIEW:" + locationId).build()
+                )))
+                .build();
+
+        try {
+            client.execute(SendMessage.builder()
+                    .chatId(user.getTelegramChatId().toString())
+                    .text("⏸ На сколько дней поставить локацию на паузу?")
+                    .replyMarkup(keyboard)
+                    .build());
+        } catch (TelegramApiException e) {
+            log.error("Failed to send location pause menu", e);
+        }
     }
 
     /**
@@ -2591,6 +2666,148 @@ public class MenuCallbackService {
                     .build());
         } catch (TelegramApiException e) {
             log.error("Failed to send delete confirm for template {}", templateId, e);
+        }
+    }
+
+    // =================================================================
+    // Мультидомность (issue #70): переключение активной локации и пауза
+    // =================================================================
+
+    /**
+     * Обрабатывает:
+     * <ul>
+     *   <li>{@code LOC_SWITCH_LIST} — показывает список локаций для переключения</li>
+     *   <li>{@code LOC_PICK:{locationId}} — устанавливает активную локацию и перерисовывает меню</li>
+     *   <li>{@code LOC_PAUSE:{locationId}:{days}} — ставит локацию на паузу</li>
+     *   <li>{@code LOC_RESUME:{locationId}} — снимает паузу с локации</li>
+     * </ul>
+     */
+    private void handleLocationSwitchCallback(
+            String data,
+            String callbackId,
+            TelegramClient client,
+            User user
+    ) {
+        if ("LOC_SWITCH_LIST".equals(data)) {
+            sendLocationPickList(user, client);
+            answerCallback(client, callbackId, "");
+            return;
+        }
+
+        if (data.startsWith("LOC_PICK:")) {
+            Long locationId = parseLong(data.substring("LOC_PICK:".length()));
+            if (locationId == null) {
+                answerCallback(client, callbackId, "❌ Неверный ID");
+                return;
+            }
+            try {
+                com.plantcare.core.domain.Location loc =
+                        locationService.setActiveLocation(user, locationId);
+                // Перечитываем пользователя — activeLocation обновился.
+                User refreshed = userService.getByIdOrThrow(user.getId());
+                mainMenuService.sendMainMenu(refreshed, client);
+                answerCallback(client, callbackId, "📍 " + loc.getDisplayName());
+            } catch (IllegalArgumentException e) {
+                answerCallback(client, callbackId, "❌ " + e.getMessage());
+            }
+            return;
+        }
+
+        if (data.startsWith("LOC_PAUSE:")) {
+            String payload = data.substring("LOC_PAUSE:".length());
+            String[] parts = payload.split(":");
+            if (parts.length < 2) {
+                answerCallback(client, callbackId, "❌ Неверная команда");
+                return;
+            }
+            Long locationId = parseLong(parts[0]);
+            Integer days = parseInteger(parts[1]);
+            if (locationId == null || days == null) {
+                answerCallback(client, callbackId, "❌ Неверный ID или дни");
+                return;
+            }
+            try {
+                locationService.pauseLocation(user, locationId, days);
+                User refreshed = userService.getByIdOrThrow(user.getId());
+                mainMenuService.sendMainMenu(refreshed, client);
+                answerCallback(client, callbackId, "⏸ Локация на паузе " + days + " дн.");
+            } catch (IllegalArgumentException e) {
+                answerCallback(client, callbackId, "❌ " + e.getMessage());
+            }
+            return;
+        }
+
+        if (data.startsWith("LOC_RESUME:")) {
+            Long locationId = parseLong(data.substring("LOC_RESUME:".length()));
+            if (locationId == null) {
+                answerCallback(client, callbackId, "❌ Неверный ID");
+                return;
+            }
+            try {
+                locationService.resumeLocation(user, locationId);
+                User refreshed = userService.getByIdOrThrow(user.getId());
+                mainMenuService.sendMainMenu(refreshed, client);
+                answerCallback(client, callbackId, "▶️ Локация возобновлена");
+            } catch (IllegalArgumentException e) {
+                answerCallback(client, callbackId, "❌ " + e.getMessage());
+            }
+            return;
+        }
+
+        answerCallback(client, callbackId, "❌ Неизвестная команда");
+    }
+
+    /**
+     * Отправляет список локаций пользователя для выбора активной.
+     */
+    private void sendLocationPickList(User user, TelegramClient client) {
+        java.util.List<com.plantcare.core.domain.Location> locations =
+                locationService.getUserLocations(user.getId());
+
+        if (locations.isEmpty()) {
+            sendText(user, client, "У тебя пока нет локаций. Создай первую в разделе 📍 Локации.");
+            return;
+        }
+
+        com.plantcare.core.domain.Location active = user.getActiveLocation();
+        Long activeId = active != null ? active.getId() : null;
+
+        List<InlineKeyboardRow> rows = new ArrayList<>();
+
+        for (com.plantcare.core.domain.Location loc : locations) {
+            String prefix = loc.getId().equals(activeId) ? "✅ " : "";
+            rows.add(new InlineKeyboardRow(List.of(
+                    InlineKeyboardButton.builder()
+                            .text(prefix + loc.getDisplayName())
+                            .callbackData("LOC_PICK:" + loc.getId())
+                            .build()
+            )));
+        }
+
+        rows.add(new InlineKeyboardRow(List.of(
+                InlineKeyboardButton.builder()
+                        .text("⬅️ Назад")
+                        .callbackData("MENU:BACK")
+                        .build()
+        )));
+
+        try {
+            client.execute(SendMessage.builder()
+                    .chatId(user.getTelegramChatId().toString())
+                    .text("📍 Выбери активную локацию:")
+                    .replyMarkup(InlineKeyboardMarkup.builder().keyboard(rows).build())
+                    .build());
+        } catch (TelegramApiException e) {
+            log.error("Failed to send location pick list", e);
+        }
+    }
+
+    private Integer parseInteger(String s) {
+        if (s == null) return null;
+        try {
+            return Integer.parseInt(s.trim());
+        } catch (NumberFormatException e) {
+            return null;
         }
     }
 }

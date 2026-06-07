@@ -4,6 +4,7 @@ import com.plantcare.core.domain.UserDevice;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
+import java.util.List;
 import java.util.Optional;
 
 @Repository
@@ -14,4 +15,7 @@ public interface UserDeviceRepository extends JpaRepository<UserDevice, Long> {
 
     /** Находит устройство пользователя по его id для авторизованного удаления. */
     Optional<UserDevice> findByIdAndUserId(Long id, Long userId);
+
+    /** Возвращает все устройства пользователя (для fan-out push, issue #175). */
+    List<UserDevice> findByUserId(Long userId);
 }

@@ -1,6 +1,8 @@
 package com.plantcare.core.repository;
 
 import com.plantcare.core.domain.Disease;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -16,6 +18,12 @@ public interface DiseaseRepository extends JpaRepository<Disease, Long> {
      * Справочник небольшой (~20 записей, ADR-013), пагинация не нужна.
      */
     List<Disease> findAllByOrderByNameAsc();
+
+    /**
+     * Все болезни с поддержкой пагинации (issue #255).
+     * Используется для REST API мобайла.
+     */
+    Page<Disease> findAllByOrderByNameAsc(Pageable pageable);
 
     /**
      * Полнотекстовый поиск по названию, тегам и симптомам.
@@ -38,4 +46,29 @@ public interface DiseaseRepository extends JpaRepository<Disease, Long> {
         LIMIT :maxResults
         """, nativeQuery = true)
     List<Disease> searchByQuery(@Param("query") String query, @Param("maxResults") int maxResults);
+
+    /**
+     * Полнотекстовый поиск по названию, тегам и симптомам с пагинацией (issue #255).
+     * Использует GIN-индекс {@code idx_diseases_search}. countQuery нужен для
+     * корректного подсчёта total в Page.
+     */
+    @Query(value = """
+        SELECT * FROM diseases
+        WHERE to_tsvector('simple',
+                  coalesce(name, '') || ' ' || coalesce(search_tags, '') || ' ' || coalesce(symptoms, ''))
+              @@ plainto_tsquery('simple', :query)
+           OR LOWER(name) LIKE LOWER(CONCAT('%', :query, '%'))
+           OR LOWER(coalesce(latin_name, '')) LIKE LOWER(CONCAT('%', :query, '%'))
+        ORDER BY name ASC
+        """,
+        countQuery = """
+        SELECT count(*) FROM diseases
+        WHERE to_tsvector('simple',
+                  coalesce(name, '') || ' ' || coalesce(search_tags, '') || ' ' || coalesce(symptoms, ''))
+              @@ plainto_tsquery('simple', :query)
+           OR LOWER(name) LIKE LOWER(CONCAT('%', :query, '%'))
+           OR LOWER(coalesce(latin_name, '')) LIKE LOWER(CONCAT('%', :query, '%'))
+        """,
+        nativeQuery = true)
+    Page<Disease> searchByQuery(@Param("query") String query, Pageable pageable);
 }

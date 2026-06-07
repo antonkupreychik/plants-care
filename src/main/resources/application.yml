@@ -107,6 +107,17 @@ plantcare:
         max-attempts: 5
         window-seconds: 300
 
+    # Issue #92: Bucket4j per-IP/per-user rate limits for the REST API.
+    # All values configurable via env vars on Railway.
+    api:
+      rate-limit:
+        unauthenticated-per-minute: ${API_RL_UNAUTH_PER_MIN:100}
+        authenticated-per-minute: ${API_RL_AUTH_PER_MIN:1000}
+        auth-endpoint-per-minute: ${API_RL_AUTH_EP_PER_MIN:10}
+        magic-link-per-minute: ${API_RL_MAGIC_LINK_PER_MIN:3}
+        magic-link-per-hour: ${API_RL_MAGIC_LINK_PER_HOUR:5}
+        max-buckets: ${API_RL_MAX_BUCKETS:100000}
+
   # Issue #215: Universal Links (iOS) / App Links (Android) для magic-link диплинков.
   # Значения зависят от мобильного приложения и различаются на dev/prod.
   # Требуются реальные данные от app-команды (Team ID, bundle id, SHA-256 fingerprints).
@@ -123,6 +134,18 @@ plantcare:
       # SHA-256 отпечатки подписи приложения (debug и release).
       # Формат: AA:BB:CC:... (hex через двоеточие). Может быть несколько.
       sha256-cert-fingerprints: ${DEEP_LINK_ANDROID_SHA256_CERT_FINGERPRINTS:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99}
+
+# Issue #175 (ADR-014): push-уведомления на мобильные устройства.
+# Глобальный тумблер; реальные FCM/APNs-ключи добавляются отдельной задачей.
+push:
+  enabled: ${PUSH_ENABLED:false}
+  fcm:
+    server-key: ${FCM_SERVER_KEY:}
+  apns:
+    key-id:           ${APNS_KEY_ID:}
+    team-id:          ${APNS_TEAM_ID:}
+    bundle-id:        ${APNS_BUNDLE_ID:}
+    private-key-path: ${APNS_PRIVATE_KEY_PATH:}
 
 admin:
   username: ${ADMIN_USERNAME:}

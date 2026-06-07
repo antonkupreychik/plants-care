@@ -4,6 +4,7 @@ import com.plantcare.api.CurrentUserProvider;
 import com.plantcare.api.generated.SchedulesApi;
 import com.plantcare.api.generated.model.CareScheduleDto;
 import com.plantcare.api.generated.model.CareScheduleUpdateRequest;
+import com.plantcare.api.generated.model.SchedulePostponeRequest;
 import com.plantcare.api.generated.model.SeasonalScheduleDto;
 import com.plantcare.core.domain.enums.SeasonalOverride;
 import com.plantcare.core.domain.enums.TaskType;
@@ -60,6 +61,23 @@ public class ScheduleController implements SchedulesApi {
                 userId, id, taskType,
                 request.getEvery(), request.getAmountMl(), request.getEnabled(),
                 seasonalOverrideEnum);
+        return toDto(view);
+    }
+
+    @Override
+    public CareScheduleDto postponePlantSchedule(Long id, String type, SchedulePostponeRequest request) {
+        Long userId = currentUserProvider.currentUserId();
+
+        TaskType taskType;
+        try {
+            taskType = TaskType.valueOf(type);
+        } catch (IllegalArgumentException ex) {
+            throw new IllegalArgumentException("Неизвестный тип задачи: " + type);
+        }
+
+        // Сдвиг «от сейчас» — аналог кнопки «Отложить на N дней» в Telegram-боте.
+        // Базовый интервал (every) не меняется, это разовый перенос.
+        ScheduleView view = plantService.postponeSchedule(userId, id, taskType, request.getDays());
         return toDto(view);
     }
 

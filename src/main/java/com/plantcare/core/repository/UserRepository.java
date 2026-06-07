@@ -29,6 +29,11 @@ public interface UserRepository extends JpaRepository<User, Long> {
 
     Optional<User> findByGoogleSubject(String googleSubject);
 
+    // ===== Guest auth (issue #227) =====
+
+    /** Поиск гостевого пользователя по deviceId устройства. */
+    Optional<User> findByDeviceId(String deviceId);
+
     /**
      * Issue #79: pessimistic SELECT FOR UPDATE used during lazy calendar-token
      * generation, чтобы два параллельных нажатия на кнопку «Экспорт» не

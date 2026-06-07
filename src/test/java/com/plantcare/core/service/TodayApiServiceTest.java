@@ -188,6 +188,55 @@ class TodayApiServiceTest extends IntegrationTestBase {
         });
     }
 
+    @Test
+    @DisplayName("should_exclude_plants_from_paused_location_in_today_tasks")
+    void should_exclude_plants_from_paused_location_in_today_tasks() {
+        // arrange — два растения: одно в активной локации, другое в локации на паузе.
+        // Только растение из активной локации должно попасть в «сегодня».
+        User user = savedUser(9008L, "Europe/Moscow");
+
+        Location activeLocation = locationRepository.save(Location.builder()
+                .user(user)
+                .name("Гостиная")
+                .emoji("🌿")
+                .defaultLocation(true)
+                .build());
+
+        Location pausedLocation = locationRepository.save(Location.builder()
+                .user(user)
+                .name("Дача")
+                .emoji("🏡")
+                .defaultLocation(false)
+                // пауза ещё активна — 30 дней в будущем
+                .pausedUntil(Instant.now().plus(30, ChronoUnit.DAYS))
+                .build());
+
+        Plant activePlant = plantRepository.save(Plant.builder()
+                .user(user)
+                .location(activeLocation)
+                .name("Монстера")
+                .acquiredAt(LocalDate.of(2024, 1, 1))
+                .build());
+
+        Plant pausedPlant = plantRepository.save(Plant.builder()
+                .user(user)
+                .location(pausedLocation)
+                .name("Дачный кактус")
+                .acquiredAt(LocalDate.of(2024, 1, 1))
+                .build());
+
+        // оба расписания просрочены — без паузы оба попали бы в сегодня
+        savedSchedule(activePlant, TaskType.WATERING, utc("2026-05-20T10:00:00"));
+        savedSchedule(pausedPlant, TaskType.WATERING, utc("2026-05-20T10:00:00"));
+
+        // act
+        List<TodayTask> tasks = service.getTodayTasks(user.getId(), "Europe/Moscow");
+
+        // assert — только активное растение в списке, растение из локации на паузе исключено
+        assertThat(tasks).hasSize(1);
+        assertThat(tasks.get(0).schedule().getPlant().getName()).isEqualTo("Монстера");
+    }
+
     // ===================== helpers =====================
 
     private User savedUser(Long chatId, String timezone) {

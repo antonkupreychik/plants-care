@@ -77,6 +77,7 @@ public class UserProfileService {
             boolean googleLinked,
             boolean emailLinked,
             boolean telegramLinked,
+            boolean isGuest,
             String calendarSubscriptionUrl
     ) {
     }
@@ -150,6 +151,7 @@ public class UserProfileService {
                 user.getGoogleSubject() != null,
                 user.getEmail() != null,
                 user.getTelegramChatId() != null,
+                user.isGuest(),
                 calendarSubscriptionUrl
         );
     }
@@ -207,6 +209,23 @@ public class UserProfileService {
                 update.weatherEnabled() != null);
 
         return getProfile(user);
+    }
+
+    /**
+     * Устанавливает координаты погодной локации пользователя (issue #257,
+     * mobile gap: weather-location). После вызова {@link User#isWeatherUsable()}
+     * вернёт {@code true}, если у юзера ещё включён {@code weatherEnabled}.
+     *
+     * @param user аутентифицированный пользователь
+     * @param lat  широта [-90, 90]
+     * @param lon  долгота [-180, 180]
+     */
+    @Transactional
+    public void setWeatherLocation(User user, double lat, double lon) {
+        user.setWeatherLat(lat);
+        user.setWeatherLon(lon);
+        userRepository.save(user);
+        log.info("PUT /me/weather-location: userId={}, lat={}, lon={}", user.getId(), lat, lon);
     }
 
     private static ZoneId parseZone(String timezone) {

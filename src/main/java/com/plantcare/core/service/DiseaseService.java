@@ -5,6 +5,8 @@ import com.plantcare.core.domain.Disease;
 import com.plantcare.core.repository.DiseaseRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -33,6 +35,38 @@ public class DiseaseService {
                 .stream()
                 .map(DiseaseCard::from)
                 .toList();
+    }
+
+    /**
+     * Страница болезней справочника с пагинацией (issue #255).
+     *
+     * @param pageable параметры пагинации
+     * @return страница болезней в алфавитном порядке
+     */
+    @Transactional(readOnly = true)
+    public Page<DiseaseCard> findPage(Pageable pageable) {
+        return diseaseRepository.findAllByOrderByNameAsc(pageable)
+                .map(DiseaseCard::from);
+    }
+
+    /**
+     * Полнотекстовый поиск по болезням с пагинацией (issue #255).
+     *
+     * @param query    пользовательский запрос
+     * @param pageable параметры пагинации
+     * @return страница найденных карточек в алфавитном порядке
+     */
+    @Transactional(readOnly = true)
+    public Page<DiseaseCard> searchPage(String query, Pageable pageable) {
+        if (query == null || query.isBlank()) {
+            return Page.empty(pageable);
+        }
+
+        Page<DiseaseCard> results = diseaseRepository.searchByQuery(query.trim(), pageable)
+                .map(DiseaseCard::from);
+
+        log.debug("Disease search page. query='{}', found={}, total={}", query, results.getNumberOfElements(), results.getTotalElements());
+        return results;
     }
 
     /**

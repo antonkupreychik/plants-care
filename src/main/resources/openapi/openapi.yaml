@@ -115,6 +115,11 @@ tags:
       Совместный уход (gap G22, экран 26): владелец приглашает соухаживающего
       по контакту (@username / телефон), выбирает растения и даёт право
       отмечать уход.
+  - name: LocationSharing
+    description: |
+      REST API совместного ухода по локации (issue #251): OWNER создаёт одноразовый
+      инвайт, CARETAKER принимает его по токену. Оба видят растения/задачи локации;
+      отметка ухода одним участником закрывает задачу для всех.
   - name: Devices
     description: |
       Регистрация и отвязка мобильных устройств для push-уведомлений
@@ -126,6 +131,11 @@ tags:
       мобильного приложения. Клиент передаёт `since` (серверное время из предыдущего
       ответа) и получает все сущности, изменённые после этого момента, а также
       список удалений. Server timestamp wins при конфликтах.
+  - name: PlantTemplates
+    description: |
+      Пользовательские шаблоны растений (issue #254): сохранение набора интервалов
+      ухода из существующего растения, быстрое создание нового растения по шаблону.
+      Максимум 30 шаблонов на пользователя.
 
 paths:
   /api/v1/auth/apple:
@@ -142,6 +152,10 @@ paths:
     $ref: './resources/auth.yaml#/paths/Logout'
   /api/v1/auth/logout-all:
     $ref: './resources/auth.yaml#/paths/LogoutAll'
+  /api/v1/auth/guest:
+    $ref: './resources/guest.yaml#/paths/GuestLogin'
+  /api/v1/auth/guest/convert:
+    $ref: './resources/guest.yaml#/paths/GuestConvert'
 
   /api/v1/health:
     $ref: './resources/health.yaml#/paths/Health'
@@ -160,6 +174,8 @@ paths:
     $ref: './resources/plant-history.yaml#/paths/ItemHistorySummary'
   /api/v1/plants/{id}/events:
     $ref: './resources/plant-events.yaml#/paths/Collection'
+  /api/v1/plants/{id}/acclimation:
+    $ref: './resources/plants.yaml#/paths/ItemAcclimation'
   /api/v1/plants/{id}/health:
     $ref: './resources/plants.yaml#/paths/ItemHealth'
   /api/v1/plants/{id}/family:
@@ -170,11 +186,26 @@ paths:
     $ref: './resources/schedules.yaml#/paths/Collection'
   /api/v1/plants/{id}/schedules/{type}:
     $ref: './resources/schedules.yaml#/paths/Item'
+  /api/v1/plants/{id}/schedules/{type}/postpone:
+    $ref: './resources/schedules.yaml#/paths/ItemPostpone'
+
+  /api/v1/plant-templates:
+    $ref: './resources/plant-templates.yaml#/paths/Collection'
+  /api/v1/plant-templates/{id}:
+    $ref: './resources/plant-templates.yaml#/paths/Item'
+  /api/v1/plant-templates/{id}/instantiate:
+    $ref: './resources/plant-templates.yaml#/paths/Instantiate'
 
   /api/v1/locations:
     $ref: './resources/locations.yaml#/paths/Collection'
   /api/v1/locations/{id}:
     $ref: './resources/locations.yaml#/paths/Item'
+  /api/v1/locations/{id}/activate:
+    $ref: './resources/locations.yaml#/paths/ItemActivate'
+  /api/v1/locations/{id}/pause:
+    $ref: './resources/locations.yaml#/paths/ItemPause'
+  /api/v1/locations/{id}/resume:
+    $ref: './resources/locations.yaml#/paths/ItemResume'
 
   /api/v1/care-events:
     $ref: './resources/care-events.yaml#/paths/Collection'
@@ -213,6 +244,8 @@ paths:
 
   /api/v1/shopping:
     $ref: './resources/shopping.yaml#/paths/Collection'
+  /api/v1/shopping/clear:
+    $ref: './resources/shopping.yaml#/paths/CollectionClear'
   /api/v1/shopping/{id}:
     $ref: './resources/shopping.yaml#/paths/Item'
 
@@ -226,11 +259,28 @@ paths:
 
   /api/v1/me:
     $ref: './resources/me.yaml#/paths/Me'
+  /api/v1/me/weather-location:
+    $ref: './resources/me.yaml#/paths/WeatherLocation'
+  /api/v1/me/seasonal:
+    $ref: './resources/me.yaml#/paths/Seasonal'
+  /api/v1/me/seasonal/{season}:
+    $ref: './resources/me.yaml#/paths/SeasonalItem'
 
   /api/v1/sharing:
     $ref: './resources/sharing.yaml#/paths/Collection'
   /api/v1/sharing/invites:
     $ref: './resources/sharing.yaml#/paths/Invites'
+
+  /api/v1/locations/{id}/invites:
+    $ref: './resources/location-sharing.yaml#/paths/CreateInvite'
+  /api/v1/locations/{id}/members:
+    $ref: './resources/location-sharing.yaml#/paths/Members'
+  /api/v1/locations/{id}/members/{userId}:
+    $ref: './resources/location-sharing.yaml#/paths/RevokeAccess'
+  /api/v1/invites/{token}/accept:
+    $ref: './resources/location-sharing.yaml#/paths/AcceptInvite'
+  /api/v1/shared-locations:
+    $ref: './resources/location-sharing.yaml#/paths/SharedLocations'
 
   /api/v1/devices:
     $ref: './resources/devices.yaml#/paths/Collection'
@@ -294,6 +344,14 @@ components:
       $ref: './resources/auth.yaml#/schemas/LogoutRequest'
     TokenPairResponse:
       $ref: './resources/auth.yaml#/schemas/TokenPairResponse'
+    GuestLoginRequest:
+      $ref: './resources/guest.yaml#/schemas/GuestLoginRequest'
+    GuestLoginResponse:
+      $ref: './resources/guest.yaml#/schemas/GuestLoginResponse'
+    GuestConvertRequest:
+      $ref: './resources/guest.yaml#/schemas/GuestConvertRequest'
+    GuestConvertResponse:
+      $ref: './resources/guest.yaml#/schemas/GuestConvertResponse'
 
     HealthResponse:
       $ref: './resources/health.yaml#/schemas/HealthResponse'
@@ -337,6 +395,8 @@ components:
       $ref: './resources/locations.yaml#/schemas/LocationCreateRequest'
     LocationUpdateRequest:
       $ref: './resources/locations.yaml#/schemas/LocationUpdateRequest'
+    LocationPauseRequest:
+      $ref: './resources/locations.yaml#/schemas/LocationPauseRequest'
 
     CareEventType:
       $ref: './resources/care-events.yaml#/schemas/CareEventType'
@@ -379,6 +439,8 @@ components:
 
     DiseaseDto:
       $ref: './resources/diseases.yaml#/schemas/DiseaseDto'
+    PageResponseDiseaseDto:
+      $ref: './resources/diseases.yaml#/schemas/PageResponseDiseaseDto'
 
     CareScheduleDto:
       $ref: './resources/schedules.yaml#/schemas/CareScheduleDto'
@@ -388,6 +450,8 @@ components:
       $ref: './resources/schedules.yaml#/schemas/SeasonalScheduleDto'
     ScheduleInput:
       $ref: './resources/schedules.yaml#/schemas/ScheduleInput'
+    SchedulePostponeRequest:
+      $ref: './resources/schedules.yaml#/schemas/SchedulePostponeRequest'
 
     ShoppingItemDto:
       $ref: './resources/shopping.yaml#/schemas/ShoppingItemDto'
@@ -402,6 +466,8 @@ components:
       $ref: './resources/me.yaml#/schemas/MeResponse'
     MeUpdateRequest:
       $ref: './resources/me.yaml#/schemas/MeUpdateRequest'
+    WeatherLocationRequest:
+      $ref: './resources/me.yaml#/schemas/WeatherLocationRequest'
     NotificationDto:
       $ref: './resources/notifications.yaml#/schemas/NotificationDto'
     NotificationsResponse:
@@ -421,6 +487,21 @@ components:
     SharingInviteCreateRequest:
       $ref: './resources/sharing.yaml#/schemas/SharingInviteCreateRequest'
 
+    LocationAccessRole:
+      $ref: './resources/location-sharing.yaml#/schemas/LocationAccessRole'
+    LocationMemberDto:
+      $ref: './resources/location-sharing.yaml#/schemas/LocationMemberDto'
+    LocationMembersResponse:
+      $ref: './resources/location-sharing.yaml#/schemas/LocationMembersResponse'
+    LocationInviteResponse:
+      $ref: './resources/location-sharing.yaml#/schemas/LocationInviteResponse'
+    AcceptInviteResponse:
+      $ref: './resources/location-sharing.yaml#/schemas/AcceptInviteResponse'
+    SharedLocationDto:
+      $ref: './resources/location-sharing.yaml#/schemas/SharedLocationDto'
+    SharedLocationsResponse:
+      $ref: './resources/location-sharing.yaml#/schemas/SharedLocationsResponse'
+
     DeviceRegisterRequest:
       $ref: './resources/devices.yaml#/schemas/DeviceRegisterRequest'
     DeviceDto:
@@ -436,6 +517,15 @@ components:
       $ref: './resources/sync.yaml#/schemas/SyncCareEventDto'
     SyncDeletionDto:
       $ref: './resources/sync.yaml#/schemas/SyncDeletionDto'
+
+    PlantTemplateDto:
+      $ref: './resources/plant-templates.yaml#/schemas/PlantTemplateDto'
+    PlantTemplateCareRuleDto:
+      $ref: './resources/plant-templates.yaml#/schemas/PlantTemplateCareRuleDto'
+    PlantTemplateCreateRequest:
+      $ref: './resources/plant-templates.yaml#/schemas/PlantTemplateCreateRequest'
+    PlantTemplateInstantiateRequest:
+      $ref: './resources/plant-templates.yaml#/schemas/PlantTemplateInstantiateRequest'
 
     ApiErrorResponse:
       $ref: './_common/errors.yaml#/schemas/ApiErrorResponse'

@@ -10,8 +10,10 @@ paths:
         Публичный справочник болезней и вредителей комнатных растений.
         Без авторизации.
 
-        Без параметра `q` — полный список в алфавитном порядке.
-        С параметром `q` — полнотекстовый поиск (делегирует `DiseaseService.search(q, 20)`).
+        Без параметра `q` — полный список в алфавитном порядке постранично.
+        С параметром `q` — полнотекстовый поиск (GIN-индекс `idx_diseases_search`).
+
+        `limit` обрезается до 100.
       parameters:
         - name: q
           in: query
@@ -21,15 +23,32 @@ paths:
             type: string
             default: ""
             example: клещ
+        - name: offset
+          in: query
+          required: false
+          description: Сдвиг от начала.
+          schema:
+            type: integer
+            format: int32
+            default: 0
+            minimum: 0
+        - name: limit
+          in: query
+          required: false
+          description: Размер страницы. Обрезается до 100.
+          schema:
+            type: integer
+            format: int32
+            default: 20
+            minimum: 1
+            maximum: 100
       responses:
         '200':
-          description: Список болезней.
+          description: Страница болезней.
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/schemas/DiseaseDto'
+                $ref: '#/schemas/PageResponseDiseaseDto'
 
   Item:
     get:
@@ -81,3 +100,23 @@ schemas:
       prevention:
         type: string
         example: Поддерживать влажность воздуха…
+
+  PageResponseDiseaseDto:
+    type: object
+    description: Постраничный ответ со списком болезней/вредителей.
+    required: [items, total, offset, limit]
+    properties:
+      items:
+        type: array
+        items:
+          $ref: '#/schemas/DiseaseDto'
+      total:
+        type: integer
+        format: int64
+        description: Общее количество болезней (с учётом фильтра `q`).
+      offset:
+        type: integer
+        format: int32
+      limit:
+        type: integer
+        format: int32
