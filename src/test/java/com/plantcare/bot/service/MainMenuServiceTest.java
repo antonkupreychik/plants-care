@@ -179,7 +179,7 @@ class MainMenuServiceTest {
 
         assertThat(buttonTexts).contains("➕ Добавить растение");
         assertThat(buttonTexts).contains("📋 Все растения");
-        assertThat(buttonTexts).contains("📍 Комнаты");
+        assertThat(buttonTexts).contains("📍 Локации");
         assertThat(buttonTexts).contains("⚙️ Настройки");
     }
 

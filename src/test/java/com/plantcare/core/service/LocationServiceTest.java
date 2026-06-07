@@ -5,6 +5,7 @@ import com.plantcare.core.domain.Plant;
 import com.plantcare.core.domain.User;
 import com.plantcare.core.repository.LocationRepository;
 import com.plantcare.core.repository.PlantRepository;
+import com.plantcare.core.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -15,9 +16,11 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -33,6 +36,9 @@ class LocationServiceTest {
 
     @Mock
     private PlantRepository plantRepository;
+
+    @Mock
+    private UserRepository userRepository;
 
     @Mock
     private AnalyticsService analyticsService;
@@ -397,5 +403,115 @@ class LocationServiceTest {
 
         assertThat(locationService.hasReachedLocationsLimit(user.getId())).isTrue();
         assertThat(locationService.getMaxLocationsPerUser()).isEqualTo(20);
+    }
+
+    // ===== Мультидомность (issue #70) =====
+
+    @Test
+    @DisplayName("Ставит локацию на паузу на заданное количество дней")
+    void should_pauseLocation_when_validDaysProvided() {
+        Location location = Location.builder()
+                .user(user).name("Дача").emoji("🏡").defaultLocation(false).build();
+        ReflectionTestUtils.setField(location, "id", 20L);
+
+        when(locationRepository.findByUserIdAndId(user.getId(), 20L))
+                .thenReturn(Optional.of(location));
+        when(locationRepository.save(any(Location.class)))
+                .thenAnswer(inv -> inv.getArgument(0));
+
+        Location result = locationService.pauseLocation(user, 20L, 7);
+
+        assertThat(result.getPausedUntil()).isNotNull();
+        assertThat(result.getPausedUntil()).isAfter(Instant.now());
+        assertThat(result.isPaused()).isTrue();
+        verify(analyticsService).track(eq(user.getId()), eq("location_paused"), anyMap());
+    }
+
+    @Test
+    @DisplayName("Отклоняет паузу с недопустимым числом дней (0)")
+    void should_rejectPause_when_daysIsZero() {
+        assertThatThrownBy(() -> locationService.pauseLocation(user, 20L, 0))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("от 1 до 180");
+    }
+
+    @Test
+    @DisplayName("Отклоняет паузу с числом дней больше 180")
+    void should_rejectPause_when_daysExceed180() {
+        assertThatThrownBy(() -> locationService.pauseLocation(user, 20L, 181))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("от 1 до 180");
+    }
+
+    @Test
+    @DisplayName("Снимает паузу с локации")
+    void should_resumeLocation_when_paused() {
+        Instant future = Instant.now().plusSeconds(60 * 60 * 24 * 3);
+        Location location = Location.builder()
+                .user(user).name("Дача").emoji("🏡").defaultLocation(false).build();
+        ReflectionTestUtils.setField(location, "id", 21L);
+        location.setPausedUntil(future);
+
+        when(locationRepository.findByUserIdAndId(user.getId(), 21L))
+                .thenReturn(Optional.of(location));
+        when(locationRepository.save(any(Location.class)))
+                .thenAnswer(inv -> inv.getArgument(0));
+
+        Location result = locationService.resumeLocation(user, 21L);
+
+        assertThat(result.getPausedUntil()).isNull();
+        assertThat(result.isPaused()).isFalse();
+        verify(analyticsService).track(eq(user.getId()), eq("location_resumed"), anyMap());
+    }
+
+    @Test
+    @DisplayName("Устанавливает активную локацию для пользователя")
+    void should_setActiveLocation_when_locationBelongsToUser() {
+        Location location = Location.builder()
+                .user(user).name("Офис").emoji("🏢").defaultLocation(false).build();
+        ReflectionTestUtils.setField(location, "id", 30L);
+
+        when(locationRepository.findByUserIdAndId(user.getId(), 30L))
+                .thenReturn(Optional.of(location));
+        when(userRepository.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        Location result = locationService.setActiveLocation(user, 30L);
+
+        assertThat(result.getName()).isEqualTo("Офис");
+        assertThat(user.getActiveLocation()).isEqualTo(location);
+        verify(userRepository).save(user);
+        verify(analyticsService).track(eq(user.getId()), eq("location_switched"), anyMap());
+    }
+
+    @Test
+    @DisplayName("isPaused возвращает false, если pausedUntil в прошлом")
+    void should_returnFalseForIsPaused_when_pausedUntilIsInPast() {
+        Location location = Location.builder()
+                .user(user).name("Дача").emoji("🏡").defaultLocation(false).build();
+        location.setPausedUntil(Instant.now().minusSeconds(1));
+
+        assertThat(location.isPaused()).isFalse();
+    }
+
+    @Test
+    @DisplayName("Возвращает пустой Set если нет паузных локаций у пользователя (Asia/Almaty)")
+    void should_returnEmptyPausedLocationIds_when_noPausedLocations() {
+        when(locationRepository.findPausedLocationIdsByUserId(eq(user.getId()), any(Instant.class)))
+                .thenReturn(List.of());
+
+        Set<Long> result = locationService.getPausedLocationIds(user.getId());
+
+        assertThat(result).isEmpty();
+    }
+
+    @Test
+    @DisplayName("Возвращает id паузных локаций для пользователя")
+    void should_returnPausedLocationIds_when_locationsArePaused() {
+        when(locationRepository.findPausedLocationIdsByUserId(eq(user.getId()), any(Instant.class)))
+                .thenReturn(List.of(10L, 20L));
+
+        Set<Long> result = locationService.getPausedLocationIds(user.getId());
+
+        assertThat(result).containsExactlyInAnyOrder(10L, 20L);
     }
 }

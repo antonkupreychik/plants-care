@@ -278,6 +278,12 @@ public class NotificationSchedulerService {
             return false;
         }
 
+        // Issue #70: глобальная пауза пользователя имеет приоритет над паузой локации.
+        // Если локация на паузе — пропускаем уведомление по этому растению.
+        if (plant.getLocation() != null && plant.getLocation().isPaused()) {
+            return false;
+        }
+
         // Quiet-hours считаем по абсолютному Instant из clock'а, а не из
         // LocalDateTime-параметра `now` — иначе при не-UTC JVM TZ wall-clock
         // в `now` интерпретировался бы как UTC и quiet-hours съезжали бы на
