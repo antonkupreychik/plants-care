@@ -90,7 +90,8 @@ public class MeController implements MeApi {
                 profile.appleLinked(),
                 profile.googleLinked(),
                 profile.emailLinked(),
-                profile.telegramLinked()
+                profile.telegramLinked(),
+                profile.isGuest()
         )
                 .email(profile.email())
                 .avatar(profile.avatar())

@@ -111,6 +111,7 @@ schemas:
       - googleLinked
       - emailLinked
       - telegramLinked
+      - isGuest
     properties:
       id:
         type: integer
@@ -229,6 +230,12 @@ schemas:
         type: boolean
         description: Привязан ли Telegram-аккаунт.
         example: true
+      isGuest:
+        type: boolean
+        description: |
+          `true` для гостевых аккаунтов (зарегистрированных через `POST /auth/guest`).
+          Мобилка использует это поле для показа баннера «Сохраните данные» (issue #227).
+        example: false
       calendarSubscriptionUrl:
         type: string
         nullable: true

@@ -142,6 +142,10 @@ paths:
     $ref: './resources/auth.yaml#/paths/Logout'
   /api/v1/auth/logout-all:
     $ref: './resources/auth.yaml#/paths/LogoutAll'
+  /api/v1/auth/guest:
+    $ref: './resources/guest.yaml#/paths/GuestLogin'
+  /api/v1/auth/guest/convert:
+    $ref: './resources/guest.yaml#/paths/GuestConvert'
 
   /api/v1/health:
     $ref: './resources/health.yaml#/paths/Health'
@@ -294,6 +298,14 @@ components:
       $ref: './resources/auth.yaml#/schemas/LogoutRequest'
     TokenPairResponse:
       $ref: './resources/auth.yaml#/schemas/TokenPairResponse'
+    GuestLoginRequest:
+      $ref: './resources/guest.yaml#/schemas/GuestLoginRequest'
+    GuestLoginResponse:
+      $ref: './resources/guest.yaml#/schemas/GuestLoginResponse'
+    GuestConvertRequest:
+      $ref: './resources/guest.yaml#/schemas/GuestConvertRequest'
+    GuestConvertResponse:
+      $ref: './resources/guest.yaml#/schemas/GuestConvertResponse'
 
     HealthResponse:
       $ref: './resources/health.yaml#/schemas/HealthResponse'

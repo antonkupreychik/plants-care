@@ -115,6 +115,17 @@ public class User extends BaseEntity {
     @Builder.Default
     private Map<String, Object> featureFlags = new HashMap<>();
 
+    // ===== Guest auth (issue #227) =====
+
+    /** TRUE для гостевых аккаунтов без email/social. */
+    @Column(name = "is_guest", nullable = false)
+    @Builder.Default
+    private boolean guest = false;
+
+    /** UUID устройства для идентификации гостя. NULL для обычных юзеров. */
+    @Column(name = "device_id", length = 64, unique = true)
+    private String deviceId;
+
     @Column(name = "is_blocked", nullable = false)
     @Builder.Default
     private boolean blocked = false;

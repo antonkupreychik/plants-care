@@ -77,6 +77,7 @@ public class UserProfileService {
             boolean googleLinked,
             boolean emailLinked,
             boolean telegramLinked,
+            boolean isGuest,
             String calendarSubscriptionUrl
     ) {
     }
@@ -150,6 +151,7 @@ public class UserProfileService {
                 user.getGoogleSubject() != null,
                 user.getEmail() != null,
                 user.getTelegramChatId() != null,
+                user.isGuest(),
                 calendarSubscriptionUrl
         );
     }
