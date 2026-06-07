@@ -10,10 +10,12 @@ import com.plantcare.core.repository.LocationAccessRepository;
 import com.plantcare.core.repository.LocationInviteRepository;
 import com.plantcare.core.repository.LocationRepository;
 import com.plantcare.core.repository.UserRepository;
+import jakarta.persistence.EntityNotFoundException;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.access.AccessDeniedException;
 
 import java.time.Instant;
 import java.util.List;
@@ -188,6 +190,136 @@ class LocationSharingServiceTest extends IntegrationTestBase {
     void should_return_empty_fanout_for_location_without_caretakers() {
         assertThat(sharingService.subjectUserIdsForLocation(livingRoom.getId())).isEmpty();
         assertThat(sharingService.caretakerChatIdsForLocation(null)).isEmpty();
+    }
+
+    // --- REST API: listMembers (issue #251) ---
+
+    @Test
+    void should_list_members_with_owner_and_caretaker_when_called_by_owner() {
+        // arrange: invite and accept
+        LocationInvite invite = sharingService.createInvite(owner.getId(), livingRoom.getId());
+        sharingService.acceptInvite(invite.getToken(), invitee);
+
+        // act
+        List<LocationSharingService.MemberInfo> members =
+                sharingService.listMembers(owner.getId(), livingRoom.getId());
+
+        // assert
+        assertThat(members).hasSize(2);
+        assertThat(members.stream().anyMatch(m -> m.role() == AccessRole.OWNER)).isTrue();
+        assertThat(members.stream().anyMatch(m -> m.role() == AccessRole.CARETAKER)).isTrue();
+        assertThat(members.stream().anyMatch(m -> m.userId().equals(invitee.getId()))).isTrue();
+    }
+
+    @Test
+    void should_list_members_when_called_by_caretaker() {
+        // arrange
+        LocationInvite invite = sharingService.createInvite(owner.getId(), livingRoom.getId());
+        sharingService.acceptInvite(invite.getToken(), invitee);
+
+        // act — caretaker calls listMembers
+        List<LocationSharingService.MemberInfo> members =
+                sharingService.listMembers(invitee.getId(), livingRoom.getId());
+
+        // assert
+        assertThat(members).hasSize(2);
+    }
+
+    @Test
+    void should_throw_access_denied_when_listing_members_as_stranger() {
+        // arrange
+        User stranger = savedUser(9999L);
+
+        // act + assert
+        assertThatThrownBy(() ->
+                sharingService.listMembers(stranger.getId(), livingRoom.getId()))
+                .isInstanceOf(AccessDeniedException.class);
+    }
+
+    // --- REST API: revokeAccess (issue #251) ---
+
+    @Test
+    void should_revoke_caretaker_access_when_owner_requests_it() {
+        // arrange
+        LocationInvite invite = sharingService.createInvite(owner.getId(), livingRoom.getId());
+        sharingService.acceptInvite(invite.getToken(), invitee);
+        assertThat(accessRepository.findAllByObjectId(livingRoom.getId())).hasSize(1);
+
+        // act
+        sharingService.revokeAccess(owner.getId(), livingRoom.getId(), invitee.getId());
+
+        // assert
+        assertThat(accessRepository.findAllByObjectId(livingRoom.getId())).isEmpty();
+    }
+
+    @Test
+    void should_throw_access_denied_when_caretaker_tries_to_revoke_access() {
+        // arrange
+        LocationInvite invite = sharingService.createInvite(owner.getId(), livingRoom.getId());
+        sharingService.acceptInvite(invite.getToken(), invitee);
+
+        // act + assert
+        assertThatThrownBy(() ->
+                sharingService.revokeAccess(invitee.getId(), livingRoom.getId(), owner.getId()))
+                .isInstanceOf(AccessDeniedException.class);
+    }
+
+    @Test
+    void should_throw_illegal_state_when_owner_removes_self() {
+        // arrange
+        // act + assert
+        assertThatThrownBy(() ->
+                sharingService.revokeAccess(owner.getId(), livingRoom.getId(), owner.getId()))
+                .isInstanceOf(IllegalStateException.class);
+
+        // Location must still exist and owner must still be owner
+        assertThat(locationRepository.findByUserIdAndId(owner.getId(), livingRoom.getId())).isPresent();
+    }
+
+    // --- REST API: listSharedLocations (issue #251) ---
+
+    @Test
+    void should_return_locations_where_user_is_caretaker() {
+        // arrange
+        LocationInvite invite = sharingService.createInvite(owner.getId(), livingRoom.getId());
+        sharingService.acceptInvite(invite.getToken(), invitee);
+
+        // act
+        List<LocationSharingService.SharedLocationInfo> shared =
+                sharingService.listSharedLocations(invitee.getId());
+
+        // assert
+        assertThat(shared).hasSize(1);
+        assertThat(shared.get(0).locationId()).isEqualTo(livingRoom.getId());
+        assertThat(shared.get(0).ownerUserId()).isEqualTo(owner.getId());
+        assertThat(shared.get(0).role()).isEqualTo(AccessRole.CARETAKER);
+    }
+
+    @Test
+    void should_return_empty_when_user_has_no_caretaker_access() {
+        // act
+        List<LocationSharingService.SharedLocationInfo> shared =
+                sharingService.listSharedLocations(owner.getId());
+
+        // assert — owner's own locations are NOT in the shared list
+        assertThat(shared).isEmpty();
+    }
+
+    // --- REST API: idempotent accept (same user, same token) ---
+
+    @Test
+    void should_return_accepted_idempotently_when_same_user_reuses_token() {
+        // arrange
+        LocationInvite invite = sharingService.createInvite(owner.getId(), livingRoom.getId());
+        sharingService.acceptInvite(invite.getToken(), invitee);
+
+        // act — same user tries the SAME token again
+        var result = sharingService.acceptInvite(invite.getToken(), invitee);
+
+        // assert — idempotent: ACCEPTED, no duplicate access
+        assertThat(result.status()).isEqualTo(LocationSharingService.AcceptResult.Status.ACCEPTED);
+        assertThat(result.locationId()).isEqualTo(livingRoom.getId());
+        assertThat(accessRepository.findAllByObjectId(livingRoom.getId())).hasSize(1);
     }
 
     // --- helpers ---

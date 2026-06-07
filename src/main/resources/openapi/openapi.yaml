@@ -115,6 +115,11 @@ tags:
       Совместный уход (gap G22, экран 26): владелец приглашает соухаживающего
       по контакту (@username / телефон), выбирает растения и даёт право
       отмечать уход.
+  - name: LocationSharing
+    description: |
+      REST API совместного ухода по локации (issue #251): OWNER создаёт одноразовый
+      инвайт, CARETAKER принимает его по токену. Оба видят растения/задачи локации;
+      отметка ухода одним участником закрывает задачу для всех.
   - name: Devices
     description: |
       Регистрация и отвязка мобильных устройств для push-уведомлений
@@ -259,6 +264,17 @@ paths:
     $ref: './resources/sharing.yaml#/paths/Collection'
   /api/v1/sharing/invites:
     $ref: './resources/sharing.yaml#/paths/Invites'
+
+  /api/v1/locations/{id}/invites:
+    $ref: './resources/location-sharing.yaml#/paths/CreateInvite'
+  /api/v1/locations/{id}/members:
+    $ref: './resources/location-sharing.yaml#/paths/Members'
+  /api/v1/locations/{id}/members/{userId}:
+    $ref: './resources/location-sharing.yaml#/paths/RevokeAccess'
+  /api/v1/invites/{token}/accept:
+    $ref: './resources/location-sharing.yaml#/paths/AcceptInvite'
+  /api/v1/shared-locations:
+    $ref: './resources/location-sharing.yaml#/paths/SharedLocations'
 
   /api/v1/devices:
     $ref: './resources/devices.yaml#/paths/Collection'
@@ -462,6 +478,21 @@ components:
       $ref: './resources/sharing.yaml#/schemas/SharingMembersResponse'
     SharingInviteCreateRequest:
       $ref: './resources/sharing.yaml#/schemas/SharingInviteCreateRequest'
+
+    LocationAccessRole:
+      $ref: './resources/location-sharing.yaml#/schemas/LocationAccessRole'
+    LocationMemberDto:
+      $ref: './resources/location-sharing.yaml#/schemas/LocationMemberDto'
+    LocationMembersResponse:
+      $ref: './resources/location-sharing.yaml#/schemas/LocationMembersResponse'
+    LocationInviteResponse:
+      $ref: './resources/location-sharing.yaml#/schemas/LocationInviteResponse'
+    AcceptInviteResponse:
+      $ref: './resources/location-sharing.yaml#/schemas/AcceptInviteResponse'
+    SharedLocationDto:
+      $ref: './resources/location-sharing.yaml#/schemas/SharedLocationDto'
+    SharedLocationsResponse:
+      $ref: './resources/location-sharing.yaml#/schemas/SharedLocationsResponse'
 
     DeviceRegisterRequest:
       $ref: './resources/devices.yaml#/schemas/DeviceRegisterRequest'

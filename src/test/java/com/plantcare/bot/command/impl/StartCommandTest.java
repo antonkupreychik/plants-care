@@ -123,7 +123,7 @@ class StartCommandTest {
         when(message.getText()).thenReturn("/start invite_abc123");
         when(userService.findByChatId(chatId)).thenReturn(Optional.of(user));
         when(locationSharingService.acceptInvite(eq("abc123"), eq(user)))
-                .thenReturn(LocationSharingService.AcceptResult.accepted("🛋 Гостиная"));
+                .thenReturn(LocationSharingService.AcceptResult.accepted("🛋 Гостиная", 1L, com.plantcare.core.domain.enums.AccessRole.CARETAKER));
 
         startCommand.execute(update, telegramClient);
 

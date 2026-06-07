@@ -18,6 +18,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.HandlerMethodValidationException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.server.ResponseStatusException;
 
 /**
  * Глобальный обработчик ошибок REST API ({@code /api/**}).
@@ -124,6 +125,18 @@ public class ApiExceptionHandler {
     public ResponseEntity<ApiErrorResponse> handleConflict(IllegalStateException e) {
         return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(ApiErrorResponse.of("CONFLICT", e.getMessage()));
+    }
+
+    /**
+     * {@link ResponseStatusException} — используется для HTTP-статусов без стандартного
+     * исключения (например, 410 Gone для просроченного/использованного инвайта).
+     * Пробрасывает статус из исключения, формат ответа — единый ApiErrorResponse.
+     */
+    @ExceptionHandler(ResponseStatusException.class)
+    public ResponseEntity<ApiErrorResponse> handleResponseStatus(ResponseStatusException e) {
+        String code = e.getStatusCode().value() == 410 ? "GONE" : e.getStatusCode().toString();
+        return ResponseEntity.status(e.getStatusCode())
+                .body(ApiErrorResponse.of(code, e.getReason() != null ? e.getReason() : e.getMessage()));
     }
 
     @ExceptionHandler(RuntimeException.class)
