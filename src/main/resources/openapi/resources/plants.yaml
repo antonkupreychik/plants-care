@@ -277,6 +277,31 @@ paths:
         '409':
           $ref: '../_common/responses.yaml#/Conflict'
 
+  ItemAcclimation:
+    delete:
+      tags: [ Plants ]
+      operationId: disablePlantAcclimation
+      summary: Выключить режим акклиматизации
+      description: |
+        Немедленно завершает режим акклиматизации растения
+        (`acclimation_until` и `acclimation_checkin_next_at` обнуляются).
+        Идемпотентно: повторный вызов на растении без акклиматизации возвращает
+        `204` без ошибки.
+
+        Доступ только к своему неархивированному растению.
+
+        * `204` — режим выключен (или уже был выключен).
+        * `404` — растение не найдено или принадлежит другому пользователю.
+      security:
+        - bearerAuth: [ ]
+      parameters:
+        - $ref: '../_common/parameters.yaml#/PlantIdPath'
+      responses:
+        '204':
+          description: Акклиматизация отключена. Тело ответа отсутствует.
+        '404':
+          $ref: '../_common/responses.yaml#/NotFound'
+
   ItemHealth:
     get:
       tags: [ Plants ]

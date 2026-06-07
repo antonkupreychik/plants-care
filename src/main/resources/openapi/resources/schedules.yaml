@@ -73,6 +73,54 @@ paths:
         '404':
           $ref: '../_common/responses.yaml#/NotFound'
 
+  ItemPostpone:
+    post:
+      tags: [Schedules]
+      operationId: postponePlantSchedule
+      summary: Разово отложить ближайшее срабатывание расписания
+      description: |
+        Сдвигает поле `next_due_at` расписания на `days` дней вперёд от **текущего момента**,
+        не изменяя базовый интервал (`every`). Это одноразовый сдвиг —
+        следующий цикл рассчитывается по обычному интервалу.
+
+        Эквивалент кнопки «Отложить на N дней» в Telegram-боте
+        (`PLANT:SCHED:POSTPONE`).
+
+        * `200` — возвращает обновлённое расписание.
+        * `400` — неизвестный тип расписания или `days` вне диапазона.
+        * `404` — растение или расписание не найдено.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '../_common/parameters.yaml#/PlantIdPath'
+        - name: type
+          in: path
+          required: true
+          description: Тип задачи ухода.
+          schema:
+            type: string
+            enum: [WATERING, MISTING, FERTILIZING, SOIL_CHECK]
+            example: WATERING
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/schemas/SchedulePostponeRequest'
+            example:
+              days: 3
+      responses:
+        '200':
+          description: Расписание перенесено.
+          content:
+            application/json:
+              schema:
+                $ref: '#/schemas/CareScheduleDto'
+        '400':
+          $ref: '../_common/responses.yaml#/BadRequest'
+        '404':
+          $ref: '../_common/responses.yaml#/NotFound'
+
 schemas:
   CareScheduleDto:
     type: object
@@ -170,6 +218,19 @@ schemas:
         minimum: 1
         maximum: 60
         description: Эффективный интервал ухода в зимний период (дней).
+
+  SchedulePostponeRequest:
+    type: object
+    description: Тело `POST /plants/{id}/schedules/{type}/postpone`.
+    required: [days]
+    properties:
+      days:
+        type: integer
+        format: int32
+        minimum: 1
+        maximum: 365
+        description: На сколько дней перенести ближайшее срабатывание.
+        example: 3
 
   ScheduleInput:
     type: object

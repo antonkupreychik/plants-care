@@ -4,6 +4,39 @@
 # в таймзоне пользователя (users.timezone).
 
 paths:
+  WeatherLocation:
+    put:
+      tags: [Me]
+      operationId: updateWeatherLocation
+      summary: Установить координаты для погодного виджета
+      description: |
+        Сохраняет широту и долготу пользователя (`weather_lat` / `weather_lon`),
+        необходимые для получения данных о влажности через
+        `GET /api/v1/weather/snapshot`.
+
+        Без координат `weatherEnabled=true` в `PATCH /me` бесполезен — погодные
+        эвристики не запустятся. После успешного вызова этого эндпоинта
+        `WeatherService.isWeatherUsable()` начнёт возвращать `true` при включённом
+        `weatherEnabled`.
+
+        Ответ `204 No Content` — нет тела, обновление применено.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/schemas/WeatherLocationRequest'
+            example:
+              lat: 55.7558
+              lon: 37.6176
+      responses:
+        '204':
+          description: Координаты сохранены.
+        '400':
+          $ref: '../_common/responses.yaml#/BadRequest'
+
   Me:
     get:
       tags: [Me]
@@ -87,6 +120,27 @@ paths:
           $ref: '../_common/responses.yaml#/BadRequest'
 
 schemas:
+  WeatherLocationRequest:
+    type: object
+    description: |
+      Тело `PUT /api/v1/me/weather-location`. Оба поля обязательны.
+    required: [lat, lon]
+    properties:
+      lat:
+        type: number
+        format: double
+        minimum: -90
+        maximum: 90
+        description: Широта в градусах (WGS-84).
+        example: 55.7558
+      lon:
+        type: number
+        format: double
+        minimum: -180
+        maximum: 180
+        description: Долгота в градусах (WGS-84).
+        example: 37.6176
+
   MeResponse:
     type: object
     description: Профиль и настройки текущего пользователя (`GET /api/v1/me`).

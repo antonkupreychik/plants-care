@@ -22,6 +22,7 @@ import com.plantcare.core.service.PlantDiagnosisReportService;
 import com.plantcare.core.service.PlantService;
 import com.plantcare.core.service.PlantService.ScheduleInputDto;
 import com.plantcare.core.service.UserService;
+import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -164,6 +165,17 @@ public class PlantController implements PlantsApi {
     public void deletePlant(Long id) {
         Long userId = currentUserProvider.currentUserId();
         plantService.hardDeletePlant(userId, id);
+    }
+
+    @Override
+    public void disablePlantAcclimation(Long id) {
+        User user = userService.getByIdOrThrow(currentUserProvider.currentUserId());
+        // disable() идемпотентен: возвращает null если растение не найдено или архивировано.
+        // Бросаем 404 в этом случае — клиент должен знать, что растение не существует.
+        Plant plant = plantAcclimationService.disable(user, id);
+        if (plant == null) {
+            throw new EntityNotFoundException("Растение не найдено или архивировано: " + id);
+        }
     }
 
     @Override

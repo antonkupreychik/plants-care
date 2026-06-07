@@ -4,6 +4,7 @@ import com.plantcare.api.CurrentUserProvider;
 import com.plantcare.api.generated.MeApi;
 import com.plantcare.api.generated.model.MeResponse;
 import com.plantcare.api.generated.model.MeUpdateRequest;
+import com.plantcare.api.generated.model.WeatherLocationRequest;
 import com.plantcare.core.domain.User;
 import com.plantcare.core.domain.enums.SeasonalMode;
 import com.plantcare.core.service.AccountDeletionService;
@@ -49,6 +50,14 @@ public class MeController implements MeApi {
         Long userId = currentUserProvider.currentUserId();
         log.info("DELETE /api/v1/me: userId={}", userId);
         accountDeletionService.deleteAccount(userId);
+    }
+
+    @Override
+    public void updateWeatherLocation(WeatherLocationRequest request) {
+        User user = currentUserProvider.currentUser();
+        log.info("PUT /api/v1/me/weather-location: userId={}, lat={}, lon={}",
+                user.getId(), request.getLat(), request.getLon());
+        userProfileService.setWeatherLocation(user, request.getLat(), request.getLon());
     }
 
     @Override
