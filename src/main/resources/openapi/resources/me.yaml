@@ -86,6 +86,105 @@ paths:
         '400':
           $ref: '../_common/responses.yaml#/BadRequest'
 
+  Seasonal:
+    get:
+      tags: [Me]
+      operationId: getSeasonalSettings
+      summary: Per-season настройки сезонности
+      description: |
+        Возвращает тонкие per-season настройки сезонности текущего пользователя:
+        множитель (`multiplier`) и фиксированный интервал (`intervalDays`) для
+        каждого сезона (`SUMMER`, `WINTER`), а также глобальный флаг `enabled`
+        и `mode`.
+
+        Какое поле реально применяется к расчёту — зависит от `mode`:
+        в режиме `MULTIPLIER` используется `multiplier`, в режиме `FIXED` —
+        `intervalDays` (а если он `null`, fallback на базовый интервал растения).
+
+        Глобальный флаг включения (`seasonalEnabled`) и режим (`seasonalMode`)
+        меняются через `PATCH /api/v1/me`; здесь они отдаются только для контекста.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Per-season настройки сезонности.
+          content:
+            application/json:
+              schema:
+                $ref: '#/schemas/SeasonalSettingsResponse'
+        '401':
+          $ref: '../_common/responses.yaml#/Unauthorized'
+    patch:
+      tags: [Me]
+      operationId: updateSeasonalSettings
+      summary: Задать множитель/интервал для сезона
+      description: |
+        Устанавливает множитель и/или фиксированный интервал для одного сезона.
+        `season` обязателен. Переданные поля (`multiplier`, `intervalDays`)
+        применяются, отсутствующие (`null`) остаются без изменений.
+
+        - `multiplier` — коэффициент к базовому интервалу (диапазон `0.50..1.50`,
+          округляется до сотых). Используется в режиме `MULTIPLIER`.
+        - `intervalDays` — фиксированный интервал в днях (`1..60`). Используется
+          в режиме `FIXED`. Чтобы вернуть сезон к дефолту (использовать базовый
+          интервал растения), используйте `DELETE /api/v1/me/seasonal/{season}`.
+
+        Изменение влияет на ленивый пересчёт `next_due_at` так же, как в боте.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/schemas/SeasonalSettingsUpdateRequest'
+            example:
+              season: SUMMER
+              multiplier: 0.7
+      responses:
+        '200':
+          description: Настройки сезона обновлены.
+          content:
+            application/json:
+              schema:
+                $ref: '#/schemas/SeasonalSettingsResponse'
+        '400':
+          $ref: '../_common/responses.yaml#/BadRequest'
+        '401':
+          $ref: '../_common/responses.yaml#/Unauthorized'
+
+  SeasonalItem:
+    delete:
+      tags: [Me]
+      operationId: clearSeasonalInterval
+      summary: Очистить фиксированный интервал сезона
+      description: |
+        Сбрасывает фиксированный интервал (`intervalDays`) указанного сезона в
+        `null` — сезон возвращается к дефолтному поведению (в режиме `FIXED`
+        используется базовый интервал растения). Множитель сезона не затрагивается.
+
+        Идемпотентно: повторный вызов для уже очищенного сезона тоже вернёт `200`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: season
+          in: path
+          required: true
+          description: Сезон, чей фиксированный интервал нужно очистить.
+          schema:
+            $ref: '#/schemas/Season'
+      responses:
+        '200':
+          description: Интервал сезона очищен; возвращены актуальные настройки.
+          content:
+            application/json:
+              schema:
+                $ref: '#/schemas/SeasonalSettingsResponse'
+        '400':
+          $ref: '../_common/responses.yaml#/BadRequest'
+        '401':
+          $ref: '../_common/responses.yaml#/Unauthorized'
+
 schemas:
   MeResponse:
     type: object
@@ -290,3 +389,94 @@ schemas:
         nullable: true
         description: Учитывать погоду в рекомендациях.
         example: true
+
+  Season:
+    type: string
+    enum: [SUMMER, WINTER]
+    description: |
+      Сезон. Первая итерация сезонности оперирует только летом и зимой
+      (всё, что не лето — зима); границы настраиваются отдельно.
+
+  SeasonSettings:
+    type: object
+    description: Настройки одного сезона (множитель и фиксированный интервал).
+    required:
+      - season
+      - multiplier
+    properties:
+      season:
+        $ref: '#/schemas/Season'
+      multiplier:
+        type: number
+        format: double
+        minimum: 0.5
+        maximum: 1.5
+        description: |
+          Коэффициент к базовому интервалу растения. Применяется в режиме
+          `MULTIPLIER`. Например, базовый 10 дней × 0.8 = полив каждые 8 дней.
+        example: 0.8
+      intervalDays:
+        type: integer
+        format: int32
+        minimum: 1
+        maximum: 60
+        nullable: true
+        description: |
+          Фиксированный интервал в днях для этого сезона. Применяется в режиме
+          `FIXED`. `null` — интервал не задан, используется базовый интервал
+          растения.
+        example: 5
+
+  SeasonalSettingsResponse:
+    type: object
+    description: |
+      Per-season настройки сезонности пользователя (`GET /api/v1/me/seasonal`).
+      `enabled`/`mode` отдаются для контекста; меняются через `PATCH /api/v1/me`.
+    required:
+      - enabled
+      - mode
+      - seasons
+    properties:
+      enabled:
+        type: boolean
+        description: Глобальный флаг учёта сезонов (зеркало `seasonalEnabled`).
+        example: true
+      mode:
+        type: string
+        enum: [MULTIPLIER, FIXED]
+        description: Активный режим сезонности (зеркало `seasonalMode`).
+        example: MULTIPLIER
+      seasons:
+        type: array
+        description: Настройки по каждому сезону (`SUMMER`, `WINTER`).
+        items:
+          $ref: '#/schemas/SeasonSettings'
+
+  SeasonalSettingsUpdateRequest:
+    type: object
+    description: |
+      Задать множитель и/или фиксированный интервал одного сезона. `season`
+      обязателен; `multiplier`/`intervalDays` опциональны (отсутствующие не меняются).
+    required:
+      - season
+    properties:
+      season:
+        $ref: '#/schemas/Season'
+      multiplier:
+        type: number
+        format: double
+        minimum: 0.5
+        maximum: 1.5
+        nullable: true
+        description: Коэффициент к базовому интервалу (`0.50..1.50`).
+        example: 0.7
+      intervalDays:
+        type: integer
+        format: int32
+        minimum: 1
+        maximum: 60
+        nullable: true
+        description: |
+          Фиксированный интервал в днях (`1..60`). Для сброса в дефолт используйте
+          `DELETE /api/v1/me/seasonal/{season}`.
+        example: 5

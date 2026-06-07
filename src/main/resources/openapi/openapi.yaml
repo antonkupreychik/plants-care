@@ -230,6 +230,10 @@ paths:
 
   /api/v1/me:
     $ref: './resources/me.yaml#/paths/Me'
+  /api/v1/me/seasonal:
+    $ref: './resources/me.yaml#/paths/Seasonal'
+  /api/v1/me/seasonal/{season}:
+    $ref: './resources/me.yaml#/paths/SeasonalItem'
 
   /api/v1/sharing:
     $ref: './resources/sharing.yaml#/paths/Collection'

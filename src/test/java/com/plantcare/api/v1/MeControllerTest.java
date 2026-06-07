@@ -73,6 +73,9 @@ class MeControllerTest {
     @MockitoBean
     private CurrentUserProvider currentUserProvider;
 
+    @MockitoBean
+    private com.plantcare.core.seasonal.service.SeasonalSettingsService seasonalSettingsService;
+
     @BeforeEach
     void stubCurrentUser() {
         User user = mock(User.class);
