@@ -86,6 +86,9 @@ public interface PlantRepository extends JpaRepository<Plant, Long> {
 
     long countByUserIdAndLocationIdAndArchivedAtIsNull(Long userId, Long locationId);
 
+    /** Сколько активных растений привязано к данной комнате (issue #283). */
+    long countByRoomIdAndArchivedAtIsNull(Long roomId);
+
     // ===== Архив (issue #117) =====
 
     /** Количество архивированных растений юзера — счётчик у кнопки «📦 Архив (N)». */

@@ -1,0 +1,204 @@
+# CRUD комнат внутри локации (issue #283).
+# Комната принадлежит локации: GET/POST идут через /locations/{locationId}/rooms,
+# PATCH/DELETE — через /rooms/{id} (roomId глобально уникален).
+
+paths:
+  CollectionByLocation:
+    get:
+      tags: [Rooms]
+      operationId: listRooms
+      summary: Список комнат локации
+      description: |
+        Возвращает все комнаты локации, принадлежащей текущему пользователю.
+        Отсортированы по display_order, затем по имени.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: locationId
+          in: path
+          required: true
+          description: Идентификатор локации.
+          schema:
+            type: integer
+            format: int64
+            example: 1
+      responses:
+        '200':
+          description: Список комнат.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/schemas/RoomDto'
+        '404':
+          $ref: '../_common/responses.yaml#/NotFound'
+
+    post:
+      tags: [Rooms]
+      operationId: createRoom
+      summary: Создать комнату в локации
+      description: |
+        Создаёт комнату в указанной локации. Имя уникально в рамках локации
+        (без учёта регистра) — при коллизии 400.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: locationId
+          in: path
+          required: true
+          description: Идентификатор локации.
+          schema:
+            type: integer
+            format: int64
+            example: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/schemas/RoomCreateRequest'
+            example:
+              name: Подоконник у окна
+              displayOrder: 0
+      responses:
+        '201':
+          description: Комната создана.
+          content:
+            application/json:
+              schema:
+                $ref: '#/schemas/RoomDto'
+        '400':
+          $ref: '../_common/responses.yaml#/BadRequest'
+        '404':
+          $ref: '../_common/responses.yaml#/NotFound'
+
+  Item:
+    patch:
+      tags: [Rooms]
+      operationId: updateRoom
+      summary: Обновить комнату
+      description: PATCH-семантика — обновляются только переданные поля.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Идентификатор комнаты.
+          schema:
+            type: integer
+            format: int64
+            example: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/schemas/RoomUpdateRequest'
+      responses:
+        '200':
+          description: Комната обновлена.
+          content:
+            application/json:
+              schema:
+                $ref: '#/schemas/RoomDto'
+        '400':
+          $ref: '../_common/responses.yaml#/BadRequest'
+        '404':
+          $ref: '../_common/responses.yaml#/NotFound'
+
+    delete:
+      tags: [Rooms]
+      operationId: deleteRoom
+      summary: Удалить комнату
+      description: |
+        Удаляет комнату. Если в комнате есть активные растения —
+        возвращает 409 с `code=ROOM_NOT_EMPTY`. Перенесите растения
+        в другую комнату или обнулите привязку перед удалением.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Идентификатор комнаты.
+          schema:
+            type: integer
+            format: int64
+            example: 1
+      responses:
+        '204':
+          description: Комната удалена.
+        '404':
+          $ref: '../_common/responses.yaml#/NotFound'
+        '409':
+          description: |
+            В комнате есть активные растения. `code=ROOM_NOT_EMPTY`.
+          content:
+            application/json:
+              schema:
+                $ref: '../_common/errors.yaml#/schemas/ApiErrorResponse'
+              examples:
+                notEmpty:
+                  summary: Комната содержит растения
+                  value:
+                    error:
+                      code: ROOM_NOT_EMPTY
+                      message: "Комната содержит активные растения. Перенесите их перед удалением."
+
+schemas:
+  RoomDto:
+    type: object
+    description: Комната внутри локации пользователя.
+    required: [id, name, locationId, displayOrder]
+    properties:
+      id:
+        type: integer
+        format: int64
+      name:
+        type: string
+        maxLength: 100
+        example: Подоконник у окна
+      locationId:
+        type: integer
+        format: int64
+        description: ID локации, к которой принадлежит комната.
+      displayOrder:
+        type: integer
+        description: Порядок отображения (по возрастанию).
+        example: 0
+      createdAt:
+        type: string
+        format: date-time
+        nullable: true
+
+  RoomCreateRequest:
+    type: object
+    required: [name]
+    properties:
+      name:
+        type: string
+        minLength: 1
+        maxLength: 100
+        example: Подоконник у окна
+      displayOrder:
+        type: integer
+        minimum: 0
+        nullable: true
+        description: Порядок отображения (по умолчанию 0).
+        example: 0
+
+  RoomUpdateRequest:
+    type: object
+    description: Все поля опциональны.
+    properties:
+      name:
+        type: string
+        minLength: 1
+        maxLength: 100
+        nullable: true
+      displayOrder:
+        type: integer
+        minimum: 0
+        nullable: true

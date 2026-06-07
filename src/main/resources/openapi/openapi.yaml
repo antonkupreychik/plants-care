@@ -70,6 +70,11 @@ tags:
     description: |
       Локации (комнаты/места) пользователя, в которых стоят растения. Каждый
       пользователь имеет «дефолтную» локацию, создаваемую автоматически.
+  - name: Rooms
+    description: |
+      CRUD комнат внутри локации (issue #283). Комната принадлежит локации;
+      GET/POST идут через /locations/{locationId}/rooms,
+      PATCH/DELETE — через /rooms/{id}.
   - name: Care Events
     description: |
       Регистрация выполнения ухода (полив, опрыскивание, удобрение) и его отмена.
@@ -271,6 +276,11 @@ paths:
   /api/v1/sharing/invites:
     $ref: './resources/sharing.yaml#/paths/Invites'
 
+  /api/v1/locations/{locationId}/rooms:
+    $ref: './resources/rooms.yaml#/paths/CollectionByLocation'
+  /api/v1/rooms/{id}:
+    $ref: './resources/rooms.yaml#/paths/Item'
+
   /api/v1/locations/{id}/invites:
     $ref: './resources/location-sharing.yaml#/paths/CreateInvite'
   /api/v1/locations/{id}/members:
@@ -308,6 +318,8 @@ components:
       $ref: './_common/parameters.yaml#/PlantIdPath'
     LocationIdPath:
       $ref: './_common/parameters.yaml#/LocationIdPath'
+    RoomIdPath:
+      $ref: './_common/parameters.yaml#/RoomIdPath'
 
   responses:
     BadRequest:
@@ -397,6 +409,13 @@ components:
       $ref: './resources/locations.yaml#/schemas/LocationUpdateRequest'
     LocationPauseRequest:
       $ref: './resources/locations.yaml#/schemas/LocationPauseRequest'
+
+    RoomDto:
+      $ref: './resources/rooms.yaml#/schemas/RoomDto'
+    RoomCreateRequest:
+      $ref: './resources/rooms.yaml#/schemas/RoomCreateRequest'
+    RoomUpdateRequest:
+      $ref: './resources/rooms.yaml#/schemas/RoomUpdateRequest'
 
     CareEventType:
       $ref: './resources/care-events.yaml#/schemas/CareEventType'
