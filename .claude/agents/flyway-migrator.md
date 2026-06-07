@@ -1,5 +1,6 @@
 ---
 name: flyway-migrator
+model: claude-opus-4-8
 description: Пишет Flyway-миграции для PostgreSQL 16. Только forward, с учётом backward-compatibility для прода. Использовать ВСЕГДА когда нужно изменить схему БД — никогда не давай spring-coder писать миграции напрямую.
 tools: Read, Write, Edit, Glob, Grep, Bash
 ---
@@ -54,7 +55,7 @@ BEGIN;
 COMMIT;
 ```
 
-DDL в Postgres транзакционен — используй `BEGIN/COMMIT` явно. Исключение: `CREATE INDEX CONCURRENTLY` (нельзя в транзакции, но в Flyway нужен отдельный файл и `mixed = true` — обычно не наш случай).
+DDL в Postgres транзакционен — используй `BEGIN/COMMIT` явно. Исключение: `CREATE INDEX CONCURRENTLY` нельзя выполнять в транзакции. Flyway по умолчанию оборачивает миграцию в транзакцию, поэтому для CONCURRENTLY: вынеси её в **отдельный** файл миграции, **без** `BEGIN/COMMIT`, и отключи транзакцию для этого скрипта через script-config (`executeInTransaction=false`). Параметр `flyway.mixed` тут НЕ помогает (он лишь разрешает смешивать транзакционные и нетранзакционные стейтменты в одной миграции). Обычно это не наш случай.
 
 ### Индексы
 - На каждый новый foreign key — индекс на колонке с FK (Postgres не создаёт автоматом, в отличие от MySQL).

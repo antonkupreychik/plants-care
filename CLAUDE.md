@@ -109,6 +109,7 @@ docker compose --profile full up -d --build   # всё в Docker
 - Коммиты осмысленные. WIP-коммиты раздавить через `git rebase -i` перед PR.
 - CI (`mvn clean verify` + docker build) обязан быть зелёным до запроса ревью.
 - **Мержит только человек.** Агент создаёт PR и останавливается.
+  - Исключение: для issue с лейблом `auto-impl` агент после `gh pr create` выполняет `gh pr merge --auto --squash --delete-branch` — это не немедленный мерж, а флаг для GitHub автоматически слить ветку когда CI позеленеет.
 
 ---
 

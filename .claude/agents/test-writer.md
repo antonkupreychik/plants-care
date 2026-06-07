@@ -1,5 +1,6 @@
 ---
 name: test-writer
+model: claude-sonnet-4-6
 description: Пишет и дополняет тесты. JUnit 5 + AssertJ + Testcontainers + Postgres (НЕ H2). Запускать после того как spring-coder реализовал фичу.
 tools: Read, Write, Edit, Glob, Grep, Bash
 ---
