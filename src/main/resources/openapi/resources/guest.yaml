@@ -1,0 +1,166 @@
+# Гостевой вход и конвертация (issue #227).
+# POST /auth/guest — создать/восстановить гостевую сессию по deviceId.
+# POST /auth/guest/convert — конвертировать гостя в реальный аккаунт.
+
+paths:
+  GuestLogin:
+    post:
+      tags: [Auth]
+      operationId: guestLogin
+      summary: Гостевой вход / восстановление сессии
+      description: |
+        Принимает `deviceId` (UUID4, генерируется устройством один раз).
+        - Если гость с таким `deviceId` уже существует — восстанавливает сессию
+          (`isNewUser: false`).
+        - Иначе — создаёт нового гостевого пользователя (`isNewUser: true`).
+
+        Гость получает стандартную пару access+refresh токенов и имеет полный
+        доступ ко всем REST-эндпоинтам (в V1 ограничений нет).
+
+        Rate-limit: не более 3 **новых** гостей с одного IP за час.
+        Restore (существующий deviceId) от лимита не зависит.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/schemas/GuestLoginRequest'
+      responses:
+        '200':
+          description: Пара токенов выдана (новый гость или восстановление).
+          content:
+            application/json:
+              schema:
+                $ref: '#/schemas/GuestLoginResponse'
+        '400':
+          $ref: '../_common/responses.yaml#/BadRequest'
+        '429':
+          $ref: '../_common/responses.yaml#/TooManyRequests'
+
+  GuestConvert:
+    post:
+      tags: [Auth]
+      operationId: guestConvert
+      summary: Конвертировать гостевой аккаунт в реальный
+      description: |
+        Привязывает email/Apple/Google к гостевому аккаунту. Данные пользователя
+        (растения, история) сохраняются. Требует валидный bearer-токен гостя.
+
+        Поддерживаемые провайдеры:
+        - `EMAIL` — отправляет magic-link на указанный email. `status="EMAIL_SENT"`;
+          токены обновятся после верификации через `POST /auth/email/verify`.
+          `accessToken`/`refreshToken` в ответе — `null`.
+        - `GOOGLE` — привязывает Google-аккаунт. `status="CONVERTED"`, новая пара
+          токенов в ответе.
+        - `APPLE` — привязывает Apple-аккаунт. `status="CONVERTED"`, новая пара
+          токенов в ответе.
+
+        После конвертации `deviceId` очищается, `isGuest` становится `false`.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/schemas/GuestConvertRequest'
+      responses:
+        '200':
+          description: Конвертация запущена или завершена.
+          content:
+            application/json:
+              schema:
+                $ref: '#/schemas/GuestConvertResponse'
+        '400':
+          $ref: '../_common/responses.yaml#/BadRequest'
+        '401':
+          $ref: '../_common/responses.yaml#/Unauthorized'
+        '403':
+          $ref: '../_common/responses.yaml#/Forbidden'
+        '409':
+          $ref: '../_common/responses.yaml#/Conflict'
+
+schemas:
+  GuestLoginRequest:
+    type: object
+    description: Тело POST /api/v1/auth/guest.
+    required: [deviceId]
+    properties:
+      deviceId:
+        type: string
+        pattern: '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+        description: UUID4 устройства (lowercase). Генерируется клиентом один раз и не меняется.
+        example: '550e8400-e29b-41d4-a716-446655440000'
+
+  GuestLoginResponse:
+    type: object
+    description: Ответ на гостевой вход (issue #227).
+    required: [accessToken, refreshToken, expiresIn, tokenType, isNewUser]
+    properties:
+      accessToken:
+        type: string
+        description: Access-JWT для авторизации запросов.
+      refreshToken:
+        type: string
+        description: Refresh-JWT для получения новой пары.
+      expiresIn:
+        type: integer
+        format: int64
+        description: Время жизни access-токена в секундах.
+        example: 3600
+      tokenType:
+        type: string
+        description: Тип токена.
+        example: Bearer
+      isNewUser:
+        type: boolean
+        description: '`true` — создан новый гость; `false` — восстановление по deviceId.'
+
+  GuestConvertRequest:
+    type: object
+    description: Тело POST /api/v1/auth/guest/convert.
+    required: [provider]
+    properties:
+      provider:
+        type: string
+        enum: [EMAIL, GOOGLE, APPLE]
+        description: Провайдер для конвертации.
+      email:
+        type: string
+        format: email
+        maxLength: 320
+        description: Обязателен для `provider=EMAIL`.
+        example: user@example.com
+      idToken:
+        type: string
+        description: Google или Apple id-token. Обязателен для `provider=GOOGLE`/`APPLE`.
+
+  GuestConvertResponse:
+    type: object
+    description: Ответ на конвертацию гостевого аккаунта.
+    required: [status]
+    properties:
+      status:
+        type: string
+        enum: [CONVERTED, EMAIL_SENT]
+        description: |
+          `CONVERTED` — аккаунт конвертирован немедленно (GOOGLE/APPLE), токены в ответе.
+          `EMAIL_SENT` — magic-link отправлен (EMAIL), токены обновятся после верификации.
+      accessToken:
+        type: string
+        nullable: true
+        description: Новый access-JWT. Только при `status=CONVERTED`.
+      refreshToken:
+        type: string
+        nullable: true
+        description: Новый refresh-JWT. Только при `status=CONVERTED`.
+      expiresIn:
+        type: integer
+        format: int64
+        nullable: true
+        description: Время жизни access-токена в секундах. Только при `status=CONVERTED`.
+      tokenType:
+        type: string
+        nullable: true
+        description: Тип токена. Только при `status=CONVERTED`.
+        example: Bearer

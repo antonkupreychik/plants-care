@@ -1,6 +1,7 @@
 package com.plantcare.api;
 
 import com.plantcare.api.auth.exception.AuthTokenException;
+import com.plantcare.api.auth.exception.GuestConvertException;
 import com.plantcare.api.auth.exception.RateLimitExceededException;
 import com.plantcare.api.dto.ApiErrorResponse;
 import com.plantcare.api.dto.FieldError;
@@ -87,6 +88,16 @@ public class ApiExceptionHandler {
     @ExceptionHandler(AuthTokenException.class)
     public ResponseEntity<ApiErrorResponse> handleAuthToken(AuthTokenException e) {
         return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                .body(ApiErrorResponse.of(e.getCode().name(), e.getMessage()));
+    }
+
+    @ExceptionHandler(GuestConvertException.class)
+    public ResponseEntity<ApiErrorResponse> handleGuestConvert(GuestConvertException e) {
+        HttpStatus status = switch (e.getCode()) {
+            case NOT_A_GUEST -> HttpStatus.FORBIDDEN;
+            case IDENTITY_ALREADY_TAKEN -> HttpStatus.CONFLICT;
+        };
+        return ResponseEntity.status(status)
                 .body(ApiErrorResponse.of(e.getCode().name(), e.getMessage()));
     }
 

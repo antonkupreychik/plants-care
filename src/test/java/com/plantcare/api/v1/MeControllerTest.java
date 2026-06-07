@@ -95,6 +95,7 @@ class MeControllerTest {
                 true, SeasonalMode.FIXED, true,
                 Map.of("sharing", "true"),
                 true, false, true, true,
+                false,
                 "https://plants-care.example.com/calendar/abc123.ics");
         when(userProfileService.getProfile(any(User.class))).thenReturn(profile);
 
@@ -138,6 +139,7 @@ class MeControllerTest {
                 false, SeasonalMode.MULTIPLIER, false,
                 Map.of(),
                 false, false, true, true,
+                false,
                 null);
         when(userProfileService.getProfile(any(User.class))).thenReturn(profile);
 
@@ -161,6 +163,7 @@ class MeControllerTest {
                 false, SeasonalMode.MULTIPLIER, false,
                 Map.of(),
                 true, false, true, true,
+                false,
                 null);
         when(userProfileService.getProfile(any(User.class))).thenReturn(profile);
 
@@ -190,6 +193,7 @@ class MeControllerTest {
                 false, SeasonalMode.MULTIPLIER, false,
                 Map.of(),
                 false, false, false, true,
+                false,
                 null);
         when(userProfileService.getProfile(any(User.class))).thenReturn(profile);
 
@@ -278,6 +282,7 @@ class MeControllerTest {
                 true, SeasonalMode.FIXED, true,
                 Map.of(),
                 false, false, true, true,
+                false,
                 null);
         when(userProfileService.updateProfile(any(User.class), any(ProfileUpdate.class)))
                 .thenReturn(updated);
@@ -341,6 +346,7 @@ class MeControllerTest {
                 false, SeasonalMode.MULTIPLIER, false,
                 Map.of(),
                 false, false, true, true,
+                false,
                 null);
         when(userProfileService.updateProfile(any(User.class), any(ProfileUpdate.class)))
                 .thenReturn(updated);
@@ -543,6 +549,7 @@ class MeControllerTest {
                 false, SeasonalMode.MULTIPLIER, false,
                 Map.of(),
                 false, false, true, true,
+                false,
                 null);
     }
 
