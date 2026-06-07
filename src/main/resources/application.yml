@@ -49,14 +49,13 @@ spring:
             enable: ${MAIL_SMTP_STARTTLS:false}
 
   # Issue #278, эпик #277 фаза 0: Redis (Lettuce).
-  # На Railway REDIS_URL инжектится как reference variable из Redis-сервиса.
-  # Внутренняя сеть Railway: app ↔ Redis по приватному хосту *.railway.internal.
-  # Пустой дефолт: при отсутствии REDIS_URL Spring Boot использует host/port ниже.
+  # Базовый/dev/test-профиль использует host/port (по умолчанию localhost:6379).
+  # ВАЖНО: НЕ задавать здесь spring.data.redis.url с пустым дефолтом —
+  # пустая строка url ломает парсер Lettuce (RedisUrlSyntaxException: Invalid Redis URL '')
+  # и роняет загрузку ApplicationContext во всех тестах. На проде URL приходит из
+  # REDIS_URL (Railway reference variable) — см. application-prod.yml.
   data:
     redis:
-      url: ${REDIS_URL:}
-      # Ниже — ручные параметры для случаев, когда REDIS_URL не задан (dev-локалка).
-      # При наличии url эти значения игнорируются.
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
 
