@@ -24,6 +24,7 @@ import io.micrometer.core.instrument.Timer;
 import io.sentry.Sentry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -63,7 +64,13 @@ public class NotificationSchedulerService {
     private final PushSender pushSender;
     private final UserDeviceRepository userDeviceRepository;
 
+    // Issue #279: lockAtMostFor > fixedRate (2m > 1m) — если инстанс повис, лок
+    // освобождается через 2 мин, следующий тик уже через 1 мин возьмёт его.
+    // lockAtLeastFor = 55s — гарантирует, что на быстром инстансе тик не запускается
+    // дважды за одно окно (защита от <<мгновенного>> тика + рестарта).
     @Scheduled(fixedRate = 60_000)
+    @SchedulerLock(name = "NotificationSchedulerService_checkAndSendNotifications",
+            lockAtMostFor = "PT2M", lockAtLeastFor = "PT55S")
     @Transactional
     public void checkAndSendNotifications() {
         // Issue #114: весь тик выполняется в изолированном scope с тегом

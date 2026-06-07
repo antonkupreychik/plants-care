@@ -1,6 +1,7 @@
 package com.plantcare.bot.support;
 
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -22,6 +23,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @SpringBootTest
 @ActiveProfiles("test")
 @Testcontainers
+@Import(NoOpShedLockTestConfig.class)
 public abstract class IntegrationTestBase {
 
     protected static final PostgreSQLContainer<?> POSTGRES =

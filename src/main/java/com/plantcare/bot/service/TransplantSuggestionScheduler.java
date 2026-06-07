@@ -13,6 +13,7 @@ import com.plantcare.bot.telegram.SendCallbacks;
 import io.sentry.Sentry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
@@ -63,7 +64,11 @@ public class TransplantSuggestionScheduler {
      * минуте — daily-тика достаточно. Quiet-hours юзера всё равно проверяются
      * по его TZ перед отправкой.
      */
+    // Issue #279: daily-задача — lockAtMostFor 4h (долгий прогон OK), lockAtLeastFor 23h
+    // (гарантирует не более одного запуска в сутки даже при рестарте инстанса сразу после тика).
     @Scheduled(cron = "0 0 9 * * *", zone = "UTC")
+    @SchedulerLock(name = "TransplantSuggestionScheduler_tick",
+            lockAtMostFor = "PT4H", lockAtLeastFor = "PT23H")
     public void tick() {
         if (!properties.enabled()) {
             return;
