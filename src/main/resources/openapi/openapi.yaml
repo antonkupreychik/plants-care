@@ -200,6 +200,12 @@ paths:
     $ref: './resources/locations.yaml#/paths/Collection'
   /api/v1/locations/{id}:
     $ref: './resources/locations.yaml#/paths/Item'
+  /api/v1/locations/{id}/activate:
+    $ref: './resources/locations.yaml#/paths/ItemActivate'
+  /api/v1/locations/{id}/pause:
+    $ref: './resources/locations.yaml#/paths/ItemPause'
+  /api/v1/locations/{id}/resume:
+    $ref: './resources/locations.yaml#/paths/ItemResume'
 
   /api/v1/care-events:
     $ref: './resources/care-events.yaml#/paths/Collection'
@@ -389,6 +395,8 @@ components:
       $ref: './resources/locations.yaml#/schemas/LocationCreateRequest'
     LocationUpdateRequest:
       $ref: './resources/locations.yaml#/schemas/LocationUpdateRequest'
+    LocationPauseRequest:
+      $ref: './resources/locations.yaml#/schemas/LocationPauseRequest'
 
     CareEventType:
       $ref: './resources/care-events.yaml#/schemas/CareEventType'
