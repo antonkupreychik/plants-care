@@ -48,9 +48,27 @@ spring:
           starttls:
             enable: ${MAIL_SMTP_STARTTLS:false}
 
+  # Issue #278, эпик #277 фаза 0: Redis (Lettuce).
+  # На Railway REDIS_URL инжектится как reference variable из Redis-сервиса.
+  # Внутренняя сеть Railway: app ↔ Redis по приватному хосту *.railway.internal.
+  # Пустой дефолт: при отсутствии REDIS_URL Spring Boot использует host/port ниже.
+  data:
+    redis:
+      url: ${REDIS_URL:}
+      # Ниже — ручные параметры для случаев, когда REDIS_URL не задан (dev-локалка).
+      # При наличии url эти значения игнорируются.
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+
 app:
   species:
     search-limit: 5
+
+  # Issue #278, эпик #277 фаза 0: параметры Lettuce-клиента и namespacing ключей.
+  redis:
+    connect-timeout: ${REDIS_CONNECT_TIMEOUT:PT2S}
+    command-timeout: ${REDIS_COMMAND_TIMEOUT:PT1S}
+    key-prefix: ${REDIS_KEY_PREFIX:pc:}
 
   # Issue #79: публичная подписка на .ics календарь.
   calendar:
@@ -187,6 +205,13 @@ management:
     # Отправка magic-link писем не должна влиять на liveness/health приложения.
     mail:
       enabled: false
+    # Issue #278: Redis health-индикатор включён (появляется из starter-data-redis).
+    # readiness НЕ делаем жёстко зависимым от Redis — деградация по фазам.
+    # Spring Boot 3.x: redis HealthIndicator включается автоматически при наличии
+    # RedisConnectionFactory. Падение Redis = DOWN в /actuator/health, но приложение
+    # продолжает работать (планировщик на JDBC, Telegram — независимы от Redis).
+    redis:
+      enabled: true
   prometheus:
     metrics:
       export:

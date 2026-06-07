@@ -204,6 +204,15 @@
             <version>${shedlock.version}</version>
         </dependency>
 
+        <!-- Issue #278, эпик #277 фаза 0: Redis (Lettuce). Пререквизит для rate-limit (#277b),
+             cache (#277c) и токен-хранилища (#277d). Намеренно Lettuce (по умолчанию
+             в spring-boot-starter-data-redis): неблокирующий клиент, thread-safe
+             shared connection, хорошо работает с виртуальными потоками Java 21. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-redis</artifactId>
+        </dependency>
+
         <!-- Lombok -->
         <dependency>
             <groupId>org.projectlombok</groupId>
@@ -238,6 +247,7 @@
             <version>${testcontainers.version}</version>
             <scope>test</scope>
         </dependency>
+
 
         <!-- Issue #127: ArchUnit — фитнес-функция границ модульного монолита. -->
         <dependency>
