@@ -124,6 +124,18 @@ plantcare:
       # Формат: AA:BB:CC:... (hex через двоеточие). Может быть несколько.
       sha256-cert-fingerprints: ${DEEP_LINK_ANDROID_SHA256_CERT_FINGERPRINTS:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99}
 
+# Issue #175 (ADR-014): push-уведомления на мобильные устройства.
+# Глобальный тумблер; реальные FCM/APNs-ключи добавляются отдельной задачей.
+push:
+  enabled: ${PUSH_ENABLED:false}
+  fcm:
+    server-key: ${FCM_SERVER_KEY:}
+  apns:
+    key-id:           ${APNS_KEY_ID:}
+    team-id:          ${APNS_TEAM_ID:}
+    bundle-id:        ${APNS_BUNDLE_ID:}
+    private-key-path: ${APNS_PRIVATE_KEY_PATH:}
+
 admin:
   username: ${ADMIN_USERNAME:}
   password-bcrypt-hash: ${ADMIN_PASSWORD_BCRYPT_HASH:}

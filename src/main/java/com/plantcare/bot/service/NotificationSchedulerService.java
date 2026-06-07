@@ -1,5 +1,6 @@
 package com.plantcare.bot.service;
 
+import com.plantcare.core.service.PushSender;
 import com.plantcare.core.service.QuietHoursPolicy;
 import com.plantcare.core.service.SchedulerHealthTracker;
 
@@ -8,6 +9,7 @@ import com.plantcare.core.domain.DigestTaskItem;
 import com.plantcare.core.domain.NotificationDigest;
 import com.plantcare.core.domain.Plant;
 import com.plantcare.core.domain.User;
+import com.plantcare.core.domain.UserDevice;
 import com.plantcare.core.domain.enums.TaskType;
 import com.plantcare.core.metrics.MetricsService;
 import com.plantcare.core.observability.SentryTags;
@@ -15,6 +17,7 @@ import com.plantcare.core.observability.SentryTags.Layer;
 import com.plantcare.core.repository.CareScheduleRepository;
 import com.plantcare.core.repository.NotificationDigestRepository;
 import com.plantcare.core.repository.NotificationLogRepository;
+import com.plantcare.core.repository.UserDeviceRepository;
 import com.plantcare.bot.telegram.RateLimitedTelegramSender;
 import com.plantcare.bot.telegram.SendCallbacks;
 import io.micrometer.core.instrument.Timer;
@@ -56,6 +59,9 @@ public class NotificationSchedulerService {
     private final RateLimitedTelegramSender telegramSender;
     private final NotificationDeliveryCallbacks deliveryCallbacks;
     private final com.plantcare.core.service.LocationSharingService locationSharingService;
+    // Issue #175: push-канал и репозиторий устройств для fan-out на мобильные клиенты
+    private final PushSender pushSender;
+    private final UserDeviceRepository userDeviceRepository;
 
     @Scheduled(fixedRate = 60_000)
     @Transactional
@@ -317,28 +323,38 @@ public class NotificationSchedulerService {
         // Если Open-Meteo молчит или кеш пустой — push уходит без хинта.
         text = appendWeatherHintIfWatering(text, user, schedule);
 
-        SendMessage message = SendMessage.builder()
-                .chatId(user.getTelegramChatId().toString())
-                .text(text)
-                .replyMarkup(keyboard)
-                .build();
-
-        // Issue #29: отправка ушла в rate-limited очередь. Bookkeeping (дедуп-лог +
-        // метрики, пометка blocked на 403) выполняется в колбэках на воркер-потоке
-        // очереди вне этой транзакции. Захватываем только примитивные id, чтобы не
-        // тащить detached-entity между потоками. Дедуп-лог пишется по факту успешной
-        // отправки — как и в синхронной версии (очередь дренирует задолго до
-        // следующего 60с-тика, окно дедупа не нарушается).
         final long plantId = plant.getId();
         final TaskType taskType = schedule.getTaskType();
-        final long chatId = user.getTelegramChatId();
-        telegramSender.enqueue(message, new SendCallbacks(
-                () -> {
-                    deliveryCallbacks.onSent(plantId, taskType);
-                    log.info("Sent notification for plant id={} to chat {} (acclimation={})",
-                            plantId, chatId, inAcclimation);
-                },
-                e -> deliveryCallbacks.onFailed(chatId, e)));
+
+        // Telegram-канал: только если у юзера привязан Telegram-чат (issue #88:
+        // mobile-only юзеры могут не иметь telegramChatId).
+        if (user.getTelegramChatId() != null) {
+            SendMessage message = SendMessage.builder()
+                    .chatId(user.getTelegramChatId().toString())
+                    .text(text)
+                    .replyMarkup(keyboard)
+                    .build();
+
+            // Issue #29: отправка ушла в rate-limited очередь. Bookkeeping (дедуп-лог +
+            // метрики, пометка blocked на 403) выполняется в колбэках на воркер-потоке
+            // очереди вне этой транзакции. Захватываем только примитивные id, чтобы не
+            // тащить detached-entity между потоками. Дедуп-лог пишется по факту успешной
+            // отправки — как и в синхронной версии (очередь дренирует задолго до
+            // следующего 60с-тика, окно дедупа не нарушается).
+            final long chatId = user.getTelegramChatId();
+            telegramSender.enqueue(message, new SendCallbacks(
+                    () -> {
+                        deliveryCallbacks.onSent(plantId, taskType);
+                        log.info("Sent notification for plant id={} to chat {} (acclimation={})",
+                                plantId, chatId, inAcclimation);
+                    },
+                    e -> deliveryCallbacks.onFailed(chatId, e)));
+        }
+
+        // Issue #175: fan-out на мобильные устройства пользователя.
+        // Telegram-юзеры тоже могут иметь mobile-устройства (оба канала получат уведомление).
+        // Тихие часы / paused_until уже проверены в shouldSend() выше.
+        fanOutToMobileDevices(user, plant, text);
 
         // Совместный уход (issue #77): тот же push веером уходит caretaker'ам с
         // доступом к локации растения. Клавиатура завязана на scheduleId, а callback
@@ -346,6 +362,30 @@ public class NotificationSchedulerService {
         // задачу и она закроется у всех. Bookkeeping/дедуп ведём только по
         // основной отправке владельцу (выше), чтобы не задвоить метрики.
         fanOutToCaretakers(plant, text, keyboard);
+    }
+
+    /**
+     * Fan-out push-уведомления на все зарегистрированные мобильные устройства
+     * пользователя (issue #175). Quiet hours и paused_until уже проверены выше.
+     * Ошибки отдельного устройства не останавливают остальные.
+     */
+    private void fanOutToMobileDevices(User user, Plant plant, String text) {
+        List<UserDevice> devices = userDeviceRepository.findByUserId(user.getId());
+        if (devices.isEmpty()) {
+            return;
+        }
+        String title = "Plants Care";
+        for (UserDevice device : devices) {
+            try {
+                pushSender.send(device.getPushToken(), title, text);
+                log.debug("Push sent to device id={} platform={} for plant id={}",
+                        device.getId(), device.getPlatform(), plant.getId());
+            } catch (Exception e) {
+                log.warn("Push failed for device id={} platform={}: {}",
+                        device.getId(), device.getPlatform(), e.getMessage());
+                Sentry.captureException(e);
+            }
+        }
     }
 
     /**
