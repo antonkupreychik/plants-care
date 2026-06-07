@@ -1,0 +1,213 @@
+# REST API: шаблоны растений (issue #254).
+#
+# Шаблон — сохранённый набор интервалов ухода, позволяющий быстро создавать
+# похожие растения. Поверх PlantTemplateService (issue #68).
+#
+# Выбранная форма «создать из шаблона»: отдельный эндпоинт
+# POST /plant-templates/{id}/instantiate — явная операция, не query-параметр
+# у POST /plants. Мотивация: семантика создания «из шаблона» отличается от
+# обычного создания растения; query-параметр у другого ресурса нарушает SRP.
+
+paths:
+  Collection:
+    get:
+      tags: [PlantTemplates]
+      operationId: listPlantTemplates
+      summary: Список шаблонов пользователя
+      description: |
+        Возвращает все шаблоны растений, созданные текущим пользователем,
+        отсортированные по дате создания (новые первыми).
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Список шаблонов.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/schemas/PlantTemplateDto'
+        '401':
+          $ref: '../_common/responses.yaml#/Unauthorized'
+
+    post:
+      tags: [PlantTemplates]
+      operationId: createPlantTemplate
+      summary: Создать шаблон
+      description: |
+        Создаёт шаблон растения для текущего пользователя.
+
+        Если передан `fromPlantId`, копирует активные расписания ухода
+        (WATERING, MISTING, FERTILIZING) из существующего растения пользователя.
+
+        Ограничения:
+        - Максимум 30 шаблонов на пользователя.
+        - Имя 1–40 символов, без дублей (case-insensitive) в пределах пользователя.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/schemas/PlantTemplateCreateRequest'
+            examples:
+              fromPlant:
+                summary: Шаблон из существующего растения
+                value:
+                  name: "Монстера 7д"
+                  fromPlantId: 42
+              custom:
+                summary: Шаблон без источника
+                value:
+                  name: "Кактус 14д"
+      responses:
+        '201':
+          description: Шаблон создан.
+          content:
+            application/json:
+              schema:
+                $ref: '#/schemas/PlantTemplateDto'
+        '400':
+          $ref: '../_common/responses.yaml#/BadRequest'
+        '401':
+          $ref: '../_common/responses.yaml#/Unauthorized'
+        '409':
+          $ref: '../_common/responses.yaml#/Conflict'
+
+  Item:
+    delete:
+      tags: [PlantTemplates]
+      operationId: deletePlantTemplate
+      summary: Удалить шаблон
+      description: |
+        Удаляет шаблон пользователя. Растения, созданные из этого шаблона,
+        не затрагиваются (связи FK на plants нет).
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/parameters/PlantTemplateIdPath'
+      responses:
+        '204':
+          description: Шаблон удалён.
+        '401':
+          $ref: '../_common/responses.yaml#/Unauthorized'
+        '404':
+          $ref: '../_common/responses.yaml#/NotFound'
+
+  Instantiate:
+    post:
+      tags: [PlantTemplates]
+      operationId: instantiatePlantTemplate
+      summary: Создать растение из шаблона
+      description: |
+        Создаёт новое растение, копируя интервалы ухода из указанного шаблона.
+        Сезонная корректировка применяется согласно глобальной настройке
+        пользователя (`seasonal_mode`). Локация — дефолтная для пользователя.
+
+        Расписания (WATERING + другие из шаблона) получают статус active.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/parameters/PlantTemplateIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/schemas/PlantTemplateInstantiateRequest'
+            example:
+              name: "Монстера 2"
+      responses:
+        '201':
+          description: Растение создано.
+          content:
+            application/json:
+              schema:
+                $ref: './plants.yaml#/schemas/PlantDto'
+        '400':
+          $ref: '../_common/responses.yaml#/BadRequest'
+        '401':
+          $ref: '../_common/responses.yaml#/Unauthorized'
+        '404':
+          $ref: '../_common/responses.yaml#/NotFound'
+
+parameters:
+  PlantTemplateIdPath:
+    name: id
+    in: path
+    required: true
+    description: ID шаблона растения.
+    schema:
+      type: integer
+      format: int64
+      example: 1
+
+schemas:
+  PlantTemplateDto:
+    type: object
+    description: Шаблон растения пользователя.
+    required: [id, name, careRules, createdAt]
+    properties:
+      id:
+        type: integer
+        format: int64
+        example: 1
+      name:
+        type: string
+        maxLength: 40
+        example: "Монстера 7д"
+      careRules:
+        type: array
+        description: Правила ухода, сохранённые в шаблоне.
+        items:
+          $ref: '#/schemas/PlantTemplateCareRuleDto'
+      createdAt:
+        type: string
+        format: date-time
+        example: "2024-01-15T10:30:00Z"
+
+  PlantTemplateCareRuleDto:
+    type: object
+    description: Одно правило ухода в шаблоне.
+    required: [careType, intervalDays]
+    properties:
+      careType:
+        type: string
+        enum: [WATERING, MISTING, FERTILIZING, SOIL_CHECK]
+        example: WATERING
+      intervalDays:
+        type: integer
+        minimum: 1
+        example: 7
+
+  PlantTemplateCreateRequest:
+    type: object
+    required: [name]
+    properties:
+      name:
+        type: string
+        minLength: 1
+        maxLength: 40
+        example: "Монстера 7д"
+      fromPlantId:
+        type: integer
+        format: int64
+        nullable: true
+        description: |
+          ID существующего растения пользователя, из которого копировать
+          активные расписания ухода. Если не указан — шаблон создаётся
+          без правил (пустой каркас).
+        example: 42
+
+  PlantTemplateInstantiateRequest:
+    type: object
+    required: [name]
+    properties:
+      name:
+        type: string
+        minLength: 1
+        maxLength: 100
+        description: Имя нового растения.
+        example: "Монстера 2"

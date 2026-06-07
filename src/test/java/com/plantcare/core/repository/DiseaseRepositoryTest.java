@@ -4,6 +4,8 @@ import com.plantcare.core.domain.Disease;
 import com.plantcare.bot.support.IntegrationTestBase;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 
 import java.util.List;
 
@@ -95,5 +97,52 @@ class DiseaseRepositoryTest extends IntegrationTestBase {
         assertThat(all).extracting(Disease::getName)
                 .isSortedAccordingTo(String::compareTo);
         assertThat(all).hasSizeGreaterThanOrEqualTo(20);
+    }
+
+    // ------------------------------------------------------------------ paginated queries (issue #255)
+
+    @Test
+    void should_return_page_of_all_diseases_when_pageable() {
+        Page<Disease> page = diseaseRepository.findAllByOrderByNameAsc(PageRequest.of(0, 5));
+
+        assertThat(page.getContent()).hasSizeLessThanOrEqualTo(5);
+        assertThat(page.getTotalElements()).isGreaterThanOrEqualTo(20);
+        assertThat(page.getContent()).extracting(Disease::getName)
+                .isSortedAccordingTo(String::compareTo);
+    }
+
+    @Test
+    void should_return_second_page_different_from_first_when_pageable() {
+        Page<Disease> firstPage = diseaseRepository.findAllByOrderByNameAsc(PageRequest.of(0, 5));
+        Page<Disease> secondPage = diseaseRepository.findAllByOrderByNameAsc(PageRequest.of(1, 5));
+
+        assertThat(firstPage.getContent()).extracting(Disease::getName)
+                .doesNotContainAnyElementsOf(
+                        secondPage.getContent().stream().map(Disease::getName).toList());
+    }
+
+    @Test
+    void should_find_spider_mite_when_searching_by_name_word_paginated() {
+        Page<Disease> page = diseaseRepository.searchByQuery("клещ", PageRequest.of(0, 10));
+
+        assertThat(page.getContent()).extracting(Disease::getName)
+                .contains("Паутинный клещ");
+        assertThat(page.getTotalElements()).isGreaterThanOrEqualTo(1);
+    }
+
+    @Test
+    void should_find_disease_by_symptom_word_paginated() {
+        Page<Disease> page = diseaseRepository.searchByQuery("налёт", PageRequest.of(0, 20));
+
+        assertThat(page.getContent()).extracting(Disease::getName)
+                .contains("Мучнистая роса");
+    }
+
+    @Test
+    void should_return_empty_page_when_no_match_paginated() {
+        Page<Disease> page = diseaseRepository.searchByQuery("xyznonexistentболезнь", PageRequest.of(0, 10));
+
+        assertThat(page.getContent()).isEmpty();
+        assertThat(page.getTotalElements()).isZero();
     }
 }

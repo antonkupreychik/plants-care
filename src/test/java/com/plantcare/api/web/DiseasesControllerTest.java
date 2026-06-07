@@ -8,11 +8,15 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.util.List;
 
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -32,36 +36,56 @@ class DiseasesControllerTest {
     // ------------------------------------------------------------------ GET /diseases
 
     @Test
-    void should_return_all_diseases_when_no_query() throws Exception {
+    void should_return_page_of_diseases_when_no_query() throws Exception {
         // arrange
         var card = new DiseaseCard(1L, "Паутинный клещ", "Tetranychus urticae",
                 "Крапчатость на листьях", "Обработать акарицидом", "Поддерживать влажность");
-        when(diseaseService.getAll()).thenReturn(List.of(card));
+        var page = new PageImpl<>(List.of(card), PageRequest.of(0, 20), 1L);
+        when(diseaseService.findPage(any())).thenReturn(page);
 
         // act + assert
         mockMvc.perform(get("/api/v1/diseases"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$").isArray())
-                .andExpect(jsonPath("$[0].id").value(1))
-                .andExpect(jsonPath("$[0].name").value("Паутинный клещ"))
-                .andExpect(jsonPath("$[0].latinName").value("Tetranychus urticae"))
-                .andExpect(jsonPath("$[0].symptoms").value("Крапчатость на листьях"))
-                .andExpect(jsonPath("$[0].treatment").value("Обработать акарицидом"))
-                .andExpect(jsonPath("$[0].prevention").value("Поддерживать влажность"));
+                .andExpect(jsonPath("$.items").isArray())
+                .andExpect(jsonPath("$.items[0].id").value(1))
+                .andExpect(jsonPath("$.items[0].name").value("Паутинный клещ"))
+                .andExpect(jsonPath("$.items[0].latinName").value("Tetranychus urticae"))
+                .andExpect(jsonPath("$.items[0].symptoms").value("Крапчатость на листьях"))
+                .andExpect(jsonPath("$.items[0].treatment").value("Обработать акарицидом"))
+                .andExpect(jsonPath("$.items[0].prevention").value("Поддерживать влажность"))
+                .andExpect(jsonPath("$.total").value(1))
+                .andExpect(jsonPath("$.offset").value(0))
+                .andExpect(jsonPath("$.limit").value(20));
 
-        verify(diseaseService).getAll();
+        verify(diseaseService).findPage(any());
     }
 
     @Test
-    void should_return_empty_array_when_no_diseases_exist() throws Exception {
+    void should_return_empty_items_when_no_diseases_exist() throws Exception {
         // arrange
-        when(diseaseService.getAll()).thenReturn(List.of());
+        var emptyPage = new PageImpl<DiseaseCard>(List.of(), PageRequest.of(0, 20), 0L);
+        when(diseaseService.findPage(any())).thenReturn(emptyPage);
 
         // act + assert
         mockMvc.perform(get("/api/v1/diseases"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$").isArray())
-                .andExpect(jsonPath("$").isEmpty());
+                .andExpect(jsonPath("$.items").isArray())
+                .andExpect(jsonPath("$.items").isEmpty())
+                .andExpect(jsonPath("$.total").value(0));
+    }
+
+    @Test
+    void should_apply_pagination_parameters() throws Exception {
+        // arrange
+        var emptyPage = new PageImpl<DiseaseCard>(List.of(), PageRequest.of(1, 10), 15L);
+        when(diseaseService.findPage(any())).thenReturn(emptyPage);
+
+        // act + assert — offset=10, limit=10 → page=1
+        mockMvc.perform(get("/api/v1/diseases").param("offset", "10").param("limit", "10"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.offset").value(10))
+                .andExpect(jsonPath("$.limit").value(10))
+                .andExpect(jsonPath("$.total").value(15));
     }
 
     @Test
@@ -69,28 +93,31 @@ class DiseasesControllerTest {
         // arrange
         var card = new DiseaseCard(2L, "Мучнистая роса", null,
                 "Белый налёт на листьях", "Фунгицид", "Проветривание");
-        when(diseaseService.search("роса", 20)).thenReturn(List.of(card));
+        var page = new PageImpl<>(List.of(card), PageRequest.of(0, 20), 1L);
+        when(diseaseService.searchPage(eq("роса"), any())).thenReturn(page);
 
         // act + assert
         mockMvc.perform(get("/api/v1/diseases").param("q", "роса"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$[0].name").value("Мучнистая роса"))
-                .andExpect(jsonPath("$[0].latinName").isEmpty());
+                .andExpect(jsonPath("$.items[0].name").value("Мучнистая роса"))
+                .andExpect(jsonPath("$.items[0].latinName").isEmpty())
+                .andExpect(jsonPath("$.total").value(1));
 
-        verify(diseaseService).search("роса", 20);
+        verify(diseaseService).searchPage(eq("роса"), any());
     }
 
     @Test
     void should_return_all_when_q_is_blank() throws Exception {
-        // arrange
-        when(diseaseService.getAll()).thenReturn(List.of());
+        // arrange — пустая строка q = как без q
+        var emptyPage = new PageImpl<DiseaseCard>(List.of(), PageRequest.of(0, 20), 0L);
+        when(diseaseService.findPage(any())).thenReturn(emptyPage);
 
-        // act + assert — пустая строка q = как без q
+        // act + assert
         mockMvc.perform(get("/api/v1/diseases").param("q", "  "))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$").isArray());
+                .andExpect(jsonPath("$.items").isArray());
 
-        verify(diseaseService).getAll();
+        verify(diseaseService).findPage(any());
     }
 
     // ------------------------------------------------------------------ GET /diseases/{id}
@@ -126,7 +153,7 @@ class DiseasesControllerTest {
     void should_serialize_null_latin_name_when_not_present() throws Exception {
         // arrange — latinName nullable для неинфекционных проблем
         var card = new DiseaseCard(3L, "Хлороз", null,
-                "Пожелтение листьев", "Внести железо", "Контролировать pH");
+                "Пожелтение листьях", "Внести железо", "Контролировать pH");
         when(diseaseService.getById(3L)).thenReturn(card);
 
         // act + assert
