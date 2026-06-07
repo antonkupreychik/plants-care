@@ -126,6 +126,11 @@ tags:
       мобильного приложения. Клиент передаёт `since` (серверное время из предыдущего
       ответа) и получает все сущности, изменённые после этого момента, а также
       список удалений. Server timestamp wins при конфликтах.
+  - name: PlantTemplates
+    description: |
+      Пользовательские шаблоны растений (issue #254): сохранение набора интервалов
+      ухода из существующего растения, быстрое создание нового растения по шаблону.
+      Максимум 30 шаблонов на пользователя.
 
 paths:
   /api/v1/auth/apple:
@@ -174,6 +179,13 @@ paths:
     $ref: './resources/schedules.yaml#/paths/Collection'
   /api/v1/plants/{id}/schedules/{type}:
     $ref: './resources/schedules.yaml#/paths/Item'
+
+  /api/v1/plant-templates:
+    $ref: './resources/plant-templates.yaml#/paths/Collection'
+  /api/v1/plant-templates/{id}:
+    $ref: './resources/plant-templates.yaml#/paths/Item'
+  /api/v1/plant-templates/{id}/instantiate:
+    $ref: './resources/plant-templates.yaml#/paths/Instantiate'
 
   /api/v1/locations:
     $ref: './resources/locations.yaml#/paths/Collection'
@@ -450,6 +462,15 @@ components:
       $ref: './resources/sync.yaml#/schemas/SyncCareEventDto'
     SyncDeletionDto:
       $ref: './resources/sync.yaml#/schemas/SyncDeletionDto'
+
+    PlantTemplateDto:
+      $ref: './resources/plant-templates.yaml#/schemas/PlantTemplateDto'
+    PlantTemplateCareRuleDto:
+      $ref: './resources/plant-templates.yaml#/schemas/PlantTemplateCareRuleDto'
+    PlantTemplateCreateRequest:
+      $ref: './resources/plant-templates.yaml#/schemas/PlantTemplateCreateRequest'
+    PlantTemplateInstantiateRequest:
+      $ref: './resources/plant-templates.yaml#/schemas/PlantTemplateInstantiateRequest'
 
     ApiErrorResponse:
       $ref: './_common/errors.yaml#/schemas/ApiErrorResponse'
