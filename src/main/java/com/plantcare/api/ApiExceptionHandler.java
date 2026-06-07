@@ -116,7 +116,7 @@ public class ApiExceptionHandler {
 
     @ExceptionHandler(LocationNotEmptyException.class)
     public ResponseEntity<ApiErrorResponse> handleLocationNotEmpty(LocationNotEmptyException e) {
-        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+        return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(ApiErrorResponse.of("LOCATION_NOT_EMPTY", e.getMessage()));
     }
 
