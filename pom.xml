@@ -34,6 +34,8 @@
         <!-- Issue #114: Sentry 7.x. -jakarta-вариант таргетит jakarta.* и совместим
              со Spring Boot 3.5.x (текущая 3.5.14). 7.22.5 — последняя стабильная в линии 7.x. -->
         <sentry.version>7.22.5</sentry.version>
+        <!-- Эпик #277 (фаза 1, #279): ShedLock 5.x совместим со Spring 6 / Boot 3.5.x. -->
+        <shedlock.version>5.16.0</shedlock.version>
 
         <!-- Sonar -->
         <sonar.java.coveragePlugin>jacoco</sonar.java.coveragePlugin>
@@ -186,6 +188,20 @@
             <groupId>org.openapitools</groupId>
             <artifactId>jackson-databind-nullable</artifactId>
             <version>${jackson-databind-nullable.version}</version>
+        </dependency>
+
+        <!-- Issue #279, эпик #277 фаза 1: ShedLock на JDBC (Postgres) — distributed
+             lock для @Scheduled, анти-дубли напоминаний при multi-instance.
+             Намеренно НЕ Redis-provider: путь напоминаний не должен зависеть от Redis. -->
+        <dependency>
+            <groupId>net.javacrumbs.shedlock</groupId>
+            <artifactId>shedlock-spring</artifactId>
+            <version>${shedlock.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>net.javacrumbs.shedlock</groupId>
+            <artifactId>shedlock-provider-jdbc-template</artifactId>
+            <version>${shedlock.version}</version>
         </dependency>
 
         <!-- Lombok -->
