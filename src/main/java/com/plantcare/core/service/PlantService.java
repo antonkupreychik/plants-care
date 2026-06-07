@@ -1031,6 +1031,50 @@ public class PlantService {
         return saved;
     }
 
+    /**
+     * Разовый перенос ближайшего срабатывания расписания на {@code days} дней вперёд
+     * от текущего момента (issue #257, REST-parity bot→REST).
+     *
+     * <p>Базовый интервал ({@code every}) не меняется — это одноразовый сдвиг,
+     * аналог кнопки «Отложить на N дней» в Telegram-боте ({@code PLANT:SCHED:POSTPONE}).
+     *
+     * @return обновлённый {@link ScheduleView} для маппинга в DTO контроллером
+     */
+    @Transactional
+    public ScheduleView postponeSchedule(Long userId, Long plantId, TaskType taskType, int days) {
+        if (days < 1 || days > 365) {
+            throw new IllegalArgumentException("Количество дней должно быть от 1 до 365");
+        }
+
+        Plant plant = plantRepository.findByUserIdAndIdAndArchivedAtIsNull(userId, plantId)
+                .orElseThrow(() -> new IllegalArgumentException("Растение не найдено"));
+
+        CareSchedule schedule = careScheduleRepository
+                .findByPlantIdAndTaskType(plant.getId(), taskType)
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Расписание " + taskType + " не настроено"
+                ));
+
+        LocalDateTime newNextDueAt = LocalDateTime.now(clock).plusDays(days);
+        schedule.setNextDueAt(newNextDueAt);
+        CareSchedule saved = careScheduleRepository.save(schedule);
+
+        log.info("Postponed {} for plant {} by {} days → {} (user {})",
+                taskType, plantId, days, newNextDueAt, userId);
+
+        User user = plant.getUser();
+        SeasonalInfo seasonal = buildSeasonalInfo(plant, user, saved.getIntervalDays());
+
+        return new ScheduleView(
+                taskType,
+                saved.getIntervalDays(),
+                saved.getAmountMl(),
+                saved.isActive(),
+                saved.isActive() ? saved.getNextDueAt() : null,
+                seasonal
+        );
+    }
+
     @Transactional
     public CareSchedule rescheduleSchedule(
             Long userId,

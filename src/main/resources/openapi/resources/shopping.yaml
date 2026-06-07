@@ -44,6 +44,35 @@ paths:
         '400':
           $ref: '../_common/responses.yaml#/BadRequest'
 
+  CollectionClear:
+    delete:
+      tags: [Shopping]
+      operationId: clearCheckedShoppingItems
+      summary: Очистить отмеченные позиции (bulk)
+      description: |
+        Удаляет все позиции списка покупок текущего пользователя, у которых
+        `checked = true`. Позиции с `checked = false` не затрагиваются.
+
+        Вызов на пустом или полностью непроверенном списке возвращает `204`
+        (идемпотентен — ничего не делает, не ошибка).
+
+        * `204` — отмеченные позиции удалены (или список и так пуст).
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: checked
+          in: query
+          required: true
+          description: Фильтр. Единственное допустимое значение — `true` (удалить только отмеченные).
+          schema:
+            type: boolean
+            enum: [true]
+      responses:
+        '204':
+          description: Отмеченные позиции удалены.
+        '400':
+          $ref: '../_common/responses.yaml#/BadRequest'
+
   Item:
     patch:
       tags: [Shopping]

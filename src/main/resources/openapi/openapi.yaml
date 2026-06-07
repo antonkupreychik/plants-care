@@ -169,6 +169,8 @@ paths:
     $ref: './resources/plant-history.yaml#/paths/ItemHistorySummary'
   /api/v1/plants/{id}/events:
     $ref: './resources/plant-events.yaml#/paths/Collection'
+  /api/v1/plants/{id}/acclimation:
+    $ref: './resources/plants.yaml#/paths/ItemAcclimation'
   /api/v1/plants/{id}/health:
     $ref: './resources/plants.yaml#/paths/ItemHealth'
   /api/v1/plants/{id}/family:
@@ -179,6 +181,8 @@ paths:
     $ref: './resources/schedules.yaml#/paths/Collection'
   /api/v1/plants/{id}/schedules/{type}:
     $ref: './resources/schedules.yaml#/paths/Item'
+  /api/v1/plants/{id}/schedules/{type}/postpone:
+    $ref: './resources/schedules.yaml#/paths/ItemPostpone'
 
   /api/v1/plant-templates:
     $ref: './resources/plant-templates.yaml#/paths/Collection'
@@ -229,6 +233,8 @@ paths:
 
   /api/v1/shopping:
     $ref: './resources/shopping.yaml#/paths/Collection'
+  /api/v1/shopping/clear:
+    $ref: './resources/shopping.yaml#/paths/CollectionClear'
   /api/v1/shopping/{id}:
     $ref: './resources/shopping.yaml#/paths/Item'
 
@@ -242,6 +248,8 @@ paths:
 
   /api/v1/me:
     $ref: './resources/me.yaml#/paths/Me'
+  /api/v1/me/weather-location:
+    $ref: './resources/me.yaml#/paths/WeatherLocation'
   /api/v1/me/seasonal:
     $ref: './resources/me.yaml#/paths/Seasonal'
   /api/v1/me/seasonal/{season}:
@@ -418,6 +426,8 @@ components:
       $ref: './resources/schedules.yaml#/schemas/SeasonalScheduleDto'
     ScheduleInput:
       $ref: './resources/schedules.yaml#/schemas/ScheduleInput'
+    SchedulePostponeRequest:
+      $ref: './resources/schedules.yaml#/schemas/SchedulePostponeRequest'
 
     ShoppingItemDto:
       $ref: './resources/shopping.yaml#/schemas/ShoppingItemDto'
@@ -432,6 +442,8 @@ components:
       $ref: './resources/me.yaml#/schemas/MeResponse'
     MeUpdateRequest:
       $ref: './resources/me.yaml#/schemas/MeUpdateRequest'
+    WeatherLocationRequest:
+      $ref: './resources/me.yaml#/schemas/WeatherLocationRequest'
     NotificationDto:
       $ref: './resources/notifications.yaml#/schemas/NotificationDto'
     NotificationsResponse:
