@@ -46,7 +46,7 @@ docker compose --profile full up -d --build   # всё в Docker
 - `com.plantcare.bot.telegram` — хендлеры Telegram, апдейты, клавиатуры
 - `com.plantcare.bot.scheduler` — крон-задачи, отправка напоминаний
 - `com.plantcare.bot.config` — `@Configuration` и `@ConfigurationProperties`
-- `com.plantcare.bot.web` — actuator-расширения, healthcheck-эндпоинты
+- `com.plantcare.bot.web` — REST для мобильного клиента, actuator-расширения, healthcheck-эндпоинты, **SDUI-композиция** (`GET /api/v1/ui/*`)
 
 **Telegram-слой не смешивать с бизнес-логикой.** Хендлер парсит апдейт → дёргает сервис → формирует ответ. Никаких репозиториев в хендлерах.
 
@@ -70,6 +70,30 @@ docker compose --profile full up -d --build   # всё в Docker
 - В коде — `Instant` и `OffsetDateTime`. `LocalDateTime` — только если явно «время в таймзоне пользователя» и эта таймзона рядом.
 - Каждое напоминание считается в таймзоне пользователя (поле `users.timezone`).
 - Тесты на расписания обязаны проверять минимум один кейс с не-UTC таймзоной (Asia/Almaty, Europe/Moscow и т.п.).
+
+---
+
+## Server-Driven UI для мобильного клиента (MADR-015, Accepted)
+
+Мобильный клиент (`plants-care-mobile`) переходит на **гибридный block-SDUI**: read-heavy
+экраны собираются из блоков, которые описывает сервер. Эндпоинты композиции — `GET /api/v1/ui/<screen>`
+(например, `GET /api/v1/ui/home`) в пакете `web`/`api.v1`, возвращают `ScreenLayout`
+(`{ screenId, version, blocks[] }`). Путь под `/api/v1/**` обязателен — там действует JWT-цепочка
+`ApiSecurityConfig` (та же идентификация, что у `/today`, `/plants`).
+
+Правила для backend-агента:
+- **Переиспользуй существующие сервисы/контроллеры** под данные блоков — не дублируй бизнес-логику
+  в SDUI-слое. Контроллеры `/ui/*` тонкие: собрать блоки из готовых сервисов и отдать.
+- **Словарь блоков — контракт мобайла** (его OpenAPI `api/openapi/resources/ui.yaml`). Поведение
+  (какие блоки, в каком порядке, какие данные) задаёт backend, но **новый тип блока сперва
+  появляется в спеке мобайла**, потом backend начинает его слать. Не изобретай блок-типы в обход спеки.
+- **Версионирование обязательно:** эндпоинт принимает `X-UI-Catalog-Version` от клиента и
+  **не включает** в ответ блок-типы выше присланной версии (forward-compat: старый клиент не
+  получает незнакомых блоков).
+- **Действия** в блоках — декларативный `ActionDescriptor` (`{ kind, method, path, payloadTemplate }`),
+  ссылающийся на уже существующие эндпоинты (например, `POST /care-events`). Не плодить спец-эндпоинты под SDUI.
+- Если для блока нет данных ни в одном текущем сервисе — это отдельная фича, не тащить в SDUI-эндпоинт.
+- Детали решения — `plants-care-mobile/docs/adr/MADR-015-sdui.md`.
 
 ---
 
