@@ -1,0 +1,32 @@
+name: Flyway migration guard
+
+# Ловит дубли версий Flyway-миграций ДО мержа (история коллизий V38/41/43/44 —
+# параллельный auto-merge двух PR с одной версией ронял develop и сломал бы прод-деплой).
+# Лёгкая проверка без Maven — секунды.
+
+on:
+  pull_request:
+  push:
+    branches: [ develop, main ]
+
+jobs:
+  flyway-dup-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Проверка на дубли версий миграций
+        run: |
+          dir="src/main/resources/db/migration"
+          # извлекаем версию из имени Vxxx__...sql (поддержка V1.1-стиля)
+          dups=$(ls "$dir" | sed -nE 's/^(V[0-9]+(\.[0-9]+)*)__.*\.sql$/\1/p' | sort | uniq -d)
+          if [ -n "$dups" ]; then
+            echo "::error::Найдены дубли версий Flyway-миграций:"
+            for v in $dups; do
+              echo "  Версия $v:"
+              ls "$dir" | grep -E "^${v}__" | sed 's/^/    - /'
+            done
+            echo ""
+            echo "Развести: переименовать НЕ применённую на деве миграцию на следующий свободный номер."
+            exit 1
+          fi
+          echo "OK: дублей версий миграций нет."
