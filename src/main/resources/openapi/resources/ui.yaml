@@ -1,0 +1,281 @@
+# Server-Driven UI: серверная композиция экранов из блоков (issue #284).
+#
+# Пилот SDUI — главный экран `home`. Сервер описывает экран как ScreenLayout:
+# фиксированный список Block'ов, каждый из которых несёт ТОЛЬКО данные (никакой
+# вёрстки/логики). Данные блоков берутся из уже существующих сервисов
+# (weather / today / locations / plants) — новой бизнес-логики нет.
+#
+# ## Каталог блок-типов и версии (forward-compatibility)
+#
+# Клиент присылает версию своего каталога блоков в заголовке
+# `X-UI-Catalog-Version: <int>`. Сервер НЕ включает в ответ блоки, чья версия
+# каталога выше присланной — так старый клиент не получает незнакомых типов.
+# Заголовок опционален: при отсутствии трактуется как «текущая версия каталога»
+# (выдаются все блоки).
+#
+# | type            | catalogVersion | источник данных            |
+# |-----------------|----------------|----------------------------|
+# | weather_strip   | 1              | WeatherService             |
+# | today_summary   | 1              | TodayApiService            |
+# | location_chips  | 1              | LocationService            |
+# | plant_grid      | 1              | PlantService               |
+#
+# `version` в ответе ScreenLayout = текущая версия каталога блоков на сервере
+# (сейчас 1). Когда добавится блок версии 2 — версия каталога вырастет до 2,
+# а клиенты с `X-UI-Catalog-Version: 1` его не увидят.
+
+paths:
+  Home:
+    get:
+      tags: [UI]
+      operationId: getUiHome
+      summary: SDUI-композиция главного экрана
+      description: |
+        Возвращает серверную композицию главного экрана `home` как `ScreenLayout`
+        (issue #284, SDUI-пилот). Экран собирается из фиксированного набора
+        блоков в порядке `weather_strip → today_summary → location_chips →
+        plant_grid`. Каждый блок несёт только данные из уже существующих сервисов;
+        вёрстку и логику применяет клиент.
+
+        ## Версионирование каталога блоков
+
+        Клиент передаёт версию своего каталога блоков в заголовке
+        `X-UI-Catalog-Version`. Сервер исключает из ответа блоки, чья версия
+        каталога выше присланной (старый клиент не получает незнакомых типов).
+        На старте все четыре типа имеют версию каталога `1`. Заголовок
+        опционален — без него выдаются все блоки текущей версии.
+
+        ## Action-descriptor
+
+        Элементы `plant_grid` несут декларативное описание действия «полить»
+        (`log_care`): клиент сам исполняет `POST /care-events` с подставленным
+        `payloadTemplate`. Сервер не выполняет действие — только описывает его.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: X-UI-Catalog-Version
+          in: header
+          required: false
+          description: |
+            Версия каталога блоков, поддерживаемого клиентом. Блоки с версией
+            каталога выше присланной в ответ не попадают (forward-compatibility).
+            Если не передан — выдаются все блоки текущей версии каталога.
+          schema:
+            type: integer
+            format: int32
+            minimum: 1
+      responses:
+        '200':
+          description: Композиция главного экрана.
+          content:
+            application/json:
+              schema:
+                $ref: '#/schemas/ScreenLayout'
+
+schemas:
+  ScreenLayout:
+    type: object
+    description: |
+      Серверная композиция экрана (SDUI). Описывает, из каких блоков и в каком
+      порядке собирается экран. Клиент рендерит блоки по их `type`.
+    required: [screenId, version, blocks]
+    properties:
+      screenId:
+        type: string
+        description: Идентификатор экрана. Для главного экрана — `home`.
+        example: home
+      version:
+        type: integer
+        format: int32
+        description: |
+          Текущая версия каталога блок-типов на сервере. Клиент сравнивает её
+          со своим каталогом, чтобы понять, появились ли незнакомые типы.
+        example: 1
+      blocks:
+        type: array
+        description: |
+          Блоки экрана в порядке отрисовки. Для `home` фиксированный порядок —
+          `weather_strip → today_summary → location_chips → plant_grid`. Блоки
+          с версией каталога выше присланной клиентом исключаются.
+        items:
+          $ref: '#/schemas/Block'
+
+  BlockType:
+    type: string
+    description: Тип блока SDUI (discriminator).
+    enum: [weather_strip, today_summary, location_chips, plant_grid]
+
+  Block:
+    type: object
+    description: |
+      Базовый блок SDUI. Полиморфен по полю `type` (discriminator). Каждый
+      конкретный тип несёт только данные.
+    required: [type]
+    properties:
+      type:
+        $ref: '#/schemas/BlockType'
+    discriminator:
+      propertyName: type
+      mapping:
+        weather_strip: '#/schemas/WeatherStripBlock'
+        today_summary: '#/schemas/TodaySummaryBlock'
+        location_chips: '#/schemas/LocationChipsBlock'
+        plant_grid: '#/schemas/PlantGridBlock'
+
+  WeatherStripBlock:
+    description: |
+      Блок микро-погоды (catalogVersion 1). Данные из `WeatherService`. Если
+      погода не настроена/недоступна — `available = false`, остальные поля пустые.
+    allOf:
+      - $ref: '#/schemas/Block'
+      - type: object
+        required: [available]
+        properties:
+          available:
+            type: boolean
+            description: '`true` — данные о влажности получены; иначе `false`.'
+          humidityPercent:
+            type: integer
+            format: int32
+            minimum: 0
+            maximum: 100
+            nullable: true
+            description: Относительная влажность 0–100%. `null`, если `available = false`.
+          recommendation:
+            type: string
+            enum: [DEFER_OK, DO_NOT_DEFER, NEUTRAL]
+            nullable: true
+            description: Рекомендация по поливу. `null`, если `available = false`.
+          fetchedAt:
+            type: string
+            format: date-time
+            nullable: true
+            description: Когда значение получено из внешнего источника (UTC).
+          fromCache:
+            type: boolean
+            nullable: true
+            description: '`true` — значение из серверного кеша.'
+
+  TodaySummaryBlock:
+    description: |
+      Блок сводки задач на сегодня (catalogVersion 1). Данные из `TodayApiService`.
+    allOf:
+      - $ref: '#/schemas/Block'
+      - type: object
+        required: [total, done, remaining, overdue]
+        properties:
+          total:
+            type: integer
+            format: int32
+            description: Всего задач на сегодня.
+          done:
+            type: integer
+            format: int32
+            description: Выполненные сегодня задачи.
+          remaining:
+            type: integer
+            format: int32
+            description: Невыполненные задачи (`total - done`).
+          overdue:
+            type: integer
+            format: int32
+            description: Невыполненные задачи с прошедшим дедлайном.
+
+  LocationChipsBlock:
+    description: |
+      Блок чипов локаций пользователя (catalogVersion 1). Данные из `LocationService`.
+    allOf:
+      - $ref: '#/schemas/Block'
+      - type: object
+        required: [locations]
+        properties:
+          locations:
+            type: array
+            description: Локации пользователя в порядке выдачи сервиса.
+            items:
+              $ref: '#/schemas/UiLocationChip'
+
+  UiLocationChip:
+    type: object
+    description: Один чип локации в блоке `location_chips`.
+    required: [id, name]
+    properties:
+      id:
+        type: integer
+        format: int64
+        description: Идентификатор локации.
+      name:
+        type: string
+        description: Название локации.
+      emoji:
+        type: string
+        nullable: true
+        description: Эмодзи локации (если задано).
+
+  PlantGridBlock:
+    description: |
+      Блок-сетка растений пользователя (catalogVersion 1). Данные из `PlantService`.
+      Каждый элемент несёт action-descriptor «полить» (`log_care`), который клиент
+      исполняет сам.
+    allOf:
+      - $ref: '#/schemas/Block'
+      - type: object
+        required: [plants]
+        properties:
+          plants:
+            type: array
+            description: Растения пользователя в порядке выдачи сервиса.
+            items:
+              $ref: '#/schemas/UiPlantCard'
+
+  UiPlantCard:
+    type: object
+    description: |
+      Карточка растения в блоке `plant_grid`. Несёт минимальные данные растения
+      и декларативное действие «полить».
+    required: [id, name, action]
+    properties:
+      id:
+        type: integer
+        format: int64
+        description: Идентификатор растения.
+      name:
+        type: string
+        description: Название растения.
+      locationName:
+        type: string
+        nullable: true
+        description: Название локации растения (если задана).
+      action:
+        $ref: '#/schemas/ActionDescriptor'
+
+  ActionDescriptor:
+    type: object
+    description: |
+      Декларативное описание действия, которое клиент исполняет сам. Сервер
+      только описывает действие (метод, путь, шаблон тела), но не выполняет его.
+    required: [kind, method, path, payloadTemplate]
+    properties:
+      kind:
+        type: string
+        description: 'Семантический вид действия. Для «полить» — `log_care`.'
+        example: log_care
+      method:
+        type: string
+        description: HTTP-метод запроса действия.
+        example: POST
+      path:
+        type: string
+        description: |
+          Путь эндпоинта действия относительно базового URL API клиента.
+          Для «полить» — `/care-events`.
+        example: /care-events
+      payloadTemplate:
+        type: object
+        description: |
+          Шаблон тела запроса. Клиент отправляет его как есть. Для «полить»:
+          `{ "plantId": <id>, "type": "WATER" }`.
+        additionalProperties: true
+        example:
+          plantId: 10
+          type: WATER

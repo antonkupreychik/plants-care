@@ -131,6 +131,12 @@ tags:
       мобильного приложения. Клиент передаёт `since` (серверное время из предыдущего
       ответа) и получает все сущности, изменённые после этого момента, а также
       список удалений. Server timestamp wins при конфликтах.
+  - name: UI
+    description: |
+      Server-Driven UI (issue #284): сервер описывает композицию экранов из
+      блоков (`ScreenLayout`/`Block`). Пилот — главный экран `home`. Данные
+      блоков берутся из существующих сервисов; вёрстку применяет клиент.
+      Версия каталога блоков передаётся в заголовке `X-UI-Catalog-Version`.
   - name: PlantTemplates
     description: |
       Пользовательские шаблоны растений (issue #254): сохранение набора интервалов
@@ -289,6 +295,9 @@ paths:
 
   /api/v1/sync:
     $ref: './resources/sync.yaml#/paths/Collection'
+
+  /api/v1/ui/home:
+    $ref: './resources/ui.yaml#/paths/Home'
 
 components:
   securitySchemes:
@@ -526,6 +535,27 @@ components:
       $ref: './resources/plant-templates.yaml#/schemas/PlantTemplateCreateRequest'
     PlantTemplateInstantiateRequest:
       $ref: './resources/plant-templates.yaml#/schemas/PlantTemplateInstantiateRequest'
+
+    ScreenLayout:
+      $ref: './resources/ui.yaml#/schemas/ScreenLayout'
+    BlockType:
+      $ref: './resources/ui.yaml#/schemas/BlockType'
+    Block:
+      $ref: './resources/ui.yaml#/schemas/Block'
+    WeatherStripBlock:
+      $ref: './resources/ui.yaml#/schemas/WeatherStripBlock'
+    TodaySummaryBlock:
+      $ref: './resources/ui.yaml#/schemas/TodaySummaryBlock'
+    LocationChipsBlock:
+      $ref: './resources/ui.yaml#/schemas/LocationChipsBlock'
+    UiLocationChip:
+      $ref: './resources/ui.yaml#/schemas/UiLocationChip'
+    PlantGridBlock:
+      $ref: './resources/ui.yaml#/schemas/PlantGridBlock'
+    UiPlantCard:
+      $ref: './resources/ui.yaml#/schemas/UiPlantCard'
+    ActionDescriptor:
+      $ref: './resources/ui.yaml#/schemas/ActionDescriptor'
 
     ApiErrorResponse:
       $ref: './_common/errors.yaml#/schemas/ApiErrorResponse'
