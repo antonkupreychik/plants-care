@@ -121,6 +121,12 @@ public class ApiExceptionHandler {
                 .body(ApiErrorResponse.of("LOCATION_NOT_EMPTY", e.getMessage()));
     }
 
+    @ExceptionHandler(RoomNotEmptyException.class)
+    public ResponseEntity<ApiErrorResponse> handleRoomNotEmpty(RoomNotEmptyException e) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(ApiErrorResponse.of("ROOM_NOT_EMPTY", e.getMessage()));
+    }
+
     @ExceptionHandler(IllegalStateException.class)
     public ResponseEntity<ApiErrorResponse> handleConflict(IllegalStateException e) {
         return ResponseEntity.status(HttpStatus.CONFLICT)

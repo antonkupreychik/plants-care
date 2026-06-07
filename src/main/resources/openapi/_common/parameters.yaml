@@ -21,3 +21,13 @@ LocationIdPath:
     type: integer
     format: int64
     example: 1
+
+RoomIdPath:
+  name: id
+  in: path
+  required: true
+  description: Идентификатор комнаты.
+  schema:
+    type: integer
+    format: int64
+    example: 1
