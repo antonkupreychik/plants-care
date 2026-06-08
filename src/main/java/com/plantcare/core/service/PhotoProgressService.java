@@ -1,5 +1,6 @@
 package com.plantcare.core.service;
 
+import com.plantcare.core.domain.Photo;
 import com.plantcare.core.domain.Plant;
 import com.plantcare.core.domain.PlantProgressPhoto;
 import com.plantcare.core.domain.enums.PhotoProgressFrequency;
@@ -107,6 +108,54 @@ public class PhotoProgressService {
 
         log.info("Progress photo added: plant={} user={} photoId={} nextDueAt={}",
                 plantId, userId, saved.getId(), plant.getNextPhotoDueAt());
+        return saved;
+    }
+
+    /**
+     * Добавить в таймлайн фото, загруженное через REST в S3-хранилище
+     * (issue #253, #90). Аналог {@link #addPhoto} для бота, но источник —
+     * {@link Photo} вместо Telegram file_id ({@code telegramFileId = null}).
+     *
+     * <p>Переиспользует ту же логику: проверка владения растением, анти-спам по
+     * {@link #ANTI_SPAM_HOURS}, пересчёт {@code nextPhotoDueAt} и сброс
+     * {@code lastPhotoPromptSentAt}.
+     *
+     * @param photo   запись фото в S3 (уже создана {@code PhotoService.upload})
+     * @param caption опциональная подпись (до 500 символов), может быть {@code null}
+     * @throws IllegalArgumentException если растение не найдено у юзера или {@code photo == null}
+     * @throws IllegalStateException    если за последние {@link #ANTI_SPAM_HOURS}ч уже было фото
+     */
+    public PlantProgressPhoto addPhotoFromStorage(Long userId, Long plantId, Photo photo, String caption) {
+        if (photo == null) {
+            throw new IllegalArgumentException("photo is required");
+        }
+
+        Plant plant = requirePlant(userId, plantId);
+        LocalDateTime now = LocalDateTime.now();
+
+        if (photoRepository.existsByPlantIdAndTakenAtAfter(
+                plantId, now.minusHours(ANTI_SPAM_HOURS))) {
+            throw new IllegalStateException("Уже есть фото за последние 24 часа");
+        }
+
+        PlantProgressPhoto progressPhoto = new PlantProgressPhoto();
+        progressPhoto.setPlant(plant);
+        progressPhoto.setUser(plant.getUser());
+        progressPhoto.setPhoto(photo);
+        progressPhoto.setCaption(caption);
+        progressPhoto.setTakenAt(now);
+
+        PlantProgressPhoto saved = photoRepository.save(progressPhoto);
+
+        PhotoProgressFrequency frequency = plant.getPhotoProgressFrequency();
+        if (frequency != null && frequency.isEnabled()) {
+            plant.setNextPhotoDueAt(now.plus(frequency.getPeriod()));
+        }
+        plant.setLastPhotoPromptSentAt(null);
+        plantRepository.save(plant);
+
+        log.info("Progress photo added from S3: plant={} user={} progressPhotoId={} photoId={} nextDueAt={}",
+                plantId, userId, saved.getId(), photo.getId(), plant.getNextPhotoDueAt());
         return saved;
     }
 

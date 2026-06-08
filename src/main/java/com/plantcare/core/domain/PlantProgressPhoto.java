@@ -21,6 +21,13 @@ import java.time.LocalDateTime;
  *
  * <p>FK на {@link Plant} и {@link User} — ON DELETE CASCADE (см. миграцию V16),
  * поэтому при удалении растения или юзера записи уйдут автоматически.
+ *
+ * <p>Источник бинаря — один из двух (инвариант {@code chk_progress_photo_source},
+ * миграция V54):
+ * <ul>
+ *   <li>{@code telegramFileId} — фото загружено через бота (Telegram file_id);</li>
+ *   <li>{@code photo} — фото загружено через REST в S3-бакет (issue #90).</li>
+ * </ul>
  */
 @Entity
 @Table(name = "plant_progress_photos")
@@ -37,8 +44,20 @@ public class PlantProgressPhoto extends BaseEntity {
     @JoinColumn(name = "user_id", nullable = false)
     private User user;
 
-    @Column(name = "telegram_file_id", nullable = false, length = 255)
+    /**
+     * Telegram file_id (бот-источник). {@code null}, когда фото загружено через
+     * REST в S3 — тогда заполнен {@link #photo}. Инвариант — в миграции V54.
+     */
+    @Column(name = "telegram_file_id", length = 255)
     private String telegramFileId;
+
+    /**
+     * S3-источник фото ({@link Photo} из issue #90). {@code null} для бот-фото
+     * (тогда заполнен {@link #telegramFileId}).
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "photo_id")
+    private Photo photo;
 
     @Column(name = "taken_at", nullable = false)
     private LocalDateTime takenAt;
