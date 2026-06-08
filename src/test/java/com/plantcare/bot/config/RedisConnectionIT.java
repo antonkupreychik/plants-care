@@ -1,6 +1,7 @@
 package com.plantcare.bot.config;
 
 import com.plantcare.bot.support.IntegrationTestBase;
+import com.plantcare.core.config.RedisProperties;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.actuate.health.Health;

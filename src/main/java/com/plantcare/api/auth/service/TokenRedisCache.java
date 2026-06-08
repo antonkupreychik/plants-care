@@ -1,6 +1,6 @@
 package com.plantcare.api.auth.service;
 
-import com.plantcare.bot.config.RedisProperties;
+import com.plantcare.core.config.RedisProperties;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.RedisTemplate;
