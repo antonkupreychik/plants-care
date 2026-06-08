@@ -28,7 +28,7 @@ public class UiController implements UiApi {
     private final UiViewService uiViewService;
 
     @Override
-    public Map<String, Object> getUiScreen(String screen, Integer xUiCatalogVersion) {
-        return uiViewService.buildScreen(screen, xUiCatalogVersion);
+    public Map<String, Object> getUiScreen(String screen, Long locationId, Integer xUiCatalogVersion) {
+        return uiViewService.buildScreen(screen, locationId, xUiCatalogVersion);
     }
 }

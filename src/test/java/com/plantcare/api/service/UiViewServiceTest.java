@@ -36,6 +36,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
 
@@ -92,6 +93,11 @@ class UiViewServiceTest {
                 new PageResponsePlantDto(
                         List.of(new PlantDto(10L, "Монстера", false).locationName("Гостиная")),
                         1, 0, 100));
+
+        // Счётчик чипа (issue #315): listPlants(null, locId, 0, 1).getTotal().
+        // По умолчанию комната «Гостиная» (id=5) содержит 3 растения.
+        lenient().when(plantController.listPlants(isNull(), eq(5L), eq(0), eq(1))).thenReturn(
+                new PageResponsePlantDto(List.of(), 3, 0, 1));
     }
 
     private void seedHomeView(String layoutJson, int minVersion) {
@@ -130,7 +136,7 @@ class UiViewServiceTest {
                   {"type":"plant_grid","minCatalogVersion":1} ] }""", 1);
 
         // act
-        Map<String, Object> screen = service.buildScreen("home", null);
+        Map<String, Object> screen = service.buildScreen("home", null, null);
 
         // assert — верхний уровень + фиксированный порядок из таблицы
         assertThat(screen).containsEntry("screenId", "home").containsEntry("version", 1);
@@ -153,9 +159,13 @@ class UiViewServiceTest {
                 .containsEntry("type", "FERTILIZE")   // FERTILIZING → FERTILIZE (нормализация)
                 .containsEntry("dueAt", OffsetDateTime.of(2026, 5, 27, 9, 0, 0, 0, ZoneOffset.UTC));
 
+        // issue #315: фильтр не задан → selectedLocationId == null («Все»),
+        // каждый чип несёт count (число активных растений в комнате)
+        assertThat(blocks.get(2)).containsEntry("selectedLocationId", null);
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> chips = (List<Map<String, Object>>) blocks.get(2).get("locations");
-        assertThat(chips.get(0)).containsEntry("id", 5L).containsEntry("name", "Гостиная").containsEntry("emoji", "🛋️");
+        assertThat(chips.get(0)).containsEntry("id", 5L).containsEntry("name", "Гостиная")
+                .containsEntry("emoji", "🛋️").containsEntry("count", 3);
 
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> plants = (List<Map<String, Object>>) blocks.get(3).get("plants");
@@ -190,7 +200,7 @@ class UiViewServiceTest {
                   {"type":"plant_grid","minCatalogVersion":2} ] }""", 1);
 
         // act — клиент с X-UI-Catalog-Version: 1
-        Map<String, Object> screen = service.buildScreen("home", 1);
+        Map<String, Object> screen = service.buildScreen("home", null, 1);
 
         // assert — блок v2 исключён, остался только weather_strip
         @SuppressWarnings("unchecked")
@@ -207,7 +217,7 @@ class UiViewServiceTest {
                   {"type":"banner","minCatalogVersion":1,"text":"Привет","dismissible":true} ] }""", 1);
 
         // act
-        Map<String, Object> screen = service.buildScreen("home", null);
+        Map<String, Object> screen = service.buildScreen("home", null, null);
 
         // assert — отдан verbatim из layout_json
         @SuppressWarnings("unchecked")
@@ -233,7 +243,7 @@ class UiViewServiceTest {
                   {"type":"today_tasks","minCatalogVersion":1} ] }""", 1);
 
         // act
-        Map<String, Object> screen = service.buildScreen("home", null);
+        Map<String, Object> screen = service.buildScreen("home", null, null);
 
         // assert — WATERING→WATER, MISTING→SPRAY, FERTILIZING→FERTILIZE, SOIL_CHECK как есть
         @SuppressWarnings("unchecked")
@@ -255,7 +265,7 @@ class UiViewServiceTest {
                   {"type":"today_tasks","minCatalogVersion":1} ] }""", 1);
 
         // act
-        Map<String, Object> screen = service.buildScreen("home", null);
+        Map<String, Object> screen = service.buildScreen("home", null, null);
 
         // assert — блок есть, counts нулевые, список пустой (а не null)
         @SuppressWarnings("unchecked")
@@ -282,7 +292,7 @@ class UiViewServiceTest {
                   {"type":"plant_grid","minCatalogVersion":1} ] }""", 1);
 
         // act
-        Map<String, Object> screen = service.buildScreen("home", null);
+        Map<String, Object> screen = service.buildScreen("home", null, null);
 
         // assert — guest_banner вставлен сразу после weather_strip
         @SuppressWarnings("unchecked")
@@ -310,7 +320,7 @@ class UiViewServiceTest {
                   {"type":"plant_grid","minCatalogVersion":1} ] }""", 1);
 
         // act
-        Map<String, Object> screen = service.buildScreen("home", null);
+        Map<String, Object> screen = service.buildScreen("home", null, null);
 
         // assert — guest_banner отсутствует
         @SuppressWarnings("unchecked")
@@ -332,7 +342,7 @@ class UiViewServiceTest {
                   {"type":"plant_grid","minCatalogVersion":1} ] }""", 1);
 
         // act
-        Map<String, Object> screen = service.buildScreen("home", null);
+        Map<String, Object> screen = service.buildScreen("home", null, null);
 
         // assert — plant_grid заменён на empty_state с l10n-ключами и CTA-navigate
         @SuppressWarnings("unchecked")
@@ -355,13 +365,104 @@ class UiViewServiceTest {
                   {"type":"plant_grid","minCatalogVersion":1} ] }""", 1);
 
         // act
-        Map<String, Object> screen = service.buildScreen("home", null);
+        Map<String, Object> screen = service.buildScreen("home", null, null);
 
         // assert — обычная сетка, не empty_state
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> blocks = (List<Map<String, Object>>) screen.get("blocks");
         assertThat(blocks).extracting(b -> b.get("type")).containsExactly("plant_grid");
         assertThat(blocks.get(0)).containsKey("plants");
+    }
+
+    @Test
+    @DisplayName("should_filter_grid_and_mark_selected_chip_when_locationId_given")
+    void should_filter_grid_and_mark_selected_chip_when_locationId_given() {
+        // arrange — две комнаты; фильтр по «Гостиная» (id=5).
+        // Сетка с фильтром по 5 → только растения этой комнаты.
+        when(locationController.listLocations()).thenReturn(List.of(
+                new LocationDto(5L, "Гостиная", true, true).emoji("🛋️"),
+                new LocationDto(7L, "Спальня", true, true).emoji("🛏️")));
+        when(plantController.listPlants(isNull(), eq(5L), eq(0), eq(100))).thenReturn(
+                new PageResponsePlantDto(
+                        List.of(new PlantDto(10L, "Монстера", false).locationName("Гостиная")),
+                        1, 0, 100));
+        // Счётчики чипов: Гостиная=3 (из стаба), Спальня=2.
+        when(plantController.listPlants(isNull(), eq(7L), eq(0), eq(1))).thenReturn(
+                new PageResponsePlantDto(List.of(), 2, 0, 1));
+        seedHomeView("""
+                { "screenId":"home","version":1,"blocks":[
+                  {"type":"location_chips","minCatalogVersion":1},
+                  {"type":"plant_grid","minCatalogVersion":1} ] }""", 1);
+
+        // act — выбран locationId=5
+        Map<String, Object> screen = service.buildScreen("home", 5L, null);
+
+        // assert — selectedLocationId=5, count'ы корректны, сетка отфильтрована
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> blocks = (List<Map<String, Object>>) screen.get("blocks");
+        assertThat(blocks.get(0)).containsEntry("type", "location_chips")
+                .containsEntry("selectedLocationId", 5L);
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> chips = (List<Map<String, Object>>) blocks.get(0).get("locations");
+        assertThat(chips).extracting(c -> c.get("id")).containsExactly(5L, 7L);
+        assertThat(chips).extracting(c -> c.get("count")).containsExactly(3, 2);
+
+        assertThat(blocks.get(1)).containsEntry("type", "plant_grid");
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> plants = (List<Map<String, Object>>) blocks.get(1).get("plants");
+        assertThat(plants).hasSize(1);
+        assertThat(plants.get(0)).containsEntry("id", 10L);
+    }
+
+    @Test
+    @DisplayName("should_render_contextual_empty_grid_when_selected_room_is_empty")
+    void should_render_contextual_empty_grid_when_selected_room_is_empty() {
+        // arrange — комната выбрана (id=5), но в ней нет растений.
+        // Важно: НЕ глобальный empty_state — чипы выбора другой комнаты должны остаться.
+        when(plantController.listPlants(isNull(), eq(5L), eq(0), eq(100))).thenReturn(
+                new PageResponsePlantDto(List.of(), 0, 0, 100));
+        seedHomeView("""
+                { "screenId":"home","version":1,"blocks":[
+                  {"type":"location_chips","minCatalogVersion":1},
+                  {"type":"plant_grid","minCatalogVersion":1} ] }""", 1);
+
+        // act
+        Map<String, Object> screen = service.buildScreen("home", 5L, null);
+
+        // assert — чипы на месте, grid остался plant_grid (НЕ empty_state) с
+        // пустыми plants и контекстными ключами «в этой комнате пусто»
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> blocks = (List<Map<String, Object>>) screen.get("blocks");
+        assertThat(blocks).extracting(b -> b.get("type"))
+                .containsExactly("location_chips", "plant_grid")
+                .doesNotContain("empty_state");
+        Map<String, Object> grid = blocks.get(1);
+        assertThat(grid).containsEntry("type", "plant_grid")
+                .containsKeys("emptyTitleKey", "emptyBodyKey");
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> plants = (List<Map<String, Object>>) grid.get("plants");
+        assertThat(plants).isEmpty();
+    }
+
+    @Test
+    @DisplayName("should_render_global_empty_state_when_no_location_filter_and_garden_empty")
+    void should_render_global_empty_state_when_no_location_filter_and_garden_empty() {
+        // arrange — фильтра нет (locationId=null) И сад пуст → глобальный empty_state
+        when(plantController.listPlants(isNull(), isNull(), eq(0), eq(100))).thenReturn(
+                new PageResponsePlantDto(List.of(), 0, 0, 100));
+        seedHomeView("""
+                { "screenId":"home","version":1,"blocks":[
+                  {"type":"location_chips","minCatalogVersion":1},
+                  {"type":"plant_grid","minCatalogVersion":1} ] }""", 1);
+
+        // act
+        Map<String, Object> screen = service.buildScreen("home", null, null);
+
+        // assert — plant_grid заменён глобальным empty_state (пустой сад целиком)
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> blocks = (List<Map<String, Object>>) screen.get("blocks");
+        assertThat(blocks).extracting(b -> b.get("type"))
+                .containsExactly("location_chips", "empty_state");
     }
 
     private static TaskDto task(Long scheduleId, String domainTaskType) {
@@ -377,7 +478,7 @@ class UiViewServiceTest {
         when(uiViewRepository.findByScreen("ghost")).thenReturn(Optional.empty());
 
         // act + assert
-        assertThatThrownBy(() -> service.buildScreen("ghost", null))
+        assertThatThrownBy(() -> service.buildScreen("ghost", null, null))
                 .isInstanceOf(EntityNotFoundException.class)
                 .hasMessageContaining("ghost");
     }

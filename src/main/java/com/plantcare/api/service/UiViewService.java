@@ -43,8 +43,8 @@ import java.util.Map;
  *   <tr><td>{@code weather_strip}</td><td>WeatherService</td></tr>
  *   <tr><td>{@code today_summary}</td><td>TodayApiService</td></tr>
  *   <tr><td>{@code today_tasks}</td><td>TodayApiService (тапабельный список)</td></tr>
- *   <tr><td>{@code location_chips}</td><td>LocationService</td></tr>
- *   <tr><td>{@code plant_grid}</td><td>PlantService</td></tr>
+ *   <tr><td>{@code location_chips}</td><td>LocationService (+ счётчики/активный чип, issue #315)</td></tr>
+ *   <tr><td>{@code plant_grid}</td><td>PlantService (фильтр по комнате, issue #315)</td></tr>
  *   <tr><td>{@code guest_banner}</td><td>инъекция сервиса (юзер-гость, MADR-017)</td></tr>
  *   <tr><td>{@code empty_state}</td><td>инъекция сервиса (пустой сад, MADR-017)</td></tr>
  * </table>
@@ -105,18 +105,24 @@ public class UiViewService {
      * Собирает опаковую композицию экрана {@code screen}.
      *
      * @param screen             идентификатор экрана (строка {@code ui_views.screen})
+     * @param locationId         серверный фильтр витрины по комнате (issue #315);
+     *                           {@code null} — «Все комнаты» (фильтр не применяется).
+     *                           Применяется к блокам {@code plant_grid}
+     *                           (гидрация только растениями комнаты) и
+     *                           {@code location_chips} (активный чип + счётчики)
      * @param clientCatalogVersion версия каталога блоков клиента; {@code null} —
      *                             новейший клиент (фильтрация по версии не применяется)
      * @return {@code { screenId, version, blocks: [...] }} с гидрированными данными
      * @throws EntityNotFoundException если экран не описан в {@code ui_views}
      */
     @Transactional(readOnly = true)
-    public Map<String, Object> buildScreen(String screen, Integer clientCatalogVersion) {
+    public Map<String, Object> buildScreen(String screen, Long locationId, Integer clientCatalogVersion) {
         var view = uiViewRepository.findByScreen(screen)
                 .orElseThrow(() -> new EntityNotFoundException("Unknown SDUI screen: " + screen));
 
         JsonNode layout = view.getLayoutJson();
-        log.info("GET /api/v1/ui/{}: clientCatalogVersion={}", screen, clientCatalogVersion);
+        log.info("GET /api/v1/ui/{}: locationId={}, clientCatalogVersion={}",
+                screen, locationId, clientCatalogVersion);
 
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("screenId", layout.path("screenId").asText(screen));
@@ -127,7 +133,7 @@ public class UiViewService {
             if (isBlockHidden(blockTemplate, clientCatalogVersion)) {
                 continue;
             }
-            Object rendered = renderBlock(blockTemplate);
+            Object rendered = renderBlock(blockTemplate, locationId);
             if (rendered != null) {
                 blocks.add(rendered);
             }
@@ -172,8 +178,12 @@ public class UiViewService {
     /**
      * Рендерит один блок шаблона: динамические типы гидрируются из сервисов,
      * прочие (статичные) отдаются verbatim как есть из шаблона.
+     *
+     * @param locationId серверный фильтр по комнате (issue #315); влияет на
+     *                   {@code location_chips} (активный чип) и {@code plant_grid}
+     *                   (фильтр сетки), для остальных блоков игнорируется
      */
-    private Object renderBlock(JsonNode blockTemplate) {
+    private Object renderBlock(JsonNode blockTemplate, Long locationId) {
         String type = blockTemplate.path("type").asText(null);
         if (type == null) {
             log.warn("SDUI: пропущен блок без поля type: {}", blockTemplate);
@@ -183,8 +193,8 @@ public class UiViewService {
             case TYPE_WEATHER_STRIP -> weatherStripBlock();
             case TYPE_TODAY_SUMMARY -> todaySummaryBlock();
             case TYPE_TODAY_TASKS -> todayTasksBlock();
-            case TYPE_LOCATION_CHIPS -> locationChipsBlock();
-            case TYPE_PLANT_GRID -> plantGridBlock();
+            case TYPE_LOCATION_CHIPS -> locationChipsBlock(locationId);
+            case TYPE_PLANT_GRID -> plantGridBlock(locationId);
             // Статичный блок: отдаём шаблон verbatim (без гидрации).
             default -> staticBlock(blockTemplate);
         };
@@ -282,15 +292,37 @@ public class UiViewService {
         };
     }
 
-    /** {@code location_chips} — локации пользователя из {@link LocationController}. */
-    private Map<String, Object> locationChipsBlock() {
+    /**
+     * {@code location_chips} — локации пользователя из {@link LocationController}.
+     *
+     * <p>Issue #315: сервер — single source of truth по фильтру комнаты.
+     * Блок несёт {@code selectedLocationId} (текущая выбранная комната,
+     * {@code null} = «Все»), а каждый чип — {@code count} (число активных
+     * растений в комнате). Активный чип и счётчики определяет сервер, клиент
+     * их только рисует. Счётчик берём из {@code total} листинга растений с
+     * фильтром по комнате (та же бизнес-логика, что у {@code GET /plants}),
+     * без дублирования запроса в сервисе.
+     *
+     * @param selectedLocationId выбранная комната ({@code null} = «Все»)
+     */
+    private Map<String, Object> locationChipsBlock(Long selectedLocationId) {
         List<Map<String, Object>> chips = locationController.listLocations().stream()
-                .map(UiViewService::toChip)
+                .map(this::toChip)
                 .toList();
         Map<String, Object> block = new LinkedHashMap<>();
         block.put("type", TYPE_LOCATION_CHIPS);
+        block.put("selectedLocationId", selectedLocationId);
         block.put("locations", chips);
         return block;
+    }
+
+    /**
+     * Число активных растений в комнате (issue #315). Reuse листинга растений
+     * (та же фильтрация, что у {@code GET /plants?locationId=}); берём только
+     * {@code total}, элементы не нужны — {@code limit=1}.
+     */
+    private int plantCountInLocation(Long locationId) {
+        return plantController.listPlants(null, locationId, 0, 1).getTotal();
     }
 
     /**
@@ -302,11 +334,22 @@ public class UiViewService {
      * {@code empty_state} (серверная видимость по состоянию юзера). Пустоту
      * определяем по списку {@code plant_grid} того же запроса (без лишнего
      * count-запроса): главный экран и так грузит первую страницу.
+     *
+     * <p>Issue #315: при заданном {@code locationId} сетка гидрируется ТОЛЬКО
+     * растениями этой комнаты. Пустая ОТФИЛЬТРОВАННАЯ комната — это НЕ пустой
+     * сад: вместо глобального {@code empty_state} (который скрыл бы выбор
+     * другой комнаты) отдаём тот же блок {@code plant_grid} с {@code plants: []}
+     * и контекстными ключами ({@code emptyTitleKey}/{@code emptyBodyKey}),
+     * чтобы чипы остались и юзер мог переключить комнату. Глобальный
+     * {@code empty_state} — только когда {@code locationId == null} (пустой сад
+     * целиком).
+     *
+     * @param locationId фильтр по комнате ({@code null} = все комнаты)
      */
-    private Map<String, Object> plantGridBlock() {
-        List<PlantDto> plants = plantController.listPlants(null, null, 0, PLANT_GRID_LIMIT).getItems();
+    private Map<String, Object> plantGridBlock(Long locationId) {
+        List<PlantDto> plants = plantController.listPlants(null, locationId, 0, PLANT_GRID_LIMIT).getItems();
         if (plants.isEmpty()) {
-            return emptyStateBlock();
+            return locationId == null ? emptyStateBlock() : emptyRoomGridBlock();
         }
         List<Map<String, Object>> cards = plants.stream()
                 .map(UiViewService::toCard)
@@ -314,6 +357,22 @@ public class UiViewService {
         Map<String, Object> block = new LinkedHashMap<>();
         block.put("type", TYPE_PLANT_GRID);
         block.put("plants", cards);
+        return block;
+    }
+
+    /**
+     * Контекстный пустой стейт ОТФИЛЬТРОВАННОЙ комнаты (issue #315). Остаётся
+     * блоком {@code plant_grid} (НЕ {@code empty_state}), чтобы чипы выбора
+     * другой комнаты сохранились: {@code plants: []} + l10n-ключи «в этой
+     * комнате пусто». Поля аддитивны — старый клиент просто покажет пустую
+     * сетку, новый — контекстное сообщение.
+     */
+    private static Map<String, Object> emptyRoomGridBlock() {
+        Map<String, Object> block = new LinkedHashMap<>();
+        block.put("type", TYPE_PLANT_GRID);
+        block.put("plants", List.of());
+        block.put("emptyTitleKey", "home.room.empty.title");
+        block.put("emptyBodyKey", "home.room.empty.body");
         return block;
     }
 
@@ -356,11 +415,14 @@ public class UiViewService {
         return block;
     }
 
-    private static Map<String, Object> toChip(LocationDto location) {
+    private Map<String, Object> toChip(LocationDto location) {
         Map<String, Object> chip = new LinkedHashMap<>();
         chip.put("id", location.getId());
         chip.put("name", location.getName());
         chip.put("emoji", location.getEmoji());
+        // issue #315: число активных растений в комнате — сервер считает,
+        // клиент рисует число рядом с чипом.
+        chip.put("count", plantCountInLocation(location.getId()));
         return chip;
     }
 
