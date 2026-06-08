@@ -1,15 +1,18 @@
 package com.plantcare.bot.service;
 
+import com.plantcare.core.domain.DevicePlatform;
 import com.plantcare.core.domain.Location;
 import com.plantcare.core.domain.NotificationLog;
 import com.plantcare.core.domain.Plant;
 import com.plantcare.core.domain.User;
+import com.plantcare.core.domain.UserDevice;
 import com.plantcare.core.domain.enums.NotificationType;
 import com.plantcare.core.domain.enums.TaskType;
 import com.plantcare.core.metrics.MetricsService;
 import com.plantcare.core.repository.LocationRepository;
 import com.plantcare.core.repository.NotificationLogRepository;
 import com.plantcare.core.repository.PlantRepository;
+import com.plantcare.core.repository.UserDeviceRepository;
 import com.plantcare.core.repository.UserRepository;
 import com.plantcare.bot.support.IntegrationTestBase;
 import org.junit.jupiter.api.AfterEach;
@@ -39,12 +42,14 @@ class NotificationDeliveryCallbacksTest extends IntegrationTestBase {
     @Autowired private LocationRepository locationRepository;
     @Autowired private PlantRepository plantRepository;
     @Autowired private NotificationLogRepository notificationLogRepository;
+    @Autowired private UserDeviceRepository userDeviceRepository;
 
     @MockitoBean private MetricsService metricsService;
 
     @AfterEach
     void cleanup() {
         notificationLogRepository.deleteAll();
+        userDeviceRepository.deleteAll();
         plantRepository.deleteAll();
         locationRepository.deleteAll();
         userRepository.deleteAll();
@@ -139,6 +144,59 @@ class NotificationDeliveryCallbacksTest extends IntegrationTestBase {
 
         verify(metricsService).recordNotificationFailed(
                 MetricsService.CHANNEL_TELEGRAM, MetricsService.FailureReason.BLOCKED);
+    }
+
+    // ===== push-канал (issue #177) =====
+
+    @Test
+    @DisplayName("should_record_push_sent_metric_when_on_push_sent")
+    void should_record_push_sent_metric_when_on_push_sent() {
+        // act
+        callbacks.onPushSent(TaskType.WATERING);
+
+        // assert — отдельный канал push, отдельный дедуп-лог по push НЕ пишем
+        verify(metricsService).recordNotificationSent(MetricsService.CHANNEL_PUSH, TaskType.WATERING);
+        assertThat(notificationLogRepository.findAll()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("should_delete_stale_device_and_record_failure_when_on_push_stale_token")
+    void should_delete_stale_device_and_record_failure_when_on_push_stale_token() {
+        // arrange — у юзера есть устройство, FCM сообщил что токен протух
+        User user = savedUser(104L);
+        UserDevice device = userDeviceRepository.save(new UserDevice(
+                user, DevicePlatform.ANDROID, "stale-fcm-token", java.time.Instant.now()));
+
+        // act
+        callbacks.onPushStaleToken(device.getId());
+
+        // assert — запись устройства удалена, метрика неудачи записана в push-канал
+        assertThat(userDeviceRepository.findById(device.getId())).isEmpty();
+        verify(metricsService).recordNotificationFailed(
+                MetricsService.CHANNEL_PUSH, MetricsService.FailureReason.OTHER);
+    }
+
+    @Test
+    @DisplayName("should_be_idempotent_when_on_push_stale_token_and_device_already_removed")
+    void should_be_idempotent_when_on_push_stale_token_and_device_already_removed() {
+        // arrange: устройства с таким id нет (уже удалено конкурентным тиком)
+        long unknownDeviceId = 888_888L;
+
+        // act + assert — повторный вызов не должен падать
+        assertThatNoException().isThrownBy(() -> callbacks.onPushStaleToken(unknownDeviceId));
+        verify(metricsService).recordNotificationFailed(
+                MetricsService.CHANNEL_PUSH, MetricsService.FailureReason.OTHER);
+    }
+
+    @Test
+    @DisplayName("should_record_push_failure_when_on_push_failed")
+    void should_record_push_failure_when_on_push_failed() {
+        // act
+        callbacks.onPushFailed();
+
+        // assert
+        verify(metricsService).recordNotificationFailed(
+                MetricsService.CHANNEL_PUSH, MetricsService.FailureReason.OTHER);
     }
 
     // ===== helpers =====

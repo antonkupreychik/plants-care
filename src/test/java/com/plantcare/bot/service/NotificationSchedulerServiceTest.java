@@ -3,7 +3,6 @@ package com.plantcare.bot.service;
 import com.plantcare.core.domain.DevicePlatform;
 import com.plantcare.core.domain.UserDevice;
 import com.plantcare.core.repository.UserDeviceRepository;
-import com.plantcare.core.service.PushSender;
 import com.plantcare.core.service.QuietHoursPolicy;
 import com.plantcare.core.service.SchedulerHealthTracker;
 
@@ -108,12 +107,14 @@ class NotificationSchedulerServiceTest {
     @Mock
     private com.plantcare.core.service.LocationSharingService locationSharingService;
 
-    // Issue #175: mock PushSender и UserDeviceRepository для тестов fan-out
-    @Mock
-    private PushSender pushSender;
-
+    // Issue #175 / #177: mock UserDeviceRepository и PushFanOutService для тестов
+    // мультиканального fan-out. Шедулер только формирует PushTarget'ы и отдаёт их
+    // сервису fan-out — реальная доставка push тестируется в PushFanOutServiceTest.
     @Mock
     private UserDeviceRepository userDeviceRepository;
+
+    @Mock
+    private PushFanOutService pushFanOutService;
 
     /**
      * Реальный экземпляр, не мок: проверки в тестах смотрят на содержимое
@@ -696,34 +697,41 @@ class NotificationSchedulerServiceTest {
         }
     }
 
-    // ===== Push fan-out (issue #175) =====
+    // ===== Мультиканальный push fan-out (issue #177) =====
 
     @Nested
-    @DisplayName("Push fan-out на мобильные устройства (#175)")
+    @DisplayName("Мультиканальный fan-out: резолв транспортов юзера (#177)")
     class PushFanOut {
 
+        /** Захватывает список PushTarget'ов из единственного enqueue в fan-out. */
+        @SuppressWarnings("unchecked")
+        private List<PushFanOutService.PushTarget> captureTargets() {
+            ArgumentCaptor<List<PushFanOutService.PushTarget>> captor =
+                    ArgumentCaptor.forClass(List.class);
+            verify(pushFanOutService).enqueue(captor.capture());
+            return captor.getValue();
+        }
+
         @Test
-        @DisplayName("Telegram-юзер без мобильных устройств → push не вызывается")
-        void should_not_call_push_when_user_has_no_devices() {
-            // arrange — userDeviceRepository возвращает пустой список (стаб из setUp)
+        @DisplayName("Telegram-юзер без устройств → только Telegram, fan-out не вызывается")
+        void should_route_telegram_only_when_user_has_no_devices() {
             when(careScheduleRepository.findDueSchedules(any())).thenReturn(List.of(schedule));
             when(notificationLogRepository.existsByPlantIdAndTaskTypeAndSentAtAfter(any(), any(), any()))
                     .thenReturn(false);
 
-            // act
             service.checkAndSendNotifications();
 
-            // assert — Telegram enqueue вызван, push — нет
             verify(telegramSender).enqueue(any(SendMessage.class), any(SendCallbacks.class));
-            verifyNoInteractions(pushSender);
+            verifyNoInteractions(pushFanOutService);
         }
 
         @Test
-        @DisplayName("Mobile-only юзер (без telegramChatId) получает только push")
-        void should_send_push_to_mobile_only_user_with_no_telegram() {
-            // arrange — mobile-only юзер: нет telegram chat id
+        @DisplayName("Mobile-only юзер (telegram_chat_id == null) → только push, без NPE")
+        void should_route_push_only_for_mobile_only_user_without_telegram() {
+            // arrange — mobile-only юзер без telegramChatId (после #88 поле nullable).
+            // Раньше обращение к telegram_chat_id без null-проверки давало NPE (#177 AC).
             User mobileUser = User.builder()
-                    .timezone("Asia/Almaty")           // не-UTC таймзона — проверка AC
+                    .timezone("Asia/Almaty")           // не-UTC таймзона
                     .quietHoursStart(LocalTime.of(0, 0))
                     .quietHoursEnd(LocalTime.of(0, 0))
                     .blocked(false)
@@ -744,66 +752,74 @@ class NotificationSchedulerServiceTest {
 
             UserDevice device = new UserDevice(mobileUser, DevicePlatform.IOS,
                     "apns-token-almaty", java.time.Instant.now());
+            ReflectionTestUtils.setField(device, "id", 90L);
 
             when(careScheduleRepository.findDueSchedules(any())).thenReturn(List.of(mobileSchedule));
             when(notificationLogRepository.existsByPlantIdAndTaskTypeAndSentAtAfter(any(), any(), any()))
                     .thenReturn(false);
             when(userDeviceRepository.findByUserId(5L)).thenReturn(List.of(device));
 
-            // act
+            // act — не должно бросить NPE
             service.checkAndSendNotifications();
 
-            // assert — Telegram не вызван (нет chatId), push вызван с токеном устройства
+            // assert — Telegram не вызван (нет chatId), push-таргет сформирован
             verifyNoInteractions(telegramSender);
-            verify(pushSender).send("apns-token-almaty", "Plants Care", "Пора полить: Алоэ");
+            List<PushFanOutService.PushTarget> targets = captureTargets();
+            assertThat(targets).singleElement().satisfies(t -> {
+                assertThat(t.deviceId()).isEqualTo(90L);
+                assertThat(t.pushToken()).isEqualTo("apns-token-almaty");
+                assertThat(t.body()).isEqualTo("Пора полить: Алоэ");
+                assertThat(t.taskType()).isEqualTo(TaskType.WATERING);
+            });
         }
 
         @Test
-        @DisplayName("Telegram-юзер с зарегистрированным устройством получает оба канала")
-        void should_send_both_telegram_and_push_for_hybrid_user() {
-            // arrange — у обычного telegram-юзера есть зарегистрированное устройство
+        @DisplayName("Telegram-юзер с устройством → оба канала (Telegram + push)")
+        void should_route_both_channels_for_hybrid_user() {
             UserDevice device = new UserDevice(user, DevicePlatform.ANDROID,
                     "fcm-token-abc", java.time.Instant.now());
+            ReflectionTestUtils.setField(device, "id", 91L);
 
             when(careScheduleRepository.findDueSchedules(any())).thenReturn(List.of(schedule));
             when(notificationLogRepository.existsByPlantIdAndTaskTypeAndSentAtAfter(any(), any(), any()))
                     .thenReturn(false);
             when(userDeviceRepository.findByUserId(1L)).thenReturn(List.of(device));
 
-            // act
             service.checkAndSendNotifications();
 
-            // assert — оба канала задействованы
             verify(telegramSender).enqueue(any(SendMessage.class), any(SendCallbacks.class));
-            verify(pushSender).send("fcm-token-abc", "Plants Care", "Пора полить: Монстера");
+            List<PushFanOutService.PushTarget> targets = captureTargets();
+            assertThat(targets).singleElement().satisfies(t -> {
+                assertThat(t.pushToken()).isEqualTo("fcm-token-abc");
+                assertThat(t.body()).isEqualTo("Пора полить: Монстера");
+            });
         }
 
         @Test
-        @DisplayName("Ошибка push одного устройства не блокирует остальные устройства")
-        void should_continue_fan_out_when_one_device_push_fails() {
-            // arrange — два устройства; первое бросает исключение
-            UserDevice deviceBad = new UserDevice(user, DevicePlatform.ANDROID,
-                    "bad-token", java.time.Instant.now());
-            UserDevice deviceGood = new UserDevice(user, DevicePlatform.IOS,
-                    "good-token", java.time.Instant.now());
+        @DisplayName("Несколько устройств юзера → по PushTarget на каждое")
+        void should_build_one_target_per_device() {
+            UserDevice android = new UserDevice(user, DevicePlatform.ANDROID,
+                    "fcm-token", java.time.Instant.now());
+            ReflectionTestUtils.setField(android, "id", 1L);
+            UserDevice ios = new UserDevice(user, DevicePlatform.IOS,
+                    "apns-token", java.time.Instant.now());
+            ReflectionTestUtils.setField(ios, "id", 2L);
 
             when(careScheduleRepository.findDueSchedules(any())).thenReturn(List.of(schedule));
             when(notificationLogRepository.existsByPlantIdAndTaskTypeAndSentAtAfter(any(), any(), any()))
                     .thenReturn(false);
-            when(userDeviceRepository.findByUserId(1L)).thenReturn(List.of(deviceBad, deviceGood));
-            org.mockito.Mockito.doThrow(new RuntimeException("Push delivery failed"))
-                    .when(pushSender).send("bad-token", "Plants Care", "Пора полить: Монстера");
+            when(userDeviceRepository.findByUserId(1L)).thenReturn(List.of(android, ios));
 
-            // act — не должно бросить исключение
             service.checkAndSendNotifications();
 
-            // assert — второе устройство всё равно получило push
-            verify(pushSender).send("good-token", "Plants Care", "Пора полить: Монстера");
+            assertThat(captureTargets())
+                    .extracting(PushFanOutService.PushTarget::pushToken)
+                    .containsExactly("fcm-token", "apns-token");
         }
 
         @Test
-        @DisplayName("Тихие часы / пауза блокируют push так же как Telegram (тест с Asia/Almaty)")
-        void should_not_send_push_during_quiet_hours_non_utc_timezone() {
+        @DisplayName("Тихие часы блокируют ОБА канала (Asia/Almaty, не-UTC)")
+        void should_block_both_channels_during_quiet_hours_non_utc_timezone() {
             // arrange — mobile-only юзер с таймзоной Asia/Almaty (UTC+5); quiet-hours активны
             User almaty = User.builder()
                     .timezone("Asia/Almaty")
@@ -825,20 +841,17 @@ class NotificationSchedulerServiceTest {
                     .build();
             ReflectionTestUtils.setField(schedule7, "id", 700L);
 
-            // quiet-hours активны для этого юзера
+            // quiet-hours активны для этого юзера (канал-нейтральный гейт shouldSend)
             when(quietHoursPolicy.isQuiet(org.mockito.ArgumentMatchers.eq(almaty), any(java.time.Instant.class)))
                     .thenReturn(true);
 
             when(careScheduleRepository.findDueSchedules(any())).thenReturn(List.of(schedule7));
-            when(userDeviceRepository.findByUserId(7L)).thenReturn(List.of(
-                    new UserDevice(almaty, DevicePlatform.IOS, "ios-almaty", java.time.Instant.now())));
 
-            // act
             service.checkAndSendNotifications();
 
-            // assert — ни Telegram, ни push не вызваны (shouldSend вернул false)
+            // assert — ни Telegram, ни push не задействованы (гейт shouldSend отсёк до резолва каналов)
             verifyNoInteractions(telegramSender);
-            verifyNoInteractions(pushSender);
+            verifyNoInteractions(pushFanOutService);
         }
     }
 

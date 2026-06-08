@@ -48,6 +48,8 @@ public class MetricsService {
     public static final String SCHEDULER_TICK_DURATION     = "scheduler.tick.duration";
 
     public static final String CHANNEL_TELEGRAM = "telegram";
+    /** Канал доставки push-уведомлений на мобильные устройства (issue #177). */
+    public static final String CHANNEL_PUSH = "push";
 
     /**
      * Whitelist разрешённых значений тэга {@code action} для метрики
