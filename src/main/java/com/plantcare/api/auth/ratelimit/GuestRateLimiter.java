@@ -1,34 +1,37 @@
 package com.plantcare.api.auth.ratelimit;
 
-import com.github.benmanes.caffeine.cache.Cache;
-import com.github.benmanes.caffeine.cache.Caffeine;
+import com.plantcare.core.ratelimit.RedisRateLimiter;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
-import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * In-memory rate limiter для {@code POST /api/v1/auth/guest} (issue #227).
- * Не более 3 новых гостей с одного IP за час. Caffeine со sliding-window
- * через expireAfterWrite (аналогично {@link MagicLinkRateLimiter}).
+ * Rate limiter для {@code POST /api/v1/auth/guest} (issue #227).
+ * Не более N новых гостей с одного IP за окно. Учитывается только реальное
+ * создание нового гостя (не restore).
+ *
+ * <p>Issue #280 (эпик #277 фаза 2): мигрирован с per-instance Caffeine на общий
+ * Redis-счётчик ({@link RedisRateLimiter}) — при нескольких инстансах лимит общий.
+ * Caffeine — L1-fallback внутри {@link RedisRateLimiter} (fail-open). Публичный API
+ * не изменился.
  */
 @Component
 public class GuestRateLimiter {
 
-    private final Cache<String, AtomicInteger> attempts;
+    private static final String SCOPE = "guest-new";
+
+    private final RedisRateLimiter rateLimiter;
     private final int maxNew;
     private final long windowSeconds;
 
     public GuestRateLimiter(
+            RedisRateLimiter rateLimiter,
             @Value("${plantcare.auth.guest.rate-limit.max-new:3}") int maxNew,
             @Value("${plantcare.auth.guest.rate-limit.window-seconds:3600}") long windowSeconds) {
+        this.rateLimiter = rateLimiter;
         this.maxNew = maxNew;
         this.windowSeconds = windowSeconds;
-        this.attempts = Caffeine.newBuilder()
-                .expireAfterWrite(Duration.ofSeconds(windowSeconds))
-                .maximumSize(50_000)
-                .build();
     }
 
     /**
@@ -36,17 +39,14 @@ public class GuestRateLimiter {
      * Не учитывает restore-сценарий — только реальное создание нового гостя.
      */
     public boolean isBlocked(String key) {
-        AtomicInteger c = attempts.getIfPresent(key);
-        return c != null && c.get() >= maxNew;
+        return rateLimiter.isOverLimit(SCOPE, key, maxNew, Duration.ofSeconds(windowSeconds));
     }
 
     /**
      * Записывает факт создания нового гостя от ключа.
      */
     public void recordNew(String key) {
-        attempts.asMap()
-                .computeIfAbsent(key, k -> new AtomicInteger(0))
-                .incrementAndGet();
+        rateLimiter.increment(SCOPE, key, Duration.ofSeconds(windowSeconds));
     }
 
     public long getWindowSeconds() {

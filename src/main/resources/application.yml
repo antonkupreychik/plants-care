@@ -69,6 +69,15 @@ app:
     command-timeout: ${REDIS_COMMAND_TIMEOUT:PT1S}
     key-prefix: ${REDIS_KEY_PREFIX:pc:}
 
+  # Issue #280, эпик #277 фаза 2: распределённый rate-limit на Redis (Lua на Lettuce).
+  # redis-enabled=false → счётчик считается только локально (Caffeine L1, per-instance,
+  # поведение до #280). При недоступном Redis — fail-open + деградация на L1 (см. RedisRateLimiter).
+  # Конкретные лимиты (окно/количество) — у точек вызова: plantcare.auth.magic-link.rate-limit,
+  # plantcare.auth.guest.rate-limit, admin.rate-limit.
+  rate-limit:
+    redis-enabled: ${RATE_LIMIT_REDIS_ENABLED:true}
+    l1-max-keys: ${RATE_LIMIT_L1_MAX_KEYS:100000}
+
   # Issue #281, эпик #277 фаза 3: двухуровневый кеш справочников (Caffeine L1 + Redis L2).
   # enabled=false → фоллбэк на чистый локальный Caffeine (поведение до #281), Redis не задействован.
   # Кросс-инстансная инвалидация L1 — через Redis Pub/Sub-канал invalidation-channel.
