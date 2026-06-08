@@ -14,6 +14,7 @@ import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.listener.ChannelTopic;
 import org.springframework.data.redis.listener.RedisMessageListenerContainer;
 import org.springframework.data.redis.serializer.RedisSerializer;
+import org.springframework.test.context.TestPropertySource;
 
 import java.time.Duration;
 import java.util.List;
@@ -36,6 +37,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  * listener-контейнер). «Инстанс B» — вручную собранный второй менеджер с собственным
  * listener поверх того же Redis, моделирует второй под приложения.
  */
+// two-level выключен в общем test-профиле (application-test.yml, #281) — здесь Redis
+// поднят через IntegrationTestBase, поэтому включаем two-level обратно для этого теста.
+@TestPropertySource(properties = "app.cache.two-level.enabled=true")
 class TwoLevelCacheIT extends IntegrationTestBase {
 
     private static final String CACHE = "species-detail";
@@ -56,7 +60,7 @@ class TwoLevelCacheIT extends IntegrationTestBase {
     private RedisMessageListenerContainer instanceBContainer;
 
     @AfterEach
-    void cleanup() {
+    void cleanup() throws Exception {
         redisTemplate.delete(redisProperties.keyPrefix() + "cache:" + CACHE);
         cacheManager.getCache(CACHE).clear();
         if (instanceBContainer != null) {
