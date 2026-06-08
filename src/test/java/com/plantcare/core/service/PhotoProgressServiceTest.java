@@ -1,5 +1,6 @@
 package com.plantcare.core.service;
 
+import com.plantcare.core.domain.Photo;
 import com.plantcare.core.domain.Plant;
 import com.plantcare.core.domain.PlantProgressPhoto;
 import com.plantcare.core.domain.User;
@@ -159,6 +160,80 @@ class PhotoProgressServiceTest {
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> service.addPhoto(USER_ID, PLANT_ID, null))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    // ---------------------------------------------------- addPhotoFromStorage (issue #253)
+
+    @Test
+    void should_save_s3_photo_and_reschedule_when_frequency_enabled() {
+        plant.setPhotoProgressFrequency(PhotoProgressFrequency.P1M);
+        when(photoRepository.existsByPlantIdAndTakenAtAfter(eq(PLANT_ID), any(LocalDateTime.class)))
+                .thenReturn(false);
+        when(photoRepository.save(any(PlantProgressPhoto.class)))
+                .thenAnswer(i -> {
+                    PlantProgressPhoto p = i.getArgument(0);
+                    ReflectionTestUtils.setField(p, "id", 200L);
+                    return p;
+                });
+        Photo s3photo = s3Photo(77L);
+
+        LocalDateTime before = LocalDateTime.now();
+        PlantProgressPhoto saved = service.addPhotoFromStorage(USER_ID, PLANT_ID, s3photo, "новый лист");
+
+        assertThat(saved.getPhoto()).isEqualTo(s3photo);
+        assertThat(saved.getTelegramFileId()).isNull();
+        assertThat(saved.getCaption()).isEqualTo("новый лист");
+        assertThat(saved.getPlant()).isEqualTo(plant);
+        assertThat(saved.getUser()).isEqualTo(user);
+        assertThat(saved.getTakenAt()).isAfterOrEqualTo(before);
+        assertThat(plant.getNextPhotoDueAt())
+                .isAfterOrEqualTo(before.plusMonths(1).minusSeconds(5));
+        assertThat(plant.getLastPhotoPromptSentAt()).isNull();
+    }
+
+    @Test
+    void should_save_s3_photo_without_reschedule_when_frequency_off() {
+        plant.setPhotoProgressFrequency(PhotoProgressFrequency.OFF);
+        when(photoRepository.existsByPlantIdAndTakenAtAfter(eq(PLANT_ID), any(LocalDateTime.class)))
+                .thenReturn(false);
+        when(photoRepository.save(any(PlantProgressPhoto.class))).thenAnswer(i -> i.getArgument(0));
+
+        service.addPhotoFromStorage(USER_ID, PLANT_ID, s3Photo(77L), null);
+
+        assertThat(plant.getNextPhotoDueAt()).isNull();
+    }
+
+    @Test
+    void should_throw_when_s3_photo_null() {
+        assertThatThrownBy(() -> service.addPhotoFromStorage(USER_ID, PLANT_ID, null, null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("photo is required");
+
+        verify(photoRepository, never()).save(any());
+    }
+
+    @Test
+    void should_throw_when_s3_photo_added_to_foreign_plant() {
+        when(plantRepository.findByUserIdAndIdAndArchivedAtIsNull(USER_ID, 999L))
+                .thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.addPhotoFromStorage(USER_ID, 999L, s3Photo(77L), null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Plant not found");
+
+        verify(photoRepository, never()).save(any());
+    }
+
+    @Test
+    void should_throw_when_s3_photo_anti_spam_24h_violated() {
+        when(photoRepository.existsByPlantIdAndTakenAtAfter(eq(PLANT_ID), any(LocalDateTime.class)))
+                .thenReturn(true);
+
+        assertThatThrownBy(() -> service.addPhotoFromStorage(USER_ID, PLANT_ID, s3Photo(77L), null))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("24 часа");
+
+        verify(photoRepository, never()).save(any());
     }
 
     @Test
@@ -350,5 +425,11 @@ class PhotoProgressServiceTest {
         p.setUser(user);
         p.setTelegramFileId("file-" + id);
         return p;
+    }
+
+    private static Photo s3Photo(long id) {
+        Photo photo = new Photo("photos/" + id, "image/jpeg", 1024L, USER_ID, java.time.Instant.now());
+        ReflectionTestUtils.setField(photo, "id", id);
+        return photo;
     }
 }

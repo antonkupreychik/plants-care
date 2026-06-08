@@ -154,6 +154,12 @@ tags:
       Хранилище фото в S3-совместимом бакете (issue #90, Slice A): загрузка
       (multipart), выдача через presigned URL (302 redirect) и soft-delete.
       Все эндпоинты требуют bearer-токен.
+  - name: PhotoProgress
+    description: |
+      Фото-дневник развития растения (issue #253): загрузка снимков прогресса
+      (multipart в S3), история с датами и presigned URL, сравнение двух
+      снимков «до/после» и частота напоминаний о фото. REST поверх
+      `PhotoProgressService`; растение должно принадлежать пользователю.
 
 paths:
   /api/v1/auth/apple:
@@ -206,6 +212,13 @@ paths:
     $ref: './resources/schedules.yaml#/paths/Item'
   /api/v1/plants/{id}/schedules/{type}/postpone:
     $ref: './resources/schedules.yaml#/paths/ItemPostpone'
+
+  /api/v1/plants/{id}/photo-progress:
+    $ref: './resources/plant-photo-progress.yaml#/paths/Collection'
+  /api/v1/plants/{id}/photo-progress/compare:
+    $ref: './resources/plant-photo-progress.yaml#/paths/Compare'
+  /api/v1/plants/{id}/photo-progress/frequency:
+    $ref: './resources/plant-photo-progress.yaml#/paths/Frequency'
 
   /api/v1/plant-templates:
     $ref: './resources/plant-templates.yaml#/paths/Collection'
@@ -572,6 +585,19 @@ components:
 
     PhotoUploadResponse:
       $ref: './resources/photos.yaml#/schemas/PhotoUploadResponse'
+
+    PhotoProgressFrequencyValue:
+      $ref: './resources/plant-photo-progress.yaml#/schemas/PhotoProgressFrequencyValue'
+    PhotoProgressItemDto:
+      $ref: './resources/plant-photo-progress.yaml#/schemas/PhotoProgressItemDto'
+    PhotoProgressHistoryResponse:
+      $ref: './resources/plant-photo-progress.yaml#/schemas/PhotoProgressHistoryResponse'
+    PhotoProgressCompareResponse:
+      $ref: './resources/plant-photo-progress.yaml#/schemas/PhotoProgressCompareResponse'
+    PhotoProgressFrequencyRequest:
+      $ref: './resources/plant-photo-progress.yaml#/schemas/PhotoProgressFrequencyRequest'
+    PhotoProgressFrequencyResponse:
+      $ref: './resources/plant-photo-progress.yaml#/schemas/PhotoProgressFrequencyResponse'
 
     ApiErrorResponse:
       $ref: './_common/errors.yaml#/schemas/ApiErrorResponse'

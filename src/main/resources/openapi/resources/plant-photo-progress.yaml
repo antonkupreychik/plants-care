@@ -1,0 +1,283 @@
+# Фото-прогресс растения (issue #253). REST поверх PhotoProgressService.
+# Загрузка фото идёт в S3-совместимый бакет (issue #90, PhotoStorageService).
+# Все эндпоинты требуют bearer-токен; растение должно принадлежать пользователю.
+
+paths:
+  Collection:
+    post:
+      tags: [PhotoProgress]
+      operationId: addPhotoProgress
+      summary: Добавить фото прогресса
+      description: |
+        Загружает фото развития растения текущего пользователя (из bearer-токена)
+        в S3-совместимый бакет и добавляет его в таймлайн фото-прогресса.
+
+        Принимается только `image/*`. Размер ограничен сервером (~5 МБ, лимит
+        `app.storage.s3.max-upload-bytes`); превышение → 413. Невалидный тип /
+        пустой файл → 400. Анти-спам: не больше одного фото за 24 часа на
+        растение → 409. Растение не найдено / чужое → 404.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '../_common/parameters.yaml#/PlantIdPath'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: Файл изображения (image/*).
+                caption:
+                  type: string
+                  maxLength: 500
+                  description: Опциональная подпись к фото (до 500 символов).
+      responses:
+        '201':
+          description: Фото добавлено в таймлайн.
+          content:
+            application/json:
+              schema:
+                $ref: '#/schemas/PhotoProgressItemDto'
+        '400':
+          $ref: '../_common/responses.yaml#/BadRequest'
+        '401':
+          $ref: '../_common/responses.yaml#/Unauthorized'
+        '404':
+          $ref: '../_common/responses.yaml#/NotFound'
+        '409':
+          $ref: '../_common/responses.yaml#/Conflict'
+        '413':
+          description: Файл превышает допустимый размер.
+          content:
+            application/json:
+              schema:
+                $ref: '../_common/errors.yaml#/schemas/ApiErrorResponse'
+    get:
+      tags: [PhotoProgress]
+      operationId: getPhotoProgressHistory
+      summary: История фото прогресса
+      description: |
+        Возвращает страницу таймлайна фото-прогресса растения в обратном
+        хронологическом порядке (свежие сверху), с датами и presigned URL на
+        скачивание каждого снимка.
+
+        Пагинация — `limit/offset`. `limit` строго в диапазоне [1, 100]
+        (вне диапазона → 400). `offset` < 0 нормализуется в 0. Растение не
+        найдено / чужое → 404.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '../_common/parameters.yaml#/PlantIdPath'
+        - name: limit
+          in: query
+          required: false
+          description: Размер страницы. Допустимые значения — [1, 100].
+          schema:
+            type: integer
+            format: int32
+            default: 10
+            minimum: 1
+            maximum: 100
+        - name: offset
+          in: query
+          required: false
+          description: Сдвиг от начала истории. Значения < 0 нормализуются в 0.
+          schema:
+            type: integer
+            format: int32
+            default: 0
+            minimum: 0
+      responses:
+        '200':
+          description: Страница истории фото.
+          content:
+            application/json:
+              schema:
+                $ref: '#/schemas/PhotoProgressHistoryResponse'
+        '400':
+          $ref: '../_common/responses.yaml#/BadRequest'
+        '401':
+          $ref: '../_common/responses.yaml#/Unauthorized'
+        '404':
+          $ref: '../_common/responses.yaml#/NotFound'
+
+  Compare:
+    get:
+      tags: [PhotoProgress]
+      operationId: comparePhotoProgress
+      summary: Сравнить два снимка
+      description: |
+        Возвращает пару снимков «до/после» по двум идентификаторам записей
+        таймлайна (`from`, `to`). Сервер сам определяет, какой из двух — «до»
+        (более раннее `takenAt`), а какой — «после». Оба снимка должны
+        принадлежать этому растению пользователя.
+
+        Если снимки совпадают, не найдены или не относятся к растению — 404.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '../_common/parameters.yaml#/PlantIdPath'
+        - name: from
+          in: query
+          required: true
+          description: Идентификатор первого снимка таймлайна.
+          schema:
+            type: integer
+            format: int64
+            example: 10
+        - name: to
+          in: query
+          required: true
+          description: Идентификатор второго снимка таймлайна.
+          schema:
+            type: integer
+            format: int64
+            example: 25
+      responses:
+        '200':
+          description: Пара снимков для сравнения.
+          content:
+            application/json:
+              schema:
+                $ref: '#/schemas/PhotoProgressCompareResponse'
+        '400':
+          $ref: '../_common/responses.yaml#/BadRequest'
+        '401':
+          $ref: '../_common/responses.yaml#/Unauthorized'
+        '404':
+          $ref: '../_common/responses.yaml#/NotFound'
+
+  Frequency:
+    patch:
+      tags: [PhotoProgress]
+      operationId: setPhotoProgressFrequency
+      summary: Частота напоминаний о фото
+      description: |
+        Устанавливает частоту пушей «обнови фото» для растения: `OFF` —
+        выключено, `P2W` — раз в 2 недели, `P1M` — раз в месяц. Растение не
+        найдено / чужое → 404.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '../_common/parameters.yaml#/PlantIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/schemas/PhotoProgressFrequencyRequest'
+      responses:
+        '200':
+          description: Частота обновлена.
+          content:
+            application/json:
+              schema:
+                $ref: '#/schemas/PhotoProgressFrequencyResponse'
+        '400':
+          $ref: '../_common/responses.yaml#/BadRequest'
+        '401':
+          $ref: '../_common/responses.yaml#/Unauthorized'
+        '404':
+          $ref: '../_common/responses.yaml#/NotFound'
+        '422':
+          $ref: '../_common/responses.yaml#/UnprocessableEntity'
+
+schemas:
+  PhotoProgressFrequencyValue:
+    type: string
+    description: |
+      Частота напоминаний о фото: `OFF` — выключено, `P2W` — раз в 2 недели,
+      `P1M` — раз в месяц.
+    enum: [OFF, P2W, P1M]
+    example: P2W
+
+  PhotoProgressItemDto:
+    type: object
+    description: Снимок таймлайна фото-прогресса с presigned URL на скачивание.
+    required: [id, takenAt]
+    properties:
+      id:
+        type: integer
+        format: int64
+        description: Идентификатор записи таймлайна.
+        example: 25
+      photoId:
+        type: integer
+        format: int64
+        nullable: true
+        description: |
+          Идентификатор фото в S3-хранилище (issue #90). `null`, если снимок
+          загружен через бота (Telegram-источник) — тогда `url` отсутствует.
+        example: 42
+      url:
+        type: string
+        format: uri
+        nullable: true
+        description: |
+          Presigned URL для скачивания снимка. Присутствует только для
+          S3-источника; для бот-фото (Telegram file_id) `null`.
+        example: https://bucket.example.com/photos/3f2a...?X-Amz-Signature=...
+      takenAt:
+        type: string
+        format: date-time
+        description: Момент, когда снимок попал в систему (UTC).
+        example: '2026-06-01T09:30:00Z'
+      caption:
+        type: string
+        nullable: true
+        description: Опциональная подпись к снимку.
+        example: Выпустила новый лист
+
+  PhotoProgressHistoryResponse:
+    type: object
+    description: Страница таймлайна фото-прогресса с метаданными пагинации.
+    required: [items, total, limit, offset]
+    properties:
+      items:
+        type: array
+        items:
+          $ref: '#/schemas/PhotoProgressItemDto'
+      total:
+        type: integer
+        format: int64
+        description: Общее количество снимков в таймлайне растения.
+        example: 17
+      limit:
+        type: integer
+        format: int32
+        example: 10
+      offset:
+        type: integer
+        format: int32
+        example: 0
+
+  PhotoProgressCompareResponse:
+    type: object
+    description: Пара снимков «до/после» для сравнения.
+    required: [before, after]
+    properties:
+      before:
+        $ref: '#/schemas/PhotoProgressItemDto'
+      after:
+        $ref: '#/schemas/PhotoProgressItemDto'
+
+  PhotoProgressFrequencyRequest:
+    type: object
+    description: Запрос смены частоты напоминаний о фото.
+    required: [frequency]
+    properties:
+      frequency:
+        $ref: '#/schemas/PhotoProgressFrequencyValue'
+
+  PhotoProgressFrequencyResponse:
+    type: object
+    description: Текущая частота напоминаний о фото после обновления.
+    required: [frequency]
+    properties:
+      frequency:
+        $ref: '#/schemas/PhotoProgressFrequencyValue'
