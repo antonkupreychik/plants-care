@@ -46,7 +46,7 @@ docker compose --profile full up -d --build   # всё в Docker
 - `com.plantcare.bot.telegram` — хендлеры Telegram, апдейты, клавиатуры
 - `com.plantcare.bot.scheduler` — крон-задачи, отправка напоминаний
 - `com.plantcare.bot.config` — `@Configuration` и `@ConfigurationProperties`
-- `com.plantcare.bot.web` — actuator-расширения, healthcheck-эндпоинты
+- `com.plantcare.bot.web` — REST для мобильного клиента, actuator-расширения, healthcheck-эндпоинты, **SDUI-композиция** (`GET /api/v1/ui/*`)
 
 **Telegram-слой не смешивать с бизнес-логикой.** Хендлер парсит апдейт → дёргает сервис → формирует ответ. Никаких репозиториев в хендлерах.
 
@@ -70,6 +70,42 @@ docker compose --profile full up -d --build   # всё в Docker
 - В коде — `Instant` и `OffsetDateTime`. `LocalDateTime` — только если явно «время в таймзоне пользователя» и эта таймзона рядом.
 - Каждое напоминание считается в таймзоне пользователя (поле `users.timezone`).
 - Тесты на расписания обязаны проверять минимум один кейс с не-UTC таймзоной (Asia/Almaty, Europe/Moscow и т.п.).
+
+---
+
+## Server-Driven UI для мобильного клиента (MADR-015 + MADR-016, Accepted)
+
+Мобильный клиент (`plants-care-mobile`) переходит на **гибридный block-SDUI** с **опаковым
+Map-контрактом** (MADR-016): read-heavy экраны собираются из блоков, которые описывает сервер.
+Эндпоинт композиции — `GET /api/v1/ui/{screen}` (например, `GET /api/v1/ui/home`) в пакете
+`web`/`api.v1`, возвращает **опаковый объект** `{ screenId, version, blocks[] }` (`Map<String,
+Object>` / `ObjectNode`, НЕ типизированный DTO). Путь под `/api/v1/**` обязателен — там
+действует JWT-цепочка `ApiSecurityConfig` (та же идентификация, что у `/today`, `/plants`).
+
+**Композиция живёт в таблице `ui_views`** (`category, screen, layout_json JSONB,
+min_catalog_version`): какие блоки, в каком порядке, статичные пропсы. Сменить состав/порядок/
+видимость блоков или выкатить статичный контент = **UPDATE строки**, без релиза и правки кода.
+
+Правила для backend-агента:
+- **Контроллер `/ui/{screen}` тонкий:** читает строку `ui_views`, **гидрирует** динамические
+  блоки данными из существующих сервисов (`weather`/`today`/`locations`/`plants`) на лету,
+  отдаёт **опаковый** JSON. Статичные блоки (`banner`/`card`) — verbatim из `layout_json`.
+  Не дублируй бизнес-логику; композицию НЕ хардкодь в коде — она в таблице.
+- **Словарь блоков — ПРОЗА, не OpenAPI-схема.** Форма блоков описана в каталоге
+  `plants-care-mobile/docs/adr/MADR-016-sdui-opaque-map.md`. Ответ опаковый — типизированных
+  block-схем в спеке нет. Новый блок-тип: **сперва в прозовый словарь (MADR-016) → backend
+  начинает слать → client учится парсить.** Не изобретай блок-типы в обход словаря.
+- **Версионирование обязательно:** эндпоинт принимает `X-UI-Catalog-Version` и **не включает**
+  блоки с `minCatalogVersion` выше присланной версии (forward-compat: старый клиент не получает
+  незнакомых блоков).
+- **Нормализация типов:** `type` задач/действий в блоках — care-словарь `WATER`/`SPRAY`/
+  `FERTILIZE`/`SOIL_CHECK` (маппить из доменного `WATERING/…` на бэкенде).
+- **Действия** в блоках — декларативный `ActionDescriptor` (`{ kind, method, path,
+  payloadTemplate }`), ссылающийся на существующие эндпоинты (`POST /care-events`). Не плодить
+  спец-эндпоинты под SDUI. Интерактив с локальным state у клиента нативный — блоку action не нужен.
+- Если для блока нет данных ни в одном текущем сервисе — это отдельная фича, не тащить в SDUI.
+- Детали — `plants-care-mobile/docs/adr/MADR-015-sdui.md` (база) + `MADR-016-sdui-opaque-map.md`
+  (актуальная форма контракта).
 
 ---
 
