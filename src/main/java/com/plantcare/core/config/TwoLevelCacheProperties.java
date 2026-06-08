@@ -48,7 +48,24 @@ public record TwoLevelCacheProperties(
          * Имя Redis Pub/Sub-канала для рассылки сообщений инвалидации между инстансами.
          * Дефолт: {@code pc:cache:invalidate}.
          */
-        String invalidationChannel
+        String invalidationChannel,
+
+        /**
+         * Интервал восстановления подписки listener-контейнера ({@code recoveryInterval}
+         * у {@link org.springframework.data.redis.listener.RedisMessageListenerContainer}).
+         * Если соединение с Redis рвётся, контейнер пытается переподписаться через этот интервал.
+         * Дефолт: 5 секунд.
+         */
+        Duration recoveryInterval,
+
+        /**
+         * Интервал повторных попыток запуска listener-контейнера, когда Redis недоступен на
+         * старте приложения (fail-open, issue #281). Резильентный стартер периодически проверяет
+         * {@code !container.isRunning()} и пробует {@code start()} — так листенер поднимется,
+         * как только Redis вернётся, не роняя ApplicationContext.
+         * Дефолт: 30 секунд.
+         */
+        Duration listenerRetryInterval
 
 ) {
 
@@ -60,5 +77,7 @@ public record TwoLevelCacheProperties(
         if (invalidationChannel == null || invalidationChannel.isBlank()) {
             invalidationChannel = "pc:cache:invalidate";
         }
+        if (recoveryInterval == null) recoveryInterval = Duration.ofSeconds(5);
+        if (listenerRetryInterval == null) listenerRetryInterval = Duration.ofSeconds(30);
     }
 }

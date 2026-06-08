@@ -67,6 +67,15 @@ public class CacheConfig {
      * Контейнер-слушатель Redis Pub/Sub-канала инвалидации. Поднимается только в two-level-режиме.
      * Регистрирует {@link CacheInvalidationListener}, который чистит локальный L1 по сообщениям
      * от других инстансов.
+     *
+     * <p><b>Fail-open старт (issue #281).</b> {@code autoStartup=false} — Spring НЕ стартует
+     * контейнер во время refresh контекста. Иначе при недоступном Redis
+     * {@code lazyListen} бросает {@code RedisConnectionFailureException} из
+     * {@code SmartLifecycle.start()} и роняет весь {@code ApplicationContext} — приложение не
+     * поднимается. Реальный запуск (с try/catch и ретраями, когда Redis вернётся) делает
+     * {@link com.plantcare.core.cache.CacheInvalidationListenerStarter}.
+     * {@code recoveryInterval} управляет переподпиской контейнера при разрыве уже
+     * установленного соединения.
      */
     @Bean
     @ConditionalOnProperty(prefix = "app.cache.two-level", name = "enabled", havingValue = "true", matchIfMissing = true)
@@ -79,11 +88,22 @@ public class CacheConfig {
                 (TwoLevelCacheManager) twoLevelCacheManager,
                 TwoLevelCacheManager.messageSerializer());
 
-        var container = new RedisMessageListenerContainer();
+        // autoStartup=false через override isAutoStartup(): RedisMessageListenerContainer не
+        // имеет setAutoStartup(), а Spring стартует SmartLifecycle во время refresh по этому флагу.
+        // НЕ стартуем в refresh: при недоступном Redis lazyListen уронил бы контекст.
+        // Старт берёт на себя CacheInvalidationListenerStarter (ApplicationReadyEvent + ретраи).
+        var container = new RedisMessageListenerContainer() {
+            @Override
+            public boolean isAutoStartup() {
+                return false;
+            }
+        };
         container.setConnectionFactory(connectionFactory);
         container.addMessageListener(listener, new ChannelTopic(properties.invalidationChannel()));
+        container.setRecoveryInterval(properties.recoveryInterval().toMillis());
 
-        log.info("Cache invalidation listener subscribed to channel {}", properties.invalidationChannel());
+        log.info("Cache invalidation listener configured for channel {} (autoStartup=false, fail-open start)",
+                properties.invalidationChannel());
         return container;
     }
 

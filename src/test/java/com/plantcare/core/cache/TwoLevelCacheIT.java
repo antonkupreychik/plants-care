@@ -4,6 +4,7 @@ import com.plantcare.bot.support.IntegrationTestBase;
 import com.plantcare.core.config.RedisProperties;
 import com.plantcare.core.config.TwoLevelCacheProperties;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.cache.Cache;
@@ -57,7 +58,21 @@ class TwoLevelCacheIT extends IntegrationTestBase {
     @Autowired
     private RedisConnectionFactory connectionFactory;
 
+    @Autowired
+    private RedisMessageListenerContainer cacheInvalidationListenerContainer; // инстанс A: listener
+
     private RedisMessageListenerContainer instanceBContainer;
+
+    @BeforeEach
+    void ensureListenerStarted() {
+        // Issue #281 (fail-open): контейнер инвалидации теперь autoStartup=false и стартует на
+        // ApplicationReadyEvent через CacheInvalidationListenerStarter. К моменту теста событие
+        // уже прошло, но на всякий случай гарантируем, что подписка инстанса A активна, иначе
+        // кросс-инстансная инвалидация не дойдёт.
+        if (!cacheInvalidationListenerContainer.isRunning()) {
+            cacheInvalidationListenerContainer.start();
+        }
+    }
 
     @AfterEach
     void cleanup() throws Exception {
@@ -156,7 +171,7 @@ class TwoLevelCacheIT extends IntegrationTestBase {
 
     private static TwoLevelCacheProperties props() {
         return new TwoLevelCacheProperties(true, Duration.ofMinutes(5), 1000L,
-                Duration.ofHours(1), CHANNEL);
+                Duration.ofHours(1), CHANNEL, Duration.ofSeconds(5), Duration.ofSeconds(30));
     }
 
     /** Собирает второй «инстанс» (менеджер + его listener) поверх того же Redis. */
