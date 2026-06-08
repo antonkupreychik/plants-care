@@ -149,6 +149,11 @@ tags:
       Пользовательские шаблоны растений (issue #254): сохранение набора интервалов
       ухода из существующего растения, быстрое создание нового растения по шаблону.
       Максимум 30 шаблонов на пользователя.
+  - name: Photos
+    description: |
+      Хранилище фото в S3-совместимом бакете (issue #90, Slice A): загрузка
+      (multipart), выдача через presigned URL (302 redirect) и soft-delete.
+      Все эндпоинты требуют bearer-токен.
 
 paths:
   /api/v1/auth/apple:
@@ -310,6 +315,11 @@ paths:
 
   /api/v1/ui/{screen}:
     $ref: './resources/ui.yaml#/paths/Screen'
+
+  /api/v1/photos:
+    $ref: './resources/photos.yaml#/paths/Collection'
+  /api/v1/photos/{id}:
+    $ref: './resources/photos.yaml#/paths/Item'
 
 components:
   securitySchemes:
@@ -559,6 +569,9 @@ components:
 
     ScreenLayout:
       $ref: './resources/ui.yaml#/schemas/ScreenLayout'
+
+    PhotoUploadResponse:
+      $ref: './resources/photos.yaml#/schemas/PhotoUploadResponse'
 
     ApiErrorResponse:
       $ref: './_common/errors.yaml#/schemas/ApiErrorResponse'

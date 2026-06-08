@@ -36,6 +36,9 @@
         <sentry.version>7.22.5</sentry.version>
         <!-- Эпик #277 (фаза 1, #279): ShedLock 5.x совместим со Spring 6 / Boot 3.5.x. -->
         <shedlock.version>5.16.0</shedlock.version>
+        <!-- Issue #90 (Slice A): AWS SDK v2 для S3-совместимого object storage (Railway).
+             Лёгкий sync-клиент url-connection-client вместо netty-async (см. зависимости ниже). -->
+        <awssdk.version>2.30.18</awssdk.version>
 
         <!-- Sonar -->
         <sonar.java.coveragePlugin>jacoco</sonar.java.coveragePlugin>
@@ -211,6 +214,26 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-data-redis</artifactId>
+        </dependency>
+
+        <!-- Issue #90 (Slice A): S3-совместимое object storage (Railway) через AWS SDK v2.
+             netty-nio-client исключён в пользу url-connection-client (лёгкий sync-HTTP),
+             чтобы не тащить netty-async — нам достаточно простого синхронного клиента. -->
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>s3</artifactId>
+            <version>${awssdk.version}</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>software.amazon.awssdk</groupId>
+                    <artifactId>netty-nio-client</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>url-connection-client</artifactId>
+            <version>${awssdk.version}</version>
         </dependency>
 
         <!-- Lombok -->
