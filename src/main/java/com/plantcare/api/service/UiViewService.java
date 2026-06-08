@@ -342,7 +342,7 @@ public class UiViewService {
         block.put("type", TYPE_GUEST_BANNER);
         block.put("titleKey", "home.guest.title");
         block.put("bodyKey", "home.guest.body");
-        block.put("ctaAction", navigateAction("/home/register"));
+        block.put("ctaAction", navigateAction("/profile/convert-guest"));
         return block;
     }
 
@@ -401,11 +401,13 @@ public class UiViewService {
 
     /**
      * Действие «навигация к карточке растения» (MADR-017). Путь строится из
-     * допустимого словаря витринных путей ({@code /plants/{id}}), не из
-     * произвольного URL.
+     * допустимого словаря витринных путей ({@code /home/plants/{id}}), не из
+     * произвольного URL. Префикс {@code /home} обязателен: маршрут карточки у
+     * клиента вложен в home-shell ({@code /home/plants/:id}); без него
+     * go_router не находит маршрут и тап молча игнорируется.
      */
     private static Map<String, Object> plantCardNavigateAction(Long plantId) {
-        return navigateAction("/plants/" + plantId);
+        return navigateAction("/home/plants/" + plantId);
     }
 
     /**
