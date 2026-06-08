@@ -34,7 +34,7 @@ public class StatsController implements StatsApi {
                 .orElseThrow(() -> new EntityNotFoundException(
                         "Plant not found: id=" + plantId + " for userId=" + user.getId()));
 
-        int streak = careHistoryService.computePlantStreak(plantId);
+        int streak = careHistoryService.computePlantStreak(plantId, user.getTimezone());
 
         return new StreakResponse(plantId, streak);
     }
