@@ -56,7 +56,7 @@ class TwoLevelCacheIT extends IntegrationTestBase {
     private RedisMessageListenerContainer instanceBContainer;
 
     @AfterEach
-    void cleanup() {
+    void cleanup() throws Exception {
         redisTemplate.delete(redisProperties.keyPrefix() + "cache:" + CACHE);
         cacheManager.getCache(CACHE).clear();
         if (instanceBContainer != null) {
