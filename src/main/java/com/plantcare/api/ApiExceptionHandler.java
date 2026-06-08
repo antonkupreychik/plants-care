@@ -3,6 +3,7 @@ package com.plantcare.api;
 import com.plantcare.api.auth.exception.AuthTokenException;
 import com.plantcare.api.auth.exception.GuestConvertException;
 import com.plantcare.api.auth.exception.RateLimitExceededException;
+import com.plantcare.api.auth.exception.TelegramAuthException;
 import com.plantcare.api.dto.ApiErrorResponse;
 import com.plantcare.api.dto.FieldError;
 import com.plantcare.core.service.InvalidPhotoException;
@@ -103,6 +104,18 @@ public class ApiExceptionHandler {
         };
         return ResponseEntity.status(status)
                 .body(ApiErrorResponse.of(e.getCode().name(), e.getMessage()));
+    }
+
+    /**
+     * Issue #318: вход существующих Telegram-юзеров. Каждый код несёт собственный
+     * HTTP-статус (404/401/410/429) и машиночитаемый код контракта
+     * ({@code telegram_user_not_found}/{@code invalid_code}/{@code session_expired}/
+     * {@code too_many_attempts}).
+     */
+    @ExceptionHandler(TelegramAuthException.class)
+    public ResponseEntity<ApiErrorResponse> handleTelegramAuth(TelegramAuthException e) {
+        return ResponseEntity.status(e.getCode().status())
+                .body(ApiErrorResponse.of(e.getCode().machineCode(), e.getMessage()));
     }
 
     @ExceptionHandler(RateLimitExceededException.class)

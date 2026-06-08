@@ -1,5 +1,6 @@
 package com.plantcare.bot.command.impl;
 
+import com.plantcare.bot.service.TelegramAuthLinkService;
 import com.plantcare.core.domain.User;
 import com.plantcare.core.service.LocationSharingService;
 import com.plantcare.core.service.MessageService;
@@ -47,6 +48,9 @@ class StartCommandTest {
 
     @Mock
     private LocationSharingService locationSharingService;
+
+    @Mock
+    private TelegramAuthLinkService telegramAuthLinkService;
 
     @InjectMocks
     private StartCommand startCommand;
@@ -130,5 +134,32 @@ class StartCommandTest {
         verify(locationSharingService).acceptInvite("abc123", user);
         verify(telegramClient).execute(any(SendMessage.class));
         verify(menuCommand).execute(update, telegramClient);
+    }
+
+    @Test
+    @DisplayName("/start auth_<sessionId> делегирует вход в TelegramAuthLinkService с chat_id из update, меню не открывает")
+    void shouldHandleAuthDeepLink() {
+        Long chatId = 100L;
+
+        User user = User.builder()
+                .telegramChatId(chatId)
+                .timezone("Europe/Minsk")
+                .stateData(new HashMap<String, Object>())
+                .build();
+
+        when(update.getMessage()).thenReturn(message);
+        when(message.getChatId()).thenReturn(chatId);
+        when(update.hasMessage()).thenReturn(true);
+        when(message.hasText()).thenReturn(true);
+        when(message.getText()).thenReturn("/start auth_sess123");
+        when(userService.findByChatId(chatId)).thenReturn(Optional.of(user));
+        when(telegramAuthLinkService.extractSessionId("auth_sess123")).thenReturn("sess123");
+
+        startCommand.execute(update, telegramClient);
+
+        // chat_id берётся из update, не из payload — это и проверяем
+        verify(telegramAuthLinkService).handleAuthLink("sess123", chatId, telegramClient);
+        verify(menuCommand, never()).execute(any(), any());
+        verifyNoInteractions(locationSharingService);
     }
 }

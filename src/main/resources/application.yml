@@ -172,6 +172,19 @@ plantcare:
         max-attempts: 5
         window-seconds: 300
 
+    # Issue #318: вход существующих Telegram-юзеров через бот-код.
+    # bot-username — для построения deep link t.me/<bot>?start=auth_<sessionId>
+    # (тот же источник, что telegram.bot.username; на безопасность не влияет).
+    telegram:
+      bot-username: ${TELEGRAM_BOT_USERNAME:}
+      code-length: 6
+      session-ttl: ${TELEGRAM_AUTH_SESSION_TTL:PT5M}
+      resend-after-sec: ${TELEGRAM_AUTH_RESEND_AFTER_SEC:60}
+      max-attempts: ${TELEGRAM_AUTH_MAX_ATTEMPTS:5}
+      rate-limit:
+        max-attempts: 10
+        window-seconds: 300
+
     # Issue #92: Bucket4j per-IP/per-user rate limits for the REST API.
     # All values configurable via env vars on Railway.
     api:
