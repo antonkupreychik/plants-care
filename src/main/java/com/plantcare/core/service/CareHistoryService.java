@@ -30,12 +30,16 @@ import java.util.stream.Collectors;
  *
  * Логика стриков:
  *
- *  <b>Per-plant streak</b> — «выполнений подряд без пропусков».
+ *  <b>Per-plant streak</b> — «дней подряд с on-time-уходом, без пропуска расписания».
  *  Алгоритм:
  *   1) Если у любого активного расписания этого растения {@code nextDueAt + 1 day < now}
  *      и нет более свежего "сделано" — стрик 0 (просроченная задача висит).
- *   2) Иначе идём по истории DESC: пока {@code onTime=true} → +1, на первой
- *      late-записи стоп.
+ *   2) Иначе идём по истории DESC: пока {@code onTime=true} собираем уникальные ДНИ
+ *      (в TZ юзера), на первой late-записи стоп. Результат — число уникальных дней
+ *      в непрерывном on-time-прогоне: несколько уходов в один день дают +1, а не +N.
+ *  «Подряд» здесь = непрерывный прогон on-time-уходов без пропуска расписания
+ *  (стоп на late), а НЕ календарно-смежные дни — растение с интервалом 7 дней
+ *  тоже умеет набирать стрик &gt; 1.
  *  Compensating (cancelled) записи пропускаются.
  *
  *  <b>Per-user streak</b> — «дни подряд, в которые юзер сделал хотя бы одно действие».
@@ -191,7 +195,7 @@ public class CareHistoryService {
      * {@link #MIN_ACTIONS_FOR_STATS} — UI должен скрыть блок и показать заглушку.
      */
     @Transactional(readOnly = true)
-    public PlantStats getPlantStats(Long plantId) {
+    public PlantStats getPlantStats(Long plantId, String timezone) {
         long total = countHistory(plantId);
 
         if (total == 0) {
@@ -206,17 +210,24 @@ public class CareHistoryService {
                 ? 0
                 : (int) Math.round(100.0 * onTimeInWindow / actionsInWindow);
 
-        int streak = computePlantStreak(plantId);
+        int streak = computePlantStreak(plantId, timezone);
 
         return new PlantStats(streak, onTimePct, total);
     }
 
     /**
-     * Стрик по конкретному растению. Алгоритм описан в javadoc класса.
+     * Стрик по конкретному растению — число уникальных дней с on-time-уходом
+     * в непрерывном прогоне (стоп на первой late-записи). Повторы в один день
+     * (в TZ юзера) не накручивают стрик: 5 поливов за сутки = +1 день, а не +5.
+     * Алгоритм целиком описан в javadoc класса.
      * Публичный для удобства тестирования и переиспользования.
+     *
+     * @param plantId  id растения
+     * @param timezone IANA-таймзона юзера для определения границ суток; пустая/
+     *                 невалидная → UTC (см. {@link #safeZone(String)})
      */
     @Transactional(readOnly = true)
-    public int computePlantStreak(Long plantId) {
+    public int computePlantStreak(Long plantId, String timezone) {
         // 1) Просроченные расписания (без своего done) сразу обнуляют стрик.
         LocalDateTime now = LocalDateTime.now(clock);
         List<CareSchedule> schedules = careScheduleRepository.findAllByPlantId(plantId);
@@ -228,20 +239,27 @@ public class CareHistoryService {
             }
         }
 
-        // 2) Иначе идём по истории с конца, пока все on-time.
+        // 2) Иначе идём по истории с конца, пока все on-time, и считаем
+        //    уникальные ДНИ (в TZ юзера), а не количество записей.
+        ZoneId tz = safeZone(timezone);
         List<CareHistory> recent = careHistoryRepository.findAllByPlantIdOrderByDoneAtDesc(
                 plantId, Limit.of(STREAK_LOOKBACK));
 
-        int count = 0;
+        Set<LocalDate> uniqueDays = new HashSet<>();
         for (CareHistory h : recent) {
             if (h.isCancelled()) continue; // компенсирующие игнорируем
             if (h.isOnTime()) {
-                count++;
+                // doneAt хранится как LocalDateTime в UTC → переводим в TZ юзера.
+                LocalDate day = h.getDoneAt()
+                        .atOffset(ZoneOffset.UTC)
+                        .atZoneSameInstant(tz)
+                        .toLocalDate();
+                uniqueDays.add(day);
             } else {
-                break;
+                break; // первая late-запись обрывает прогон
             }
         }
-        return count;
+        return uniqueDays.size();
     }
 
     /**

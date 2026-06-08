@@ -60,7 +60,7 @@ class StatsControllerTest {
         when(plant.getId()).thenReturn(10L);
         when(plantRepository.findByUserIdAndIdAndArchivedAtIsNull(1L, 10L))
                 .thenReturn(Optional.of(plant));
-        when(careHistoryService.computePlantStreak(10L)).thenReturn(5);
+        when(careHistoryService.computePlantStreak(10L, "UTC")).thenReturn(5);
 
         // act + assert
         mockMvc.perform(get("/api/v1/stats/streak")
@@ -81,7 +81,7 @@ class StatsControllerTest {
         when(plant.getId()).thenReturn(20L);
         when(plantRepository.findByUserIdAndIdAndArchivedAtIsNull(2L, 20L))
                 .thenReturn(Optional.of(plant));
-        when(careHistoryService.computePlantStreak(20L)).thenReturn(0);
+        when(careHistoryService.computePlantStreak(20L, "UTC")).thenReturn(0);
 
         // act + assert
         mockMvc.perform(get("/api/v1/stats/streak")

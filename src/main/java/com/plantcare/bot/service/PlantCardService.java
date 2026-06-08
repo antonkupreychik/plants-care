@@ -1042,7 +1042,7 @@ public class PlantCardService {
         }
 
         List<CareHistory> entries = careHistoryService.getHistoryPage(plantId, safePage);
-        CareHistoryService.PlantStats stats = careHistoryService.getPlantStats(plantId);
+        CareHistoryService.PlantStats stats = careHistoryService.getPlantStats(plantId, user.getTimezone());
         ZoneId tz = parseUserZone(user);
 
         String text = buildHistoryText(plant, entries, stats, safePage, totalPages, total, tz);
