@@ -64,7 +64,8 @@ public abstract class IntegrationTestBase {
         // с REDIS_URL env-переменной Railway (она пустая в тестах).
         registry.add("spring.data.redis.host", REDIS::getHost);
         registry.add("spring.data.redis.port", () -> REDIS.getMappedPort(6379).toString());
-        // Явно сбрасываем url, чтобы host/port взяли приоритет
-        registry.add("spring.data.redis.url", () -> "");
+        // url НЕ задаём: пустая строка ("") ломает парсер Lettuce
+        // (RedisUrlSyntaxException: Invalid Redis URL '') и роняет контекст.
+        // В базовом профиле url отсутствует, поэтому host/port (выше) берут приоритет сами.
     }
 }
