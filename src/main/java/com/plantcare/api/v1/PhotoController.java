@@ -16,6 +16,7 @@ import org.springframework.web.multipart.MultipartFile;
 import jakarta.servlet.http.HttpServletResponse;
 
 import java.io.IOException;
+import java.net.URI;
 import java.net.URL;
 
 /**
@@ -50,7 +51,7 @@ public class PhotoController implements PhotosApi {
         Photo photo = photoService.upload(userId, bytes, contentType);
         URL url = photoService.presignedUrl(userId, photo.getId());
 
-        return new PhotoUploadResponse(photo.getId(), url.toString());
+        return new PhotoUploadResponse(photo.getId(), URI.create(url.toString()));
     }
 
     @Override
