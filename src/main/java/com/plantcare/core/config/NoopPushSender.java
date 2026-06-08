@@ -13,7 +13,8 @@ import lombok.extern.slf4j.Slf4j;
 public class NoopPushSender implements PushSender {
 
     @Override
-    public void send(String pushToken, String title, String body) {
+    public PushResult send(String pushToken, String title, String body) {
         log.debug("Push disabled (push.enabled=false) — skipped: token={}, title={}", pushToken, title);
+        return PushResult.SENT;
     }
 }

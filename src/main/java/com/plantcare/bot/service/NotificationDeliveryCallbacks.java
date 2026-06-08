@@ -8,6 +8,7 @@ import com.plantcare.core.domain.enums.TaskType;
 import com.plantcare.core.metrics.MetricsService;
 import com.plantcare.core.repository.NotificationLogRepository;
 import com.plantcare.core.repository.PlantRepository;
+import com.plantcare.core.repository.UserDeviceRepository;
 import com.plantcare.core.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -36,6 +37,7 @@ public class NotificationDeliveryCallbacks {
     private final NotificationLogRepository notificationLogRepository;
     private final PlantRepository plantRepository;
     private final UserRepository userRepository;
+    private final UserDeviceRepository userDeviceRepository;
     private final MetricsService metricsService;
 
     /**
@@ -103,6 +105,55 @@ public class NotificationDeliveryCallbacks {
             };
             metricsService.recordNotificationFailed(MetricsService.CHANNEL_TELEGRAM, reason);
         }
+    }
+
+    /**
+     * Зафиксировать успешную push-доставку (issue #177): метрика sent в канале
+     * {@link MetricsService#CHANNEL_PUSH}. Дедуп-лог по задаче в push-канал
+     * отдельно НЕ пишется — дедуп ведётся канал-независимо по {@code notifications_log}
+     * в {@code shouldSend}, и его уже пишет основной (telegram) путь либо
+     * push-путь шедулера для mobile-only юзера. Здесь фиксируем только метрику
+     * доставки.
+     *
+     * @param taskType тип задачи (для среза «сколько поливных пушей в день»)
+     */
+    @Transactional
+    public void onPushSent(TaskType taskType) {
+        metricsService.recordNotificationSent(MetricsService.CHANNEL_PUSH, taskType);
+    }
+
+    /**
+     * Обработать протухший push-токен (issue #177): FCM вернул
+     * {@code UNREGISTERED} / {@code NOT_FOUND} — приложение удалено или токен
+     * ротировал. Удаляем запись устройства из {@code user_devices}, чтобы не
+     * слать в пустоту на каждом тике, и пишем метрику неудачи в push-канал.
+     *
+     * <p>Идемпотентно: если устройство уже удалено (например, конкурентным
+     * тиком), повторный вызов просто ничего не делает.
+     *
+     * @param deviceId id записи устройства в {@code user_devices}
+     */
+    @Transactional
+    public void onPushStaleToken(long deviceId) {
+        userDeviceRepository.findById(deviceId).ifPresentOrElse(
+                device -> {
+                    userDeviceRepository.delete(device);
+                    log.info("Removed stale device id={} (FCM UNREGISTERED/NOT_FOUND)", deviceId);
+                },
+                () -> log.debug("Stale device id={} already removed, skipping", deviceId));
+        metricsService.recordNotificationFailed(
+                MetricsService.CHANNEL_PUSH, MetricsService.FailureReason.OTHER);
+    }
+
+    /**
+     * Зафиксировать неудачную push-доставку, не связанную с протухшим токеном
+     * (issue #177): сеть, 5xx провайдера. Токен не трогаем — повтор на следующем
+     * тике.
+     */
+    @Transactional
+    public void onPushFailed() {
+        metricsService.recordNotificationFailed(
+                MetricsService.CHANNEL_PUSH, MetricsService.FailureReason.OTHER);
     }
 
     private void saveNotificationLog(Plant plant, TaskType taskType) {

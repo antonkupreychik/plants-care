@@ -1,6 +1,5 @@
 package com.plantcare.bot.service;
 
-import com.plantcare.core.service.PushSender;
 import com.plantcare.core.service.QuietHoursPolicy;
 import com.plantcare.core.service.SchedulerHealthTracker;
 
@@ -60,9 +59,12 @@ public class NotificationSchedulerService {
     private final RateLimitedTelegramSender telegramSender;
     private final NotificationDeliveryCallbacks deliveryCallbacks;
     private final com.plantcare.core.service.LocationSharingService locationSharingService;
-    // Issue #175: push-канал и репозиторий устройств для fan-out на мобильные клиенты
-    private final PushSender pushSender;
+    // Issue #175 / #177: репозиторий устройств читается внутри тика (формируем
+    // примитивные PushTarget'ы), а реальная push-раздача исполняется сервисом
+    // мультиканального fan-out ВНЕ транзакции тика (CLAUDE.md: внешние API не
+    // зовём из открытой транзакции к БД).
     private final UserDeviceRepository userDeviceRepository;
+    private final PushFanOutService pushFanOutService;
 
     // Issue #279: lockAtMostFor > fixedRate (2m > 1m) — если инстанс повис, лок
     // освобождается через 2 мин, следующий тик уже через 1 мин возьмёт его.
@@ -358,10 +360,11 @@ public class NotificationSchedulerService {
                     e -> deliveryCallbacks.onFailed(chatId, e)));
         }
 
-        // Issue #175: fan-out на мобильные устройства пользователя.
+        // Issue #175 / #177: fan-out на мобильные устройства пользователя.
         // Telegram-юзеры тоже могут иметь mobile-устройства (оба канала получат уведомление).
-        // Тихие часы / paused_until уже проверены в shouldSend() выше.
-        fanOutToMobileDevices(user, plant, text);
+        // Тихие часы / paused_until уже проверены в shouldSend() выше. Доставка push'а
+        // вынесена ВНЕ транзакции тика (см. fanOutToMobileDevices).
+        fanOutToMobileDevices(user, schedule.getTaskType(), text);
 
         // Совместный уход (issue #77): тот же push веером уходит caretaker'ам с
         // доступом к локации растения. Клавиатура завязана на scheduleId, а callback
@@ -373,26 +376,26 @@ public class NotificationSchedulerService {
 
     /**
      * Fan-out push-уведомления на все зарегистрированные мобильные устройства
-     * пользователя (issue #175). Quiet hours и paused_until уже проверены выше.
-     * Ошибки отдельного устройства не останавливают остальные.
+     * пользователя (issue #175 / #177). Quiet hours и paused_until уже проверены
+     * канал-нейтрально в {@code shouldSend()} выше — push и Telegram равноправны.
+     *
+     * <p>Внутри транзакции тика мы только читаем устройства и формируем
+     * примитивные {@link PushFanOutService.PushTarget} (никаких detached-entity
+     * между потоками), а реальную доставку отдаём {@link PushFanOutService},
+     * который исполняет её ВНЕ транзакции тика (CLAUDE.md: внешние API не зовём
+     * из открытой транзакции). Ошибки отдельного устройства и bookkeeping
+     * (метрика доставки, удаление протухшего токена) разруливаются там же.
      */
-    private void fanOutToMobileDevices(User user, Plant plant, String text) {
+    private void fanOutToMobileDevices(User user, TaskType taskType, String text) {
         List<UserDevice> devices = userDeviceRepository.findByUserId(user.getId());
         if (devices.isEmpty()) {
             return;
         }
-        String title = "Plants Care";
-        for (UserDevice device : devices) {
-            try {
-                pushSender.send(device.getPushToken(), title, text);
-                log.debug("Push sent to device id={} platform={} for plant id={}",
-                        device.getId(), device.getPlatform(), plant.getId());
-            } catch (Exception e) {
-                log.warn("Push failed for device id={} platform={}: {}",
-                        device.getId(), device.getPlatform(), e.getMessage());
-                Sentry.captureException(e);
-            }
-        }
+        List<PushFanOutService.PushTarget> targets = devices.stream()
+                .map(device -> new PushFanOutService.PushTarget(
+                        device.getId(), device.getPushToken(), text, taskType))
+                .toList();
+        pushFanOutService.enqueue(targets);
     }
 
     /**
