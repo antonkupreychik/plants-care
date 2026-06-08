@@ -4,6 +4,13 @@ spring:
     properties:
       hibernate:
         format_sql: true
+  # Issue #278, эпик #277: на Railway-dev Redis-подключение через REDIS_URL
+  # (reference на Redis-сервис, redis://...railway.internal:6379). Базовый профиль
+  # читает host/port (localhost) — для деплоя dev нужен url, как в application-prod.yml.
+  # REQUIRED на dev: без REDIS_URL приложение упадёт fail-fast (Redis включён всегда).
+  data:
+    redis:
+      url: ${REDIS_URL}
 
 # Issue #88: dummy-секрет для локального запуска. НЕ использовать на prod —
 # там AUTH_JWT_SECRET задаётся через env. Длина >= 32 байт для HS256.
