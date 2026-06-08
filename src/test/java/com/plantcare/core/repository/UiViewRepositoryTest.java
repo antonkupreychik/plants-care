@@ -22,7 +22,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * {@code @DataJpaTest} на реальном Postgres (Testcontainers, НЕ H2) для
  * {@link UiViewRepository} (issue #284). Проверяет JSONB round-trip шаблона
- * композиции и сид экрана {@code home} из миграции V47.
+ * композиции и сид экрана {@code home} из миграции V49.
  */
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
