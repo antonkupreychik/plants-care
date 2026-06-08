@@ -121,7 +121,7 @@ class UiViewServiceTest {
     @Test
     @DisplayName("should_build_full_home_from_composition_when_no_catalog_version")
     void should_build_full_home_from_composition_when_no_catalog_version() {
-        // arrange — композиция из 4 динамических блоков, как в сиде V50
+        // arrange — композиция из 4 динамических блоков, как в сиде V52
         seedHomeView("""
                 { "screenId":"home","version":1,"blocks":[
                   {"type":"weather_strip","minCatalogVersion":1},
