@@ -69,6 +69,18 @@ app:
     command-timeout: ${REDIS_COMMAND_TIMEOUT:PT1S}
     key-prefix: ${REDIS_KEY_PREFIX:pc:}
 
+  # Issue #281, эпик #277 фаза 3: двухуровневый кеш справочников (Caffeine L1 + Redis L2).
+  # enabled=false → фоллбэк на чистый локальный Caffeine (поведение до #281), Redis не задействован.
+  # Кросс-инстансная инвалидация L1 — через Redis Pub/Sub-канал invalidation-channel.
+  # Любая ошибка Redis → промах L2 → деградация на L1 + БД (fail-open), корректность сохраняется.
+  cache:
+    two-level:
+      enabled: ${CACHE_TWO_LEVEL_ENABLED:true}
+      l1-ttl: ${CACHE_L1_TTL:PT5M}
+      l1-max-size: ${CACHE_L1_MAX_SIZE:10000}
+      l2-ttl: ${CACHE_L2_TTL:PT1H}
+      invalidation-channel: ${CACHE_INVALIDATION_CHANNEL:pc:cache:invalidate}
+
   # Issue #79: публичная подписка на .ics календарь.
   calendar:
     base-url: ${CALENDAR_BASE_URL:https://example.com}
