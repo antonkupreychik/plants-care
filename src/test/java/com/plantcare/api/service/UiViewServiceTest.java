@@ -9,11 +9,13 @@ import com.plantcare.api.generated.model.TaskDto;
 import com.plantcare.api.generated.model.TodayResponse;
 import com.plantcare.api.generated.model.TodaySummary;
 import com.plantcare.api.generated.model.WeatherSnapshotDto;
+import com.plantcare.api.CurrentUserProvider;
 import com.plantcare.api.v1.LocationController;
 import com.plantcare.api.v1.PlantController;
 import com.plantcare.api.v1.TodayController;
 import com.plantcare.api.v1.WeatherController;
 import com.plantcare.core.domain.UiView;
+import com.plantcare.core.domain.User;
 import com.plantcare.core.repository.UiViewRepository;
 import jakarta.persistence.EntityNotFoundException;
 import org.junit.jupiter.api.BeforeEach;
@@ -50,6 +52,7 @@ class UiViewServiceTest {
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     @Mock private UiViewRepository uiViewRepository;
+    @Mock private CurrentUserProvider currentUserProvider;
     @Mock private WeatherController weatherController;
     @Mock private TodayController todayController;
     @Mock private LocationController locationController;
@@ -57,8 +60,17 @@ class UiViewServiceTest {
 
     @InjectMocks private UiViewService service;
 
+    private static User user(boolean guest) {
+        User u = new User();
+        u.setGuest(guest);
+        return u;
+    }
+
     @BeforeEach
     void stubHydrationSources() {
+        // По умолчанию — обычный авторизованный юзер (не гость).
+        lenient().when(currentUserProvider.currentUser()).thenReturn(user(false));
+
         lenient().when(weatherController.getWeatherSnapshot()).thenReturn(
                 new WeatherSnapshotDto(true)
                         .humidityPercent(82)
@@ -149,10 +161,18 @@ class UiViewServiceTest {
         List<Map<String, Object>> plants = (List<Map<String, Object>>) blocks.get(3).get("plants");
         assertThat(plants.get(0)).containsEntry("id", 10L).containsEntry("name", "Монстера")
                 .containsEntry("locationName", "Гостиная");
+
+        // MADR-017: тап по телу карточки → navigate к витрине растения
         @SuppressWarnings("unchecked")
-        Map<String, Object> action = (Map<String, Object>) plants.get(0).get("action");
+        Map<String, Object> navAction = (Map<String, Object>) plants.get(0).get("action");
+        assertThat(navAction).containsEntry("kind", "navigate").containsEntry("target", "/plants/10");
+
+        // MADR-017: явная кнопка «полить» → log_care + invalidates
+        @SuppressWarnings("unchecked")
+        Map<String, Object> action = (Map<String, Object>) plants.get(0).get("waterAction");
         assertThat(action).containsEntry("kind", "log_care").containsEntry("method", "POST")
-                .containsEntry("path", "/care-events");
+                .containsEntry("path", "/care-events")
+                .containsEntry("invalidates", List.of("home", "today"));
         @SuppressWarnings("unchecked")
         Map<String, Object> payload = (Map<String, Object>) action.get("payloadTemplate");
         assertThat(payload).containsEntry("plantId", 10L).containsEntry("type", "WATER");
@@ -246,6 +266,97 @@ class UiViewServiceTest {
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> tasks = (List<Map<String, Object>>) blocks.get(0).get("tasks");
         assertThat(tasks).isEmpty();
+    }
+
+    @Test
+    @DisplayName("should_inject_guest_banner_after_weather_when_user_is_guest")
+    void should_inject_guest_banner_after_weather_when_user_is_guest() {
+        // arrange — текущий юзер ГОСТЬ
+        when(currentUserProvider.currentUser()).thenReturn(user(true));
+        seedHomeView("""
+                { "screenId":"home","version":1,"blocks":[
+                  {"type":"weather_strip","minCatalogVersion":1},
+                  {"type":"today_tasks","minCatalogVersion":1},
+                  {"type":"plant_grid","minCatalogVersion":1} ] }""", 1);
+
+        // act
+        Map<String, Object> screen = service.buildScreen("home", null);
+
+        // assert — guest_banner вставлен сразу после weather_strip
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> blocks = (List<Map<String, Object>>) screen.get("blocks");
+        assertThat(blocks).extracting(b -> b.get("type"))
+                .containsExactly("weather_strip", "guest_banner", "today_tasks", "plant_grid");
+        Map<String, Object> banner = blocks.get(1);
+        assertThat(banner).containsEntry("type", "guest_banner")
+                .containsKeys("titleKey", "bodyKey", "ctaAction");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> cta = (Map<String, Object>) banner.get("ctaAction");
+        assertThat(cta).containsEntry("kind", "navigate");
+    }
+
+    @Test
+    @DisplayName("should_not_inject_guest_banner_when_user_is_authenticated")
+    void should_not_inject_guest_banner_when_user_is_authenticated() {
+        // arrange — обычный юзер (стаб BeforeEach: не гость)
+        seedHomeView("""
+                { "screenId":"home","version":1,"blocks":[
+                  {"type":"weather_strip","minCatalogVersion":1},
+                  {"type":"plant_grid","minCatalogVersion":1} ] }""", 1);
+
+        // act
+        Map<String, Object> screen = service.buildScreen("home", null);
+
+        // assert — guest_banner отсутствует
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> blocks = (List<Map<String, Object>>) screen.get("blocks");
+        assertThat(blocks).extracting(b -> b.get("type"))
+                .containsExactly("weather_strip", "plant_grid")
+                .doesNotContain("guest_banner");
+    }
+
+    @Test
+    @DisplayName("should_replace_plant_grid_with_empty_state_when_garden_is_empty")
+    void should_replace_plant_grid_with_empty_state_when_garden_is_empty() {
+        // arrange — у юзера нет растений
+        when(plantController.listPlants(any(), any(), eq(0), eq(100)))
+                .thenReturn(new PageResponsePlantDto(List.of(), 0, 0, 100));
+        seedHomeView("""
+                { "screenId":"home","version":1,"blocks":[
+                  {"type":"weather_strip","minCatalogVersion":1},
+                  {"type":"plant_grid","minCatalogVersion":1} ] }""", 1);
+
+        // act
+        Map<String, Object> screen = service.buildScreen("home", null);
+
+        // assert — plant_grid заменён на empty_state с l10n-ключами и CTA-navigate
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> blocks = (List<Map<String, Object>>) screen.get("blocks");
+        assertThat(blocks).extracting(b -> b.get("type"))
+                .containsExactly("weather_strip", "empty_state");
+        Map<String, Object> empty = blocks.get(1);
+        assertThat(empty).containsKeys("iconKey", "titleKey", "bodyKey", "ctaAction");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> cta = (Map<String, Object>) empty.get("ctaAction");
+        assertThat(cta).containsEntry("kind", "navigate").containsEntry("target", "/home/add");
+    }
+
+    @Test
+    @DisplayName("should_render_plant_grid_when_garden_has_plants")
+    void should_render_plant_grid_when_garden_has_plants() {
+        // arrange — стаб BeforeEach: одно растение
+        seedHomeView("""
+                { "screenId":"home","version":1,"blocks":[
+                  {"type":"plant_grid","minCatalogVersion":1} ] }""", 1);
+
+        // act
+        Map<String, Object> screen = service.buildScreen("home", null);
+
+        // assert — обычная сетка, не empty_state
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> blocks = (List<Map<String, Object>>) screen.get("blocks");
+        assertThat(blocks).extracting(b -> b.get("type")).containsExactly("plant_grid");
+        assertThat(blocks.get(0)).containsKey("plants");
     }
 
     private static TaskDto task(Long scheduleId, String domainTaskType) {
