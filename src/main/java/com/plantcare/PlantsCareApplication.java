@@ -3,6 +3,7 @@ package com.plantcare;
 import com.plantcare.api.ratelimit.ApiRateLimitProperties;
 import com.plantcare.core.config.CalendarProperties;
 import com.plantcare.core.config.HealthScoreProperties;
+import com.plantcare.core.config.S3StorageProperties;
 import com.plantcare.core.config.SpeciesProperties;
 import com.plantcare.bot.config.TelegramRateLimitProperties;
 import com.plantcare.core.config.TransplantSuggestionProperties;
@@ -17,7 +18,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 @SpringBootApplication
 @EnableScheduling
 @EnableSchedulerLock(defaultLockAtMostFor = "PT1M")
-@EnableConfigurationProperties({SpeciesProperties.class, CalendarProperties.class, HealthScoreProperties.class, TelegramRateLimitProperties.class, TransplantSuggestionProperties.class, ApiRateLimitProperties.class})
+@EnableConfigurationProperties({SpeciesProperties.class, CalendarProperties.class, HealthScoreProperties.class, TelegramRateLimitProperties.class, TransplantSuggestionProperties.class, ApiRateLimitProperties.class, S3StorageProperties.class})
 public class PlantsCareApplication {
 
     public static void main(String[] args) {

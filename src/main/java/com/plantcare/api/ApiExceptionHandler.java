@@ -5,6 +5,8 @@ import com.plantcare.api.auth.exception.GuestConvertException;
 import com.plantcare.api.auth.exception.RateLimitExceededException;
 import com.plantcare.api.dto.ApiErrorResponse;
 import com.plantcare.api.dto.FieldError;
+import com.plantcare.core.service.InvalidPhotoException;
+import com.plantcare.core.service.PhotoTooLargeException;
 import jakarta.persistence.EntityNotFoundException;
 import jakarta.validation.ConstraintViolationException;
 import java.util.List;
@@ -18,6 +20,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.HandlerMethodValidationException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.server.ResponseStatusException;
 
 /**
@@ -143,6 +146,26 @@ public class ApiExceptionHandler {
         String code = e.getStatusCode().value() == 410 ? "GONE" : e.getStatusCode().toString();
         return ResponseEntity.status(e.getStatusCode())
                 .body(ApiErrorResponse.of(code, e.getReason() != null ? e.getReason() : e.getMessage()));
+    }
+
+    /**
+     * Issue #90: загруженный файл не является валидным фото ({@code image/*}) или пустой → 400.
+     */
+    @ExceptionHandler(InvalidPhotoException.class)
+    public ResponseEntity<ApiErrorResponse> handleInvalidPhoto(InvalidPhotoException e) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(ApiErrorResponse.of("INVALID_PHOTO", e.getMessage()));
+    }
+
+    /**
+     * Issue #90: размер фото превышает лимит → 413 Payload Too Large.
+     * {@link MaxUploadSizeExceededException} — когда лимит срабатывает на уровне
+     * multipart-резолвера ещё до контроллера.
+     */
+    @ExceptionHandler({PhotoTooLargeException.class, MaxUploadSizeExceededException.class})
+    public ResponseEntity<ApiErrorResponse> handlePhotoTooLarge(Exception e) {
+        return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE)
+                .body(ApiErrorResponse.of("PAYLOAD_TOO_LARGE", "Uploaded file is too large"));
     }
 
     @ExceptionHandler(RuntimeException.class)

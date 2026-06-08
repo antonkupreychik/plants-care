@@ -34,6 +34,15 @@ spring:
           time_zone: UTC
         format_sql: false
 
+  # Issue #90 (Slice A): загрузка фото (multipart). Дефолт Spring — 1 МБ, мал для фото.
+  # Ставим чуть выше прикладного лимита (~5 МБ из app.storage.s3.max-upload-bytes),
+  # чтобы файлы около лимита доходили до контроллера и отдавали чистый 413
+  # (PhotoTooLargeException), а не обрезались резолвером multipart.
+  servlet:
+    multipart:
+      max-file-size: ${PHOTO_MULTIPART_MAX_FILE_SIZE:6MB}
+      max-request-size: ${PHOTO_MULTIPART_MAX_REQUEST_SIZE:8MB}
+
   # Issue #88: SMTP для magic-link писем. Реальные креды только из env.
   mail:
     host: ${MAIL_HOST:localhost}
@@ -62,6 +71,19 @@ spring:
 app:
   species:
     search-limit: 5
+
+  # Issue #90 (Slice A): S3-совместимое object storage фото (Railway).
+  # Креды (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY) читает DefaultCredentialsProvider
+  # из окружения — здесь их НЕТ. endpoint пустой = не переопределять (дефолтный AWS-резолвинг).
+  # На S3-совместимых провайдерах endpoint обязателен (AWS_ENDPOINT_URL) + path-style на клиенте.
+  storage:
+    s3:
+      bucket: ${AWS_S3_BUCKET_NAME:}
+      endpoint: ${AWS_ENDPOINT_URL:}
+      region: ${AWS_DEFAULT_REGION:us-east-1}
+      max-upload-bytes: ${PHOTO_MAX_UPLOAD_BYTES:5242880}   # ~5 МБ
+      presign-ttl: ${PHOTO_PRESIGN_TTL:PT15M}
+      key-prefix: ${PHOTO_KEY_PREFIX:photos/}
 
   # Issue #278, эпик #277 фаза 0: параметры Lettuce-клиента и namespacing ключей.
   redis:
