@@ -32,6 +32,23 @@
 # Элементы `plant_grid` несут декларативный action-descriptor «полить»
 # (`log_care`): клиент сам исполняет `POST /care-events` с подставленным
 # `payloadTemplate`. Сервер не выполняет действие — только описывает его.
+#
+# ## Серверный фильтр по комнате (issue #315)
+#
+# Query-param `locationId` (опциональный int64) фильтрует витрину `home` на
+# СЕРВЕРЕ (single source of truth): null/отсутствие = «Все комнаты».
+# Расширение формы блоков (аддитивно, min_catalog_version НЕ меняется —
+# старые клиенты игнорируют незнакомые поля опакового ответа):
+#
+#  * `location_chips` несёт `selectedLocationId` (int64|null — активный чип,
+#    null = «Все») и в каждом элементе `locations[]` — `count` (int, число
+#    активных растений в комнате; счётчики и активный чип задаёт сервер).
+#  * `plant_grid` при заданном `locationId` содержит только растения этой
+#    комнаты. Если отфильтрованная комната пуста — блок остаётся `plant_grid`
+#    с `plants: []` и контекстными ключами `emptyTitleKey`/`emptyBodyKey`
+#    («в этой комнате пусто»), чтобы чипы остались и можно было выбрать другую
+#    комнату. Глобальный `empty_state` (пустой сад целиком) отдаётся только
+#    при `locationId == null`.
 
 paths:
   Screen:
@@ -78,6 +95,18 @@ paths:
           schema:
             type: string
           example: home
+        - name: locationId
+          in: query
+          required: false
+          description: |
+            Серверный фильтр витрины по комнате (issue #315). Применяется к
+            экрану `home`: блок `plant_grid` гидрируется только растениями этой
+            комнаты, блок `location_chips` помечает её активной
+            (`selectedLocationId`). Опционален: при отсутствии/`null` —
+            «Все комнаты» (фильтр не применяется, поведение как раньше).
+          schema:
+            type: integer
+            format: int64
         - name: X-UI-Catalog-Version
           in: header
           required: false

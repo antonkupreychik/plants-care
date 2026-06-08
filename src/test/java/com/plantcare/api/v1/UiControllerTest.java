@@ -67,8 +67,8 @@ class UiControllerTest {
 
     @Test
     void should_return_opaque_layout_when_screen_resolved() throws Exception {
-        // arrange
-        when(uiViewService.buildScreen(eq("home"), isNull())).thenReturn(homeLayout());
+        // arrange — без фильтра по комнате (locationId == null)
+        when(uiViewService.buildScreen(eq("home"), isNull(), isNull())).thenReturn(homeLayout());
 
         // act + assert — опаковая структура отдаётся как JSON «как есть»
         mockMvc.perform(get("/api/v1/ui/home"))
@@ -84,10 +84,21 @@ class UiControllerTest {
     @Test
     void should_pass_catalog_version_to_service() throws Exception {
         // arrange
-        when(uiViewService.buildScreen(eq("home"), eq(1))).thenReturn(homeLayout());
+        when(uiViewService.buildScreen(eq("home"), isNull(), eq(1))).thenReturn(homeLayout());
 
         // act + assert
         mockMvc.perform(get("/api/v1/ui/home").header("X-UI-Catalog-Version", 1))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.screenId").value("home"));
+    }
+
+    @Test
+    void should_pass_location_filter_to_service() throws Exception {
+        // arrange — query-param locationId пробрасывается в сервис (issue #315)
+        when(uiViewService.buildScreen(eq("home"), eq(5L), isNull())).thenReturn(homeLayout());
+
+        // act + assert
+        mockMvc.perform(get("/api/v1/ui/home").param("locationId", "5"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.screenId").value("home"));
     }
@@ -105,7 +116,7 @@ class UiControllerTest {
     @Test
     void should_return_404_when_screen_unknown() throws Exception {
         // arrange
-        when(uiViewService.buildScreen(eq("ghost"), isNull()))
+        when(uiViewService.buildScreen(eq("ghost"), isNull(), isNull()))
                 .thenThrow(new EntityNotFoundException("Unknown SDUI screen: ghost"));
 
         // act + assert
@@ -117,7 +128,7 @@ class UiControllerTest {
     @Test
     void should_return_401_when_no_authenticated_user() throws Exception {
         // arrange — гидрация дёргает контроллер, который пробрасывает ошибку аутентификации
-        when(uiViewService.buildScreen(eq("home"), isNull()))
+        when(uiViewService.buildScreen(eq("home"), isNull(), isNull()))
                 .thenThrow(AuthTokenException.invalid("No authenticated user in security context"));
 
         // act + assert
