@@ -1,5 +1,6 @@
 package com.plantcare.bot.config;
 
+import com.plantcare.core.config.RedisProperties;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;

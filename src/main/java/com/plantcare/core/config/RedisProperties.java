@@ -1,4 +1,4 @@
-package com.plantcare.bot.config;
+package com.plantcare.core.config;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
