@@ -1,3 +1,14 @@
+# Issue #281: в общем test-профиле two-level cache ВЫКЛЮЧЕН — большинство
+# @SpringBootTest(@ActiveProfiles("test")) не поднимают Redis (нет Testcontainer),
+# а Redis Pub/Sub listener-контейнер при two-level=true жёстко падает на старте
+# (Unable to connect to Redis) и роняет ApplicationContext. Фоллбэк-Caffeine их
+# полностью устраивает. Тест самой two-level-фичи (TwoLevelCacheIT) поднимает Redis
+# и включает two-level локально через @TestPropertySource.
+app:
+  cache:
+    two-level:
+      enabled: false
+
 spring:
   jpa:
     hibernate:
