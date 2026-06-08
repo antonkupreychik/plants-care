@@ -165,7 +165,9 @@ class UiViewServiceTest {
         // MADR-017: тап по телу карточки → navigate к витрине растения
         @SuppressWarnings("unchecked")
         Map<String, Object> navAction = (Map<String, Object>) plants.get(0).get("action");
-        assertThat(navAction).containsEntry("kind", "navigate").containsEntry("target", "/plants/10");
+        // target обязан содержать /home-префикс: маршрут карточки у клиента вложен
+        // в home-shell (/home/plants/:id); без него go_router не находит маршрут.
+        assertThat(navAction).containsEntry("kind", "navigate").containsEntry("target", "/home/plants/10");
 
         // MADR-017: явная кнопка «полить» → log_care + invalidates
         @SuppressWarnings("unchecked")
@@ -292,7 +294,10 @@ class UiViewServiceTest {
                 .containsKeys("titleKey", "bodyKey", "ctaAction");
         @SuppressWarnings("unchecked")
         Map<String, Object> cta = (Map<String, Object>) banner.get("ctaAction");
-        assertThat(cta).containsEntry("kind", "navigate");
+        // target должен совпадать с клиентским маршрутом конвертации гостя
+        // (/profile/convert-guest), иначе тап молча игнорируется go_router.
+        assertThat(cta).containsEntry("kind", "navigate")
+                .containsEntry("target", "/profile/convert-guest");
     }
 
     @Test
