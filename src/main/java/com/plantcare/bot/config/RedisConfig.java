@@ -67,8 +67,12 @@ public class RedisConfig {
      * <p>Type info необходима для корректной десериализации полиморфных типов при
      * восстановлении данных из Redis (иначе Jackson не знает в какой класс маппить).
      */
-    @Bean("redisObjectMapper")
-    public ObjectMapper redisObjectMapper() {
+    // НЕ @Bean: бин типа ObjectMapper подавляет авто-конфигурируемый Spring Boot
+    // ObjectMapper (@ConditionalOnMissingBean(ObjectMapper.class)) и становится основным
+    // для Spring MVC. Тогда default-typing (@class) протекает в HTTP: тела POST/PUT/PATCH
+    // не парсятся («Malformed request body»), ответы засоряются @class. Этот mapper —
+    // ТОЛЬКО для Redis-сериализации, создаётся локально для redisTemplate().
+    private ObjectMapper redisObjectMapper() {
         var mapper = new ObjectMapper();
         mapper.registerModule(new JavaTimeModule());
         mapper.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
@@ -98,14 +102,13 @@ public class RedisConfig {
      */
     @Bean
     public RedisTemplate<String, Object> redisTemplate(
-            RedisConnectionFactory connectionFactory,
-            ObjectMapper redisObjectMapper) {
+            RedisConnectionFactory connectionFactory) {
 
         var template = new RedisTemplate<String, Object>();
         template.setConnectionFactory(connectionFactory);
 
         var stringSerializer = new StringRedisSerializer();
-        var jsonSerializer = new GenericJackson2JsonRedisSerializer(redisObjectMapper);
+        var jsonSerializer = new GenericJackson2JsonRedisSerializer(redisObjectMapper());
 
         template.setKeySerializer(stringSerializer);
         template.setHashKeySerializer(stringSerializer);
