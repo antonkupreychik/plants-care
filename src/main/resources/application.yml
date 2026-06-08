@@ -89,6 +89,11 @@ app:
       l1-max-size: ${CACHE_L1_MAX_SIZE:10000}
       l2-ttl: ${CACHE_L2_TTL:PT1H}
       invalidation-channel: ${CACHE_INVALIDATION_CHANNEL:pc:cache:invalidate}
+      # Переподписка listener-контейнера при разрыве уже установленного соединения с Redis.
+      recovery-interval: ${CACHE_LISTENER_RECOVERY_INTERVAL:PT5S}
+      # Ретрай запуска listener-контейнера, когда Redis был недоступен на старте (fail-open):
+      # листенер поднимется сам, как только Redis вернётся, не роняя ApplicationContext.
+      listener-retry-interval: ${CACHE_LISTENER_RETRY_INTERVAL:PT30S}
 
   # Issue #79: публичная подписка на .ics календарь.
   calendar:
