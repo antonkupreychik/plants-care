@@ -25,6 +25,11 @@ import java.util.HexFormat;
  * <p>В БД хранится только SHA-256 хеш opaque-токена. Само письмо отправляется
  * ВНЕ транзакции БД (см. {@link #request}). {@code verify} гасит токен атомарно
  * (one-time) и логинит/создаёт пользователя.
+ *
+ * <p>Issue #282 (эпик #277 фаза 4): Redis как кэш-ускоритель проверок.
+ * При {@code verify} невалидный/потреблённый хеш помечается в Redis с TTL.
+ * При повторном {@code verify} — Redis-lookup до Postgres (fail-safe при Redis down:
+ * fallback на Postgres, НЕ fail-open).
  */
 @Slf4j
 @Service
@@ -40,6 +45,7 @@ public class MagicLinkService {
     private final AuthProperties authProperties;
     private final SecureRandom secureRandom;
     private final Clock clock;
+    private final TokenRedisCache tokenRedisCache;
 
     /**
      * Создаёт magic-link токен и отправляет письмо. Сначала транзакционная
@@ -72,19 +78,37 @@ public class MagicLinkService {
     /**
      * Гасит токен и выдаёт пару токенов. Атомарная пометка {@code consumed_at}
      * защищает от повторного использования (replay).
+     *
+     * <p>Горячий путь при replay: сначала проверяем Redis-кэш невалидных хешей.
+     * Если Redis говорит «невалиден» — отклоняем без обращения к Postgres.
+     * Если Redis недоступен — идём прямо в Postgres (fallback, не fail-open).
+     * После успешного потребления токена прогреваем Redis-кэш.
      */
     @Transactional
     public TokenPair verify(String rawToken) {
         String tokenHash = sha256Hex(rawToken);
         Instant now = clock.instant();
 
+        // Горячий путь: проверка Redis перед Postgres
+        var cachedInvalid = tokenRedisCache.isMagicLinkInvalid(tokenHash);
+        if (cachedInvalid.isPresent()) {
+            log.debug("Magic link token rejected via Redis cache (already consumed/invalid)");
+            throw AuthTokenException.invalid("Magic link is invalid, expired or already used");
+        }
+
         int consumed = tokenRepository.consumeIfValid(tokenHash, now);
         if (consumed == 0) {
+            // Прогреваем Redis — будущие replay будут отклонены быстро
+            Instant cacheUntil = now.plus(authProperties.getMagicLink().getTtl());
+            tokenRedisCache.markMagicLinkInvalid(tokenHash, cacheUntil);
             throw AuthTokenException.invalid("Magic link is invalid, expired or already used");
         }
 
         MagicLinkToken token = tokenRepository.findByTokenHash(tokenHash)
                 .orElseThrow(() -> AuthTokenException.invalid("Magic link token disappeared"));
+
+        // Прогреваем Redis-кэш: токен потреблён, повторный verify должен быть отклонён быстро
+        tokenRedisCache.markMagicLinkInvalid(tokenHash, token.getExpiresAt());
 
         // Email подтверждён самим фактом получения письма по этому адресу.
         User user = authService.findOrCreateUser(
