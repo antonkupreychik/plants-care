@@ -1,0 +1,113 @@
+# Server-Driven UI: серверная композиция экранов из блоков (issue #284).
+#
+# Эволюция пилота: композиция экрана больше НЕ описывается типизированными
+# block-схемами в спеке. Состав и порядок блоков управляются на сервере
+# таблицей `ui_views` (одна строка на экран хранит шаблон композиции в JSONB),
+# а данные блоков гидрируются на лету из существующих сервисов. Поэтому ответ
+# `GET /api/v1/ui/{screen}` — ОПАКОВЫЙ JSON-объект (`additionalProperties: true`):
+# клиент рендерит блоки по их `type`, не завязываясь на жёсткую схему. Новый
+# тип блока можно начать отдавать, не меняя бэкенд-контракт.
+#
+# ## Каталог блок-типов и версии (forward-compatibility)
+#
+# Клиент присылает версию своего каталога блоков в заголовке
+# `X-UI-Catalog-Version: <int>`. Сервер исключает из ответа блоки, чей
+# `min_catalog_version` выше присланной — так старый клиент не получает
+# незнакомых типов. Заголовок опционален: при отсутствии трактуется как
+# «новейший клиент» (выдаются все блоки экрана).
+#
+# ## Форма ответа (для справки клиента; в контракте — опаковый object)
+#
+# { "screenId": "home", "version": 1, "blocks": [ { "type": "<...>", ...данные }, ... ] }
+#
+# На старте экран `home` собирается из блоков (в порядке хранения в `ui_views`):
+#
+# | type            | min_catalog_version | источник данных  |
+# |-----------------|---------------------|------------------|
+# | weather_strip   | 1                   | WeatherService   |
+# | today_summary   | 1                   | TodayApiService  |
+# | location_chips  | 1                   | LocationService  |
+# | plant_grid      | 1                   | PlantService     |
+#
+# Элементы `plant_grid` несут декларативный action-descriptor «полить»
+# (`log_care`): клиент сам исполняет `POST /care-events` с подставленным
+# `payloadTemplate`. Сервер не выполняет действие — только описывает его.
+
+paths:
+  Screen:
+    get:
+      tags: [UI]
+      operationId: getUiScreen
+      summary: SDUI-композиция экрана
+      description: |
+        Возвращает серверную композицию экрана `{screen}` как опаковый
+        JSON-объект (issue #284, SDUI). Состав и порядок блоков управляются
+        таблицей `ui_views` на сервере; данные блоков гидрируются на лету из
+        уже существующих сервисов. Клиент рендерит блоки по полю `type` и не
+        завязывается на типизированную схему блока.
+
+        Пилотный экран — `home`. Форма ответа (не часть контракта, опаковый
+        объект):
+
+        ```json
+        { "screenId": "home", "version": 1,
+          "blocks": [ { "type": "weather_strip", ... }, ... ] }
+        ```
+
+        ## Версионирование каталога блоков
+
+        Клиент передаёт версию своего каталога блоков в заголовке
+        `X-UI-Catalog-Version`. Сервер исключает из ответа блоки, чей
+        `min_catalog_version` выше присланной (старый клиент не получает
+        незнакомых типов). Заголовок опционален — без него выдаются все блоки
+        экрана.
+
+        ## Action-descriptor
+
+        Элементы `plant_grid` несут декларативное описание действия «полить»
+        (`log_care`): клиент сам исполняет `POST /care-events` с подставленным
+        `payloadTemplate`. Сервер не выполняет действие — только описывает его.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: screen
+          in: path
+          required: true
+          description: |
+            Идентификатор экрана (строка `ui_views.screen`). Пилот — `home`.
+          schema:
+            type: string
+          example: home
+        - name: X-UI-Catalog-Version
+          in: header
+          required: false
+          description: |
+            Версия каталога блоков, поддерживаемого клиентом. Блоки с
+            `min_catalog_version` выше присланной в ответ не попадают
+            (forward-compatibility). Если не передан — выдаются все блоки экрана.
+          schema:
+            type: integer
+            format: int32
+            minimum: 1
+      responses:
+        '200':
+          description: |
+            Опаковая композиция экрана. Структура верхнего уровня —
+            `{ screenId, version, blocks[] }`, но контрактом не типизируется:
+            клиент рендерит блоки по их `type`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/schemas/ScreenLayout'
+        '404':
+          $ref: '../_common/responses.yaml#/NotFound'
+
+schemas:
+  ScreenLayout:
+    type: object
+    description: |
+      Опаковая серверная композиция экрана (SDUI). Содержит `screenId`,
+      `version` и упорядоченный список `blocks`, но конкретные поля блоков
+      контрактом не фиксируются (`additionalProperties: true`) — состав
+      управляется сервером (`ui_views`), клиент рендерит блоки по `type`.
+    additionalProperties: true

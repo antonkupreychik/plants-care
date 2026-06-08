@@ -136,6 +136,14 @@ tags:
       мобильного приложения. Клиент передаёт `since` (серверное время из предыдущего
       ответа) и получает все сущности, изменённые после этого момента, а также
       список удалений. Server timestamp wins при конфликтах.
+  - name: UI
+    description: |
+      Server-Driven UI (issue #284): сервер собирает композицию экранов из
+      блоков. Состав/порядок блоков управляется таблицей `ui_views`, ответ
+      `GET /api/v1/ui/{screen}` — опаковый JSON-объект (клиент рендерит блоки
+      по их `type`). Данные блоков гидрируются из существующих сервисов;
+      вёрстку применяет клиент. Версия каталога блоков передаётся в заголовке
+      `X-UI-Catalog-Version` — блоки выше неё в ответ не попадают.
   - name: PlantTemplates
     description: |
       Пользовательские шаблоны растений (issue #254): сохранение набора интервалов
@@ -299,6 +307,9 @@ paths:
 
   /api/v1/sync:
     $ref: './resources/sync.yaml#/paths/Collection'
+
+  /api/v1/ui/{screen}:
+    $ref: './resources/ui.yaml#/paths/Screen'
 
 components:
   securitySchemes:
@@ -545,6 +556,9 @@ components:
       $ref: './resources/plant-templates.yaml#/schemas/PlantTemplateCreateRequest'
     PlantTemplateInstantiateRequest:
       $ref: './resources/plant-templates.yaml#/schemas/PlantTemplateInstantiateRequest'
+
+    ScreenLayout:
+      $ref: './resources/ui.yaml#/schemas/ScreenLayout'
 
     ApiErrorResponse:
       $ref: './_common/errors.yaml#/schemas/ApiErrorResponse'
