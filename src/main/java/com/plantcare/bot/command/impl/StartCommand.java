@@ -2,6 +2,7 @@ package com.plantcare.bot.command.impl;
 
 import com.plantcare.bot.command.interfaces.BotCommand;
 import com.plantcare.bot.service.LocationSharingMenuService;
+import com.plantcare.bot.service.TelegramAuthLinkService;
 import com.plantcare.core.domain.User;
 import com.plantcare.core.service.LocationSharingService;
 import com.plantcare.core.service.MessageService;
@@ -25,6 +26,7 @@ public class StartCommand implements BotCommand {
     private final MenuCommand menuCommand;
     private final MessageService messageService;
     private final LocationSharingService locationSharingService;
+    private final TelegramAuthLinkService telegramAuthLinkService;
 
     @Override
     public String getCommandName() {
@@ -37,6 +39,15 @@ public class StartCommand implements BotCommand {
 
         User user = userService.findByChatId(chatId)
                 .orElseThrow(() -> new IllegalStateException("User not found"));
+
+        // Вход в приложение (issue #318): deep link t.me/<bot>?start=auth_<sessionId>.
+        // chat_id берём из самого update (не из клиента) — это и есть доверенная привязка.
+        // Не показываем меню/приветствие: пользователь пришёл только за кодом входа.
+        String authSessionId = telegramAuthLinkService.extractSessionId(extractStartPayload(update));
+        if (authSessionId != null) {
+            telegramAuthLinkService.handleAuthLink(authSessionId, chatId, client);
+            return;
+        }
 
         // Совместный уход (issue #77): deep link t.me/<bot>?start=invite_<token>.
         // Telegram кладёт payload вторым токеном текста: "/start invite_abc123".
@@ -58,10 +69,10 @@ public class StartCommand implements BotCommand {
     }
 
     /**
-     * Достаёт токен приглашения из payload {@code /start invite_<token>}.
-     * Возвращает {@code null}, если это обычный {@code /start} без приглашения.
+     * Достаёт payload (второй токен) из {@code /start <payload>}.
+     * Возвращает {@code null}, если это обычный {@code /start} без payload.
      */
-    private String extractInvitePayload(Update update) {
+    private String extractStartPayload(Update update) {
         if (!update.hasMessage() || !update.getMessage().hasText()) {
             return null;
         }
@@ -72,7 +83,16 @@ public class StartCommand implements BotCommand {
         }
 
         String payload = parts[1].trim();
-        if (!payload.startsWith(LocationSharingMenuService.INVITE_PAYLOAD_PREFIX)) {
+        return payload.isBlank() ? null : payload;
+    }
+
+    /**
+     * Достаёт токен приглашения из payload {@code /start invite_<token>}.
+     * Возвращает {@code null}, если это обычный {@code /start} без приглашения.
+     */
+    private String extractInvitePayload(Update update) {
+        String payload = extractStartPayload(update);
+        if (payload == null || !payload.startsWith(LocationSharingMenuService.INVITE_PAYLOAD_PREFIX)) {
             return null;
         }
 
