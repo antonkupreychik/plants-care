@@ -470,6 +470,60 @@ class NotificationSchedulerServiceTest {
         }
 
         @Test
+        @DisplayName("Mobile-only юзер (telegram_chat_id == null) с 2+ задачами → push-дайджест, без NPE")
+        void should_send_push_digest_to_mobile_only_user_with_no_telegram() {
+            // arrange — mobile-only юзер без telegramChatId (после #88 поле nullable) с
+            // несколькими due-задачами. Раньше sendDigest безусловно звал
+            // getTelegramChatId().toString() и ронял шедулер NPE.
+            User mobileUser = User.builder()
+                    .timezone("Asia/Almaty")           // не-UTC таймзона
+                    .quietHoursStart(LocalTime.of(0, 0))
+                    .quietHoursEnd(LocalTime.of(0, 0))
+                    .blocked(false)
+                    .build();
+            ReflectionTestUtils.setField(mobileUser, "id", 5L);
+
+            Plant mobilePlant = Plant.builder().user(mobileUser).name("Алоэ").build();
+            ReflectionTestUtils.setField(mobilePlant, "id", 50L);
+
+            CareSchedule waterSchedule = dueSchedule(mobilePlant, TaskType.WATERING, 500L);
+            CareSchedule mistSchedule = dueSchedule(mobilePlant, TaskType.MISTING, 501L);
+
+            UserDevice device = new UserDevice(mobileUser, DevicePlatform.IOS,
+                    "apns-token-almaty", java.time.Instant.now());
+            ReflectionTestUtils.setField(device, "id", 90L);
+
+            when(careScheduleRepository.findDueSchedules(any()))
+                    .thenReturn(List.of(waterSchedule, mistSchedule));
+            when(notificationLogRepository.existsByPlantIdAndTaskTypeAndSentAtAfter(any(), any(), any()))
+                    .thenReturn(false);
+            when(notificationDigestRepository.save(any(NotificationDigest.class)))
+                    .thenReturn(savedDigest(500L));
+            when(userDeviceRepository.findByUserId(5L)).thenReturn(List.of(device));
+
+            // act — не должно бросить NPE
+            service.checkAndSendNotifications();
+
+            // assert — Telegram не вызван (нет chatId), дайджест ушёл в push одним
+            // сообщением на устройство с текстом дайджеста.
+            verifyNoInteractions(telegramSender);
+
+            ArgumentCaptor<List<PushFanOutService.PushTarget>> captor =
+                    ArgumentCaptor.forClass(List.class);
+            verify(pushFanOutService).enqueue(captor.capture());
+            assertThat(captor.getValue()).singleElement().satisfies(t -> {
+                assertThat(t.deviceId()).isEqualTo(90L);
+                assertThat(t.pushToken()).isEqualTo("apns-token-almaty");
+                assertThat(t.body()).contains("На сегодня:");
+                assertThat(t.body()).contains("Алоэ — полить");
+                assertThat(t.body()).contains("Алоэ — опрыскать");
+            });
+
+            // дайджест по-прежнему сохраняется
+            verify(notificationDigestRepository).save(any(NotificationDigest.class));
+        }
+
+        @Test
         @DisplayName("Если у разных пользователей по одной задаче, digest не создаётся")
         void shouldNotCreateDigestForDifferentUsersWithSingleTaskEach() {
             User secondUser = secondUser();
