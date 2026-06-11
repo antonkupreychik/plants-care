@@ -75,7 +75,7 @@ class TelegramAuthServiceTest {
         assertThat(result.resendAfterSec()).isEqualTo(60);
         assertThat(result.sessionId()).isNotBlank();
         assertThat(result.deepLink())
-                .isEqualTo("t.me/plantcarebot?start=auth_" + result.sessionId());
+                .isEqualTo("https://t.me/plantcarebot?start=auth_" + result.sessionId());
     }
 
     @Test

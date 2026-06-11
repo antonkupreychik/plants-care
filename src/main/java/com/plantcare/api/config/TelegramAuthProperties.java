@@ -18,7 +18,7 @@ import java.time.Duration;
 @ConfigurationProperties(prefix = "plantcare.auth.telegram")
 public record TelegramAuthProperties(
 
-        /** Username бота без {@code @} для построения {@code t.me/<bot>?start=...}. */
+        /** Username бота без {@code @} для построения {@code https://t.me/<bot>?start=...}. */
         String botUsername,
 
         /** Длина одноразового кода. Контракт фиксирует 6. */

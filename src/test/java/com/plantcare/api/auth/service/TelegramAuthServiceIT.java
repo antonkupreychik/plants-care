@@ -61,7 +61,7 @@ class TelegramAuthServiceIT extends IntegrationTestBase {
         User user = existingTelegramUser(1001L);
 
         var start = telegramAuthService.start();
-        assertThat(start.deepLink()).isEqualTo("t.me/plantcaretestbot?start=auth_" + start.sessionId());
+        assertThat(start.deepLink()).isEqualTo("https://t.me/plantcaretestbot?start=auth_" + start.sessionId());
 
         Optional<String> code = telegramAuthService.bindCode(start.sessionId(), 1001L);
         assertThat(code).isPresent();

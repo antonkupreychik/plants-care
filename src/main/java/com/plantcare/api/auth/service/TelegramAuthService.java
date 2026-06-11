@@ -52,7 +52,7 @@ public class TelegramAuthService {
     public StartResult start() {
         String sessionId = newSessionId();
         sessionStore.create(sessionId);
-        String deepLink = "t.me/" + properties.botUsername() + "?start=auth_" + sessionId;
+        String deepLink = "https://t.me/" + properties.botUsername() + "?start=auth_" + sessionId;
         log.info("Telegram auth session started: sessionId={}", sessionId);
         return new StartResult(sessionId, deepLink, properties.codeLength(), properties.resendAfterSec());
     }

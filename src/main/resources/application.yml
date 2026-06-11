@@ -173,7 +173,7 @@ plantcare:
         window-seconds: 300
 
     # Issue #318: вход существующих Telegram-юзеров через бот-код.
-    # bot-username — для построения deep link t.me/<bot>?start=auth_<sessionId>
+    # bot-username — для построения deep link https://t.me/<bot>?start=auth_<sessionId>
     # (тот же источник, что telegram.bot.username; на безопасность не влияет).
     telegram:
       bot-username: ${TELEGRAM_BOT_USERNAME:}
