@@ -40,7 +40,7 @@ public class StartCommand implements BotCommand {
         User user = userService.findByChatId(chatId)
                 .orElseThrow(() -> new IllegalStateException("User not found"));
 
-        // Вход в приложение (issue #318): deep link t.me/<bot>?start=auth_<sessionId>.
+        // Вход в приложение (issue #318): deep link https://t.me/<bot>?start=auth_<sessionId>.
         // chat_id берём из самого update (не из клиента) — это и есть доверенная привязка.
         // Не показываем меню/приветствие: пользователь пришёл только за кодом входа.
         String authSessionId = telegramAuthLinkService.extractSessionId(extractStartPayload(update));
