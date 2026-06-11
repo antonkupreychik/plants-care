@@ -1,8 +1,11 @@
 package com.plantcare.core.repository;
 
 import com.plantcare.core.domain.enums.ConversationState;
+import com.plantcare.core.domain.Location;
 import com.plantcare.core.domain.User;
 import com.plantcare.bot.support.IntegrationTestBase;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -18,8 +21,17 @@ class UserRepositoryTest extends IntegrationTestBase {
     @Autowired
     private UserRepository userRepository;
 
+    @Autowired
+    private LocationRepository locationRepository;
+
+    @PersistenceContext
+    private EntityManager entityManager;
+
     @AfterEach
     void cleanup() {
+        // Локации ссылаются на users по FK — удаляем их первыми, иначе deleteAll
+        // по users падает на нарушении внешнего ключа active_location_id/user_id.
+        locationRepository.deleteAll();
         userRepository.deleteAll();
     }
 
@@ -46,6 +58,32 @@ class UserRepositoryTest extends IntegrationTestBase {
 
         assertThat(userRepository.findByTelegramChatId(101L)).isPresent();
         assertThat(userRepository.findByTelegramChatId(999L)).isEmpty();
+    }
+
+    @Test
+    void findByTelegramChatIdEagerlyLoadsActiveLocation() {
+        // Регрессия на no Session в /menu: @EntityGraph должен инициализировать
+        // ленивый activeLocation в транзакции загрузки. Чистим контекст, чтобы
+        // прокси нельзя было дочитать через сессию — читаем именно то, что
+        // подтянул граф.
+        User user = userRepository.save(User.builder().telegramChatId(106L).build());
+        Location location = locationRepository.save(Location.builder()
+                .user(user)
+                .name(Location.DEFAULT_NAME)
+                .emoji(Location.DEFAULT_EMOJI)
+                .defaultLocation(true)
+                .build());
+        user.setActiveLocation(location);
+        userRepository.saveAndFlush(user);
+        entityManager.clear();
+
+        User loaded = userRepository.findByTelegramChatId(106L).orElseThrow();
+
+        // Доступ к полю activeLocation вне активной сессии не должен кидать
+        // LazyInitializationException.
+        assertThat(loaded.getActiveLocation()).isNotNull();
+        assertThat(loaded.getActiveLocation().getDisplayName())
+                .isEqualTo(Location.DEFAULT_EMOJI + " " + Location.DEFAULT_NAME);
     }
 
     @Test
