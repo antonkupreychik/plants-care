@@ -213,17 +213,18 @@ plantcare:
       # Формат: AA:BB:CC:... (hex через двоеточие). Может быть несколько.
       sha256-cert-fingerprints: ${DEEP_LINK_ANDROID_SHA256_CERT_FINGERPRINTS:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99}
 
-# Issue #175 (ADR-014): push-уведомления на мобильные устройства.
-# Глобальный тумблер; реальные FCM/APNs-ключи добавляются отдельной задачей.
+# Issue #175 / #176 (ADR-016): push-уведомления на мобильные устройства через FCM HTTP v1.
+# Единый шлюз FCM для iOS+Android (без APNs и legacy server-key). Тумблер выключен по
+# умолчанию: реальная отправка и Firebase Admin SDK включаются только при PUSH_ENABLED=true.
 push:
   enabled: ${PUSH_ENABLED:false}
   fcm:
-    server-key: ${FCM_SERVER_KEY:}
-  apns:
-    key-id:           ${APNS_KEY_ID:}
-    team-id:          ${APNS_TEAM_ID:}
-    bundle-id:        ${APNS_BUNDLE_ID:}
-    private-key-path: ${APNS_PRIVATE_KEY_PATH:}
+    # Инлайн service-account JSON (приоритетный путь, удобно для Railway-секрета).
+    credentials-json: ${FCM_CREDENTIALS_JSON:}
+    # ИЛИ путь к JSON-файлу service-account (совместим с GOOGLE_APPLICATION_CREDENTIALS).
+    credentials-path: ${GOOGLE_APPLICATION_CREDENTIALS:}
+    # Опционально: project id, если не выводится из кредов.
+    project-id: ${FCM_PROJECT_ID:}
 
 admin:
   username: ${ADMIN_USERNAME:}

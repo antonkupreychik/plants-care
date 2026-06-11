@@ -12,14 +12,15 @@ import org.springframework.context.annotation.Configuration;
  *
  * <p>Регистрирует {@link PushSender}-бин в зависимости от {@code push.enabled}:
  * <ul>
- *   <li>{@code push.enabled=false} (дефолт) → {@link NoopPushSender} — без внешних вызовов.</li>
- *   <li>{@code push.enabled=true} → реальный провайдер (будет добавлен отдельной задачей,
- *       сейчас также NoopPushSender — заглушка для будущей FCM / APNs-интеграции).</li>
+ *   <li>{@code push.enabled=false} (дефолт, см. {@link #noopPushSender()}) → {@link NoopPushSender}
+ *       — без внешних вызовов и без инициализации Firebase Admin SDK.</li>
+ *   <li>{@code push.enabled=true} → реальный {@code FcmPushSender}, который регистрирует
+ *       {@code com.plantcare.delivery.push.FcmPushConfig} (слой доставки, issue #176 / ADR-016).</li>
  * </ul>
  *
- * <p>FCM / APNs-клиенты требуют доп. зависимостей в pom.xml и отдельного ADR —
- * реализуются отдельной задачей. Текущая задача (#175) ставит порт,
- * регистрирует тумблер и подключает шедулер к каналу.
+ * <p>Здесь, в {@code core}, остаётся ТОЛЬКО no-op-ветка: core знает про порт и заглушку,
+ * но не про реальную FCM-реализацию — выбор {@code FcmPushSender} живёт в delivery-пакете.
+ * Так держится ArchUnit-правило {@code core ∌ delivery}.
  */
 @Configuration
 @EnableConfigurationProperties(PushProperties.class)
@@ -27,27 +28,14 @@ import org.springframework.context.annotation.Configuration;
 public class PushConfig {
 
     /**
-     * No-op-отправитель: используется когда push выключен.
-     * Имеет наименьший приоритет — перекрывается реальными реализациями
-     * через {@code @ConditionalOnProperty(havingValue = "true")}.
+     * No-op-отправитель: используется когда push выключен (дефолт). Реальную FCM-реализацию
+     * при {@code push.enabled=true} регистрирует {@code com.plantcare.delivery.push.FcmPushConfig};
+     * эти два бина взаимоисключающи по {@code push.enabled}.
      */
     @Bean
     @ConditionalOnProperty(name = "push.enabled", havingValue = "false", matchIfMissing = true)
     public PushSender noopPushSender() {
         log.info("Push notifications disabled (push.enabled=false), using NoopPushSender");
-        return new NoopPushSender();
-    }
-
-    /**
-     * Заглушка для режима {@code push.enabled=true}: реальная FCM / APNs-интеграция
-     * будет добавлена отдельной задачей. Логирует предупреждение, чтобы не потерять
-     * включённый тумблер без реальной реализации.
-     */
-    @Bean
-    @ConditionalOnProperty(name = "push.enabled", havingValue = "true")
-    public PushSender enabledPushSender() {
-        log.warn("push.enabled=true but real FCM/APNs provider is not yet implemented — " +
-                "using NoopPushSender as stub. Implement FCM/APNs integration separately.");
         return new NoopPushSender();
     }
 }
