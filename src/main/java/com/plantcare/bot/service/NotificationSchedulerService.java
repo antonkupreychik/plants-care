@@ -399,6 +399,31 @@ public class NotificationSchedulerService {
     }
 
     /**
+     * Fan-out push-дайджеста на все мобильные устройства пользователя
+     * (issue #175 / #177). Зеркалит {@link #fanOutToMobileDevices}, но шлёт
+     * один push на устройство с готовым текстом дайджеста (а не по push на задачу),
+     * так как дайджест — это одно сгруппированное уведомление. Для среза метрики
+     * доставки берём тип первой задачи дайджеста (push — коарс-счётчик доставки;
+     * дедуп-лог по каждой задаче ведётся только на Telegram-канале через onDigestSent).
+     *
+     * <p>Как и в {@link #fanOutToMobileDevices}, внутри транзакции тика только читаем
+     * устройства и формируем примитивные {@link PushFanOutService.PushTarget};
+     * доставка исполняется ВНЕ транзакции в {@link PushFanOutService}.
+     */
+    private void fanOutDigestToMobileDevices(User user, List<CareSchedule> schedules, String digestText) {
+        List<UserDevice> devices = userDeviceRepository.findByUserId(user.getId());
+        if (devices.isEmpty()) {
+            return;
+        }
+        TaskType metricTaskType = schedules.get(0).getTaskType();
+        List<PushFanOutService.PushTarget> targets = devices.stream()
+                .map(device -> new PushFanOutService.PushTarget(
+                        device.getId(), device.getPushToken(), digestText, metricTaskType))
+                .toList();
+        pushFanOutService.enqueue(targets);
+    }
+
+    /**
      * Веерная рассылка готового push'а всем caretaker'ам локации растения
      * (issue #77). Никакого нового bookkeeping — это копия уведомления владельца.
      */
@@ -465,35 +490,48 @@ public class NotificationSchedulerService {
 
         NotificationDigest savedDigest = notificationDigestRepository.save(digest);
 
-        SendMessage message = SendMessage.builder()
-                .chatId(user.getTelegramChatId().toString())
-                .text(buildDigestText(items))
-                .replyMarkup(buildDigestKeyboard(savedDigest.getId()))
-                .build();
-
-        // Issue #29: см. комментарий в sendNotification. Каждый сгруппированный пуш
-        // считаем за отправленное уведомление по каждой задаче (срезы по task_type) +
-        // отдельный счётчик дайджестов. Bookkeeping — в колбэке на воркер-потоке.
-        final List<NotificationDeliveryCallbacks.DigestLogItem> logItems = schedules.stream()
-                .map(s -> new NotificationDeliveryCallbacks.DigestLogItem(
-                        s.getPlant().getId(), s.getTaskType()))
-                .toList();
-        final long chatId = user.getTelegramChatId();
+        String digestBody = buildDigestText(items);
         final long digestId = savedDigest.getId();
-        final int taskCount = schedules.size();
-        telegramSender.enqueue(message, new SendCallbacks(
-                () -> {
-                    deliveryCallbacks.onDigestSent(logItems);
-                    log.info("Sent digest id={} with {} tasks to chat {}",
-                            digestId, taskCount, chatId);
-                },
-                e -> deliveryCallbacks.onFailed(chatId, e)));
+
+        // Telegram-канал: только если у юзера привязан Telegram-чат (issue #88:
+        // mobile-only юзеры могут не иметь telegramChatId). Зеркалит гард из
+        // sendNotification — без него вызов getTelegramChatId().toString() ронял
+        // шедулер NPE на mobile-only юзере с 2+ due-задачами.
+        if (user.getTelegramChatId() != null) {
+            SendMessage message = SendMessage.builder()
+                    .chatId(user.getTelegramChatId().toString())
+                    .text(digestBody)
+                    .replyMarkup(buildDigestKeyboard(digestId))
+                    .build();
+
+            // Issue #29: см. комментарий в sendNotification. Каждый сгруппированный пуш
+            // считаем за отправленное уведомление по каждой задаче (срезы по task_type) +
+            // отдельный счётчик дайджестов. Bookkeeping — в колбэке на воркер-потоке.
+            final List<NotificationDeliveryCallbacks.DigestLogItem> logItems = schedules.stream()
+                    .map(s -> new NotificationDeliveryCallbacks.DigestLogItem(
+                            s.getPlant().getId(), s.getTaskType()))
+                    .toList();
+            final long chatId = user.getTelegramChatId();
+            final int taskCount = schedules.size();
+            telegramSender.enqueue(message, new SendCallbacks(
+                    () -> {
+                        deliveryCallbacks.onDigestSent(logItems);
+                        log.info("Sent digest id={} with {} tasks to chat {}",
+                                digestId, taskCount, chatId);
+                    },
+                    e -> deliveryCallbacks.onFailed(chatId, e)));
+        }
+
+        // Issue #175 / #177: fan-out дайджеста на мобильные устройства пользователя
+        // (зеркалит fanOutToMobileDevices в sendNotification). Telegram-юзеры с
+        // mobile-устройствами получат дайджест в оба канала; mobile-only — только push.
+        // Тихие часы / paused_until уже проверены канал-нейтрально в shouldSend() выше.
+        fanOutDigestToMobileDevices(user, schedules, digestBody);
 
         // Совместный уход (issue #77): дайджест веером уходит caretaker'ам всех
         // локаций, чьи растения попали в дайджест. Клавиатура завязана на digestId
         // и закрывает задачи у всех участников. Дедуп по chatId — один caretaker
         // может иметь доступ к нескольким локациям в одном дайджесте.
-        String digestText = buildDigestText(items);
         InlineKeyboardMarkup digestKeyboard = buildDigestKeyboard(digestId);
         java.util.Set<Long> caretakerChatIds = new java.util.LinkedHashSet<>();
         schedules.stream()
@@ -506,7 +544,7 @@ public class NotificationSchedulerService {
         for (Long caretakerChatId : caretakerChatIds) {
             SendMessage copy = SendMessage.builder()
                     .chatId(caretakerChatId.toString())
-                    .text(digestText)
+                    .text(digestBody)
                     .replyMarkup(digestKeyboard)
                     .build();
             final long targetChatId = caretakerChatId;
