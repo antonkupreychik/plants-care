@@ -39,6 +39,10 @@
         <!-- Issue #90 (Slice A): AWS SDK v2 для S3-совместимого object storage (Railway).
              Лёгкий sync-клиент url-connection-client вместо netty-async (см. зависимости ниже). -->
         <awssdk.version>2.30.18</awssdk.version>
+        <!-- Issue #176 (#167b): Firebase Admin SDK для FCM HTTP v1 (ADR-016). Единый шлюз
+             push для iOS+Android, без APNs и legacy server-key. Тяжёлый транзитив
+             (gRPC, google-auth, protobuf) — прогрев ~/.m2 обязателен для офлайн-сборки. -->
+        <firebase-admin.version>9.9.0</firebase-admin.version>
 
         <!-- Sonar -->
         <sonar.java.coveragePlugin>jacoco</sonar.java.coveragePlugin>
@@ -234,6 +238,15 @@
             <groupId>software.amazon.awssdk</groupId>
             <artifactId>url-connection-client</artifactId>
             <version>${awssdk.version}</version>
+        </dependency>
+
+        <!-- Issue #176 (#167b): FCM-шлюз через Firebase Admin SDK (ADR-016), HTTP v1.
+             Реализация PushSender за тумблером push.enabled=true; при выключенном
+             тумблере SDK не инициализируется (NoopPushSender). -->
+        <dependency>
+            <groupId>com.google.firebase</groupId>
+            <artifactId>firebase-admin</artifactId>
+            <version>${firebase-admin.version}</version>
         </dependency>
 
         <!-- Lombok -->
