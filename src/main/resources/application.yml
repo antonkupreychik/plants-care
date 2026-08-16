@@ -236,6 +236,16 @@ admin:
   dashboard:
     timezone: Europe/Riga
     query-executor-pool-size: 8
+  # Issue #101: управление хранилищем фото (/admin/storage).
+  # Хранилище S3-совместимое (Railway), см. app.storage.s3 выше.
+  storage:
+    # TTL soft-delete: через столько дней объект физически удаляется из бакета.
+    retention-days: ${PHOTO_RETENTION_DAYS:30}
+    # Прикидка расходов на дашборде, USD за ГБ в месяц. Значение по умолчанию —
+    # порядок величины S3-совместимого хранения; уточнять по фактическому тарифу.
+    price-per-gb-month: ${PHOTO_PRICE_PER_GB_MONTH:0.015}
+    purge-batch-size: ${PHOTO_PURGE_BATCH_SIZE:500}
+    recent-page-size: 20
 
 server:
   # Railway передаёт PORT, локально используем SERVER_PORT/8080

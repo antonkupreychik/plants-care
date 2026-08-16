@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      xmlns:layout="http://www.ultraq.net.nz/thymeleaf/layout"
+      layout:decorate="~{admin/_layout}"
+      lang="ru">
+<head>
+    <title>Photo storage</title>
+</head>
+<body>
+<section layout:fragment="content">
+
+    <div class="flex items-center justify-between mb-4">
+        <h1 class="text-2xl font-bold">Photo storage</h1>
+        <span class="text-xs text-base-content/60">
+            issue #101 · S3-совместимый бакет ·
+            собрано за <span th:text="${storage.elapsedMs}">0</span> ms
+        </span>
+    </div>
+
+    <!-- ===== Карточки ===== -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-6"
+         th:with="o=${storage.overview}">
+        <div class="card bg-base-100 shadow">
+            <div class="card-body p-4">
+                <div class="text-xs text-base-content/60">Объём в бакете</div>
+                <div class="text-2xl font-bold" th:text="${o.bucketHuman}">0 B</div>
+                <div class="text-xs text-base-content/60">
+                    объектов: <span th:text="${o.bucketCount}">0</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="card bg-base-100 shadow">
+            <div class="card-body p-4">
+                <div class="text-xs text-base-content/60">Расход за месяц (оценка)</div>
+                <div class="text-2xl font-bold" th:text="${o.monthlyCostUsd}">$0.00</div>
+                <div class="text-xs text-base-content/60">
+                    по тарифу $<span th:text="${o.pricePerGbMonth}">0.015</span>/ГБ·мес
+                </div>
+            </div>
+        </div>
+
+        <div class="card bg-base-100 shadow">
+            <div class="card-body p-4">
+                <div class="text-xs text-base-content/60">Средний размер фото</div>
+                <div class="text-2xl font-bold" th:text="${o.avgHuman}">0 B</div>
+                <div class="text-xs text-base-content/60">
+                    активных: <span th:text="${o.activeCount}">0</span>
+                    (<span th:text="${o.activeHuman}">0 B</span>)
+                </div>
+            </div>
+        </div>
+
+        <div class="card bg-base-100 shadow"
+             th:classappend="${o.pendingPurgeCount > 0} ? 'border border-warning' : ''">
+            <div class="card-body p-4">
+                <div class="text-xs text-base-content/60">Ждёт физической чистки</div>
+                <div class="text-2xl font-bold"
+                     th:classappend="${o.pendingPurgeCount > 0} ? 'text-warning' : ''"
+                     th:text="${o.pendingPurgeHuman}">0 B</div>
+                <div class="text-xs text-base-content/60">
+                    <span th:text="${o.pendingPurgeCount}">0</span> шт ·
+                    <span th:text="${o.pendingPurgeCostUsd}">$0.00</span>/мес ·
+                    retention <span th:text="${o.retentionDays}">30</span> дн
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===== Ручной запуск чистки ===== -->
+    <div class="card bg-base-100 shadow mb-6">
+        <div class="card-body p-4 flex-row flex-wrap items-center gap-3">
+            <div class="flex-1 text-sm text-base-content/70">
+                Удаление фото — <strong>soft-delete</strong>: запись помечается удалённой,
+                объект остаётся в бакете
+                <span th:text="${storage.overview.retentionDays}">30</span> дней и всё это
+                время фото можно вернуть. По истечении retention суточная задача физически
+                удаляет объект из S3 — после этого возврат невозможен.
+                Уже вычищено записей: <span th:text="${storage.overview.purgedCount}">0</span>.
+            </div>
+            <form method="post" th:action="@{/admin/storage/purge-now}"
+                  onsubmit="return confirm('Запустить физическую чистку бакета сейчас? Объекты с истёкшим retention будут удалены безвозвратно.');">
+                <button type="submit" class="btn btn-sm btn-warning">
+                    🧹 Вычистить сейчас
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+
+        <!-- ===== График роста ===== -->
+        <div class="card bg-base-100 shadow">
+            <div class="card-body">
+                <h2 class="card-title text-lg">
+                    Рост объёма
+                    <span class="text-xs font-normal text-base-content/60">за 6 месяцев</span>
+                </h2>
+
+                <div th:if="${#lists.isEmpty(storage.growth)}"
+                     class="text-sm text-base-content/60 py-6">
+                    Снапшотов пока нет. Первый появится после ночного прогона
+                    <code>StorageMaintenanceScheduler</code> (03:05 UTC).
+                </div>
+
+                <!--
+                  Столбики на чистом CSS: подключать чарт-библиотеку ради одного
+                  спарклайна в админке не стоит, а CDN и так уже нагружен.
+                  Высота столбика — доля от пикового значения.
+                -->
+                <div th:unless="${#lists.isEmpty(storage.growth)}">
+                    <div class="flex items-end gap-px h-40 overflow-x-auto">
+                        <div th:each="p : ${storage.growth}"
+                             class="flex-1 min-w-1 bg-primary/70 hover:bg-primary rounded-t"
+                             th:style="'height:' + ${storage.barPercent(p)} + '%'"
+                             th:title="${p.date} + ' — ' + ${p.totalHuman} + ' (' + ${p.totalCount} + ' шт)'">
+                        </div>
+                    </div>
+                    <div class="flex justify-between text-xs text-base-content/60 mt-1">
+                        <span th:text="${storage.firstPoint?.date}">2026-01-01</span>
+                        <span th:text="${storage.lastPoint?.date}">2026-06-01</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ===== Топ юзеров ===== -->
+        <div class="card bg-base-100 shadow">
+            <div class="card-body">
+                <h2 class="card-title text-lg">
+                    Топ юзеров по объёму
+                    <span class="text-xs font-normal text-base-content/60">до 20</span>
+                </h2>
+
+                <div th:if="${#lists.isEmpty(storage.topUsers)}"
+                     class="text-sm text-base-content/60 py-6">
+                    Фото пока никто не загружал.
+                </div>
+
+                <div th:unless="${#lists.isEmpty(storage.topUsers)}" class="overflow-x-auto">
+                    <table class="table table-sm">
+                        <thead>
+                        <tr>
+                            <th>Юзер</th>
+                            <th class="text-right">Фото</th>
+                            <th class="text-right">Объём</th>
+                        </tr>
+                        </thead>
+                        <tbody>
+                        <tr th:each="u : ${storage.topUsers}">
+                            <td>
+                                <a class="link link-primary text-sm"
+                                   th:href="@{'/admin/users/' + ${u.userId}}"
+                                   th:text="${u.userLabel}">@user (123)</a>
+                            </td>
+                            <td class="text-right" th:text="${u.photoCount}">0</td>
+                            <td class="text-right font-mono text-sm"
+                                th:text="${u.totalHuman}">0 B</td>
+                        </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===== Последние загрузки ===== -->
+    <div class="card bg-base-100 shadow">
+        <div class="card-body">
+            <h2 class="card-title text-lg">
+                Последние загрузки
+                <span class="text-xs font-normal text-base-content/60">
+                    всего <span th:text="${storage.totalUploads}">0</span>
+                </span>
+            </h2>
+
+            <div th:if="${#lists.isEmpty(storage.recentUploads)}"
+                 class="text-sm text-base-content/60 py-6">
+                Загрузок нет.
+            </div>
+
+            <div th:unless="${#lists.isEmpty(storage.recentUploads)}" class="overflow-x-auto">
+                <table class="table table-sm">
+                    <thead>
+                    <tr>
+                        <th class="w-20">Превью</th>
+                        <th>Когда</th>
+                        <th>Юзер</th>
+                        <th>Растение</th>
+                        <th class="text-right">Размер</th>
+                        <th>Статус</th>
+                        <th class="text-right">Действие</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    <tr th:each="p : ${storage.recentUploads}"
+                        th:classappend="${p.purged} ? 'opacity-50' : (${p.deleted} ? 'bg-warning/5' : '')">
+                        <td>
+                            <a th:if="${p.previewUrl != null}"
+                               th:href="${p.previewUrl}" target="_blank" rel="noopener">
+                                <img class="w-16 h-16 object-cover rounded"
+                                     th:src="${p.previewUrl}" alt="превью" loading="lazy"/>
+                            </a>
+                            <div th:if="${p.previewUrl == null}"
+                                 class="w-16 h-16 rounded bg-base-200 flex items-center justify-center text-xs text-base-content/40"
+                                 th:title="${p.purged} ? 'Объект вычищен из бакета' : 'Хранилище не сконфигурировано'">
+                                —
+                            </div>
+                        </td>
+                        <td class="text-xs" th:text="${p.createdAt}">2026-01-01T00:00:00Z</td>
+                        <td>
+                            <a class="link link-primary text-sm"
+                               th:href="@{'/admin/users/' + ${p.userId}}"
+                               th:text="${p.userLabel}">@user (123)</a>
+                        </td>
+                        <td class="text-sm">
+                            <span th:if="${p.plantId != null}" th:text="${p.plantName}">Фикус</span>
+                            <span th:if="${p.plantId == null}" class="text-base-content/40">—</span>
+                        </td>
+                        <td class="text-right font-mono text-sm" th:text="${p.sizeHuman}">0 B</td>
+                        <td>
+                            <span th:if="${p.status == 'active'}" class="badge badge-success badge-sm">активно</span>
+                            <span th:if="${p.status == 'deleted'}" class="badge badge-warning badge-sm">удалено</span>
+                            <span th:if="${p.status == 'purged'}" class="badge badge-ghost badge-sm">вычищено</span>
+                        </td>
+                        <td class="text-right">
+                            <form th:if="${p.status == 'active'}" method="post" class="inline"
+                                  th:action="@{'/admin/photos/' + ${p.photoId} + '/delete'}"
+                                  onsubmit="return confirm('Удалить это фото? Оно станет недоступно юзеру, физически будет вычищено по истечении retention.');">
+                                <input type="hidden" name="returnTo"
+                                       th:value="'/admin/storage?page=' + ${storage.page}"/>
+                                <button type="submit" class="btn btn-xs btn-error btn-outline"
+                                        title="Удалить фото">🗑</button>
+                            </form>
+                            <form th:if="${p.status == 'deleted'}" method="post" class="inline"
+                                  th:action="@{'/admin/photos/' + ${p.photoId} + '/restore'}">
+                                <input type="hidden" name="returnTo"
+                                       th:value="'/admin/storage?page=' + ${storage.page}"/>
+                                <button type="submit" class="btn btn-xs btn-ghost"
+                                        title="Вернуть фото">♻️</button>
+                            </form>
+                            <span th:if="${p.status == 'purged'}" class="text-xs text-base-content/40">—</span>
+                        </td>
+                    </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Пагинация -->
+            <div th:if="${storage.totalPages > 1}" class="flex items-center justify-center gap-2 mt-3">
+                <a class="btn btn-sm"
+                   th:classappend="${!storage.hasPrev} ? 'btn-disabled' : ''"
+                   th:href="@{/admin/storage(page=${storage.page - 1})}">←</a>
+                <span class="text-sm">
+                    <span th:text="${storage.pageNumber}">1</span> /
+                    <span th:text="${storage.totalPages}">1</span>
+                </span>
+                <a class="btn btn-sm"
+                   th:classappend="${!storage.hasNext} ? 'btn-disabled' : ''"
+                   th:href="@{/admin/storage(page=${storage.page + 1})}">→</a>
+            </div>
+        </div>
+    </div>
+
+</section>
+</body>
+</html>

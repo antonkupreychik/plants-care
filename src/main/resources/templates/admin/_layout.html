@@ -117,6 +117,12 @@
                     </a>
                 </li>
                 <li>
+                    <a th:href="@{/admin/storage}"
+                       th:classappend="${activeMenu == 'storage'} ? 'active' : ''">
+                        Storage
+                    </a>
+                </li>
+                <li>
                     <a th:href="@{/admin/broadcast}"
                        th:classappend="${activeMenu == 'broadcast'} ? 'active' : ''">
                         Broadcast
