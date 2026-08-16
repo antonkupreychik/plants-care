@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      xmlns:layout="http://www.ultraq.net.nz/thymeleaf/layout"
+      layout:decorate="~{admin/_layout}"
+      lang="ru">
+<head><title>Errors</title></head>
+<body>
+<section layout:fragment="content">
+
+    <h1 class="text-2xl font-bold mb-4">Errors</h1>
+
+    <!-- Топ-10 уникальных ошибок за 24h (AC: одинаковые ошибки схлопываются по fingerprint) -->
+    <div class="card bg-base-100 shadow mb-6">
+        <div class="card-body">
+            <h2 class="card-title mb-2">
+                Топ-10 за <span th:text="${topWindowHours}">24</span> ч
+            </h2>
+
+            <div th:if="${#lists.isEmpty(topGroups)}" class="text-base-content/60 text-sm py-2">
+                Ошибок за период нет 🎉
+            </div>
+
+            <div th:unless="${#lists.isEmpty(topGroups)}" class="overflow-x-auto">
+                <table class="table table-sm">
+                    <thead>
+                    <tr>
+                        <th>Ошибка</th>
+                        <th class="w-24">Событий</th>
+                        <th class="w-24">Юзеров</th>
+                        <th class="w-44">Последняя</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    <tr th:each="g : ${topGroups}">
+                        <td>
+                            <a class="link link-hover font-mono text-xs"
+                               th:href="@{/admin/errors(fingerprint=${g.fingerprint()})}"
+                               th:text="${g.fingerprint()}">fingerprint</a>
+                            <div class="text-xs text-base-content/60 truncate max-w-xl"
+                                 th:text="${g.sampleMessage()}">сообщение</div>
+                        </td>
+                        <td><span class="badge badge-error" th:text="${g.occurrences()}">0</span></td>
+                        <td th:text="${g.affectedUsers()}">0</td>
+                        <td class="text-xs text-base-content/60" th:text="${g.lastSeen()}">—</td>
+                    </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Фильтры: комбинируются через AND, отправляются обычной GET-формой -->
+    <form method="get" th:action="@{/admin/errors}"
+          class="card bg-base-100 shadow mb-4">
+        <div class="card-body grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-3">
+            <label class="form-control">
+                <span class="label-text text-xs">С даты</span>
+                <input type="date" name="from" class="input input-bordered input-sm"
+                       th:value="${filter.from()}"/>
+            </label>
+            <label class="form-control">
+                <span class="label-text text-xs">По дату</span>
+                <input type="date" name="to" class="input input-bordered input-sm"
+                       th:value="${filter.to()}"/>
+            </label>
+            <label class="form-control">
+                <span class="label-text text-xs">User ID</span>
+                <input type="number" name="userId" class="input input-bordered input-sm"
+                       th:value="${filter.userId()}" placeholder="42"/>
+            </label>
+            <label class="form-control">
+                <span class="label-text text-xs">Логгер (префикс)</span>
+                <input type="text" name="logger" class="input input-bordered input-sm"
+                       th:value="${filter.logger()}" placeholder="com.plantcare.bot"/>
+            </label>
+            <label class="form-control">
+                <span class="label-text text-xs">Подстрока в message</span>
+                <input type="text" name="message" class="input input-bordered input-sm"
+                       th:value="${filter.message()}" placeholder="timeout"/>
+            </label>
+            <label class="form-control">
+                <span class="label-text text-xs">Уровень</span>
+                <select name="level" class="select select-bordered select-sm">
+                    <option value="" th:selected="${filter.level() == null or filter.level().isBlank()}">все</option>
+                    <option value="ERROR" th:selected="${filter.level() == 'ERROR'}">ERROR</option>
+                    <option value="WARN" th:selected="${filter.level() == 'WARN'}">WARN</option>
+                </select>
+            </label>
+
+            <!-- fingerprint приходит переходом из топ-10; в форме он скрытый, чтобы не терялся -->
+            <input type="hidden" name="fingerprint" th:value="${filter.fingerprint()}"/>
+
+            <div class="flex items-end gap-2 md:col-span-3 lg:col-span-6">
+                <button type="submit" class="btn btn-primary btn-sm">Применить</button>
+                <a th:href="@{/admin/errors}" class="btn btn-ghost btn-sm">Сбросить</a>
+                <span th:if="${filter.fingerprint() != null and !filter.fingerprint().isBlank()}"
+                      class="badge badge-outline"
+                      th:text="'группа: ' + ${filter.fingerprint()}">группа</span>
+            </div>
+        </div>
+    </form>
+
+    <!-- Полный список -->
+    <div class="card bg-base-100 shadow">
+        <div class="card-body">
+            <div class="flex items-center justify-between mb-2">
+                <h2 class="card-title">Все события</h2>
+                <span class="text-sm text-base-content/60"
+                      th:text="'найдено: ' + ${errors.totalItems()}">найдено: 0</span>
+            </div>
+
+            <div th:if="${#lists.isEmpty(errors.items())}" class="text-base-content/60 text-sm py-4">
+                Ничего не найдено по текущим фильтрам
+            </div>
+
+            <div th:unless="${#lists.isEmpty(errors.items())}" class="overflow-x-auto">
+                <table class="table table-sm">
+                    <thead>
+                    <tr>
+                        <th class="w-44">Когда</th>
+                        <th class="w-20">Level</th>
+                        <th class="w-40">Логгер</th>
+                        <th>Сообщение</th>
+                        <th class="w-20">User</th>
+                        <th class="w-48">Путь</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    <tr th:each="e : ${errors.items()}" class="hover">
+                        <td class="text-xs">
+                            <a class="link link-hover" th:href="@{/admin/errors/{id}(id=${e.id()})}"
+                               th:text="${e.createdAt()}">—</a>
+                        </td>
+                        <td>
+                            <span class="badge badge-sm"
+                                  th:classappend="${e.level() == 'ERROR'} ? 'badge-error' : 'badge-warning'"
+                                  th:text="${e.level()}">ERROR</span>
+                        </td>
+                        <td class="text-xs font-mono" th:title="${e.loggerName()}"
+                            th:text="${e.shortLogger()}">Logger</td>
+                        <td class="text-xs truncate max-w-md" th:text="${e.message()}">сообщение</td>
+                        <td class="text-xs">
+                            <a th:if="${e.userId() != null}" class="link link-hover"
+                               th:href="@{/admin/users/{id}(id=${e.userId()})}"
+                               th:text="${e.userId()}">42</a>
+                            <span th:if="${e.userId() == null}" class="text-base-content/40">—</span>
+                        </td>
+                        <td class="text-xs font-mono truncate max-w-xs"
+                            th:text="${e.requestPath() != null ? e.requestPath() : '—'}">—</td>
+                    </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Пагинация: фильтры переносятся в ссылки, иначе страница 2 их теряет -->
+            <div th:if="${errors.totalPages() > 1}" class="join mt-4">
+                <a class="join-item btn btn-sm"
+                   th:classappend="${!errors.hasPrevious()} ? 'btn-disabled' : ''"
+                   th:href="@{/admin/errors(from=${filter.from()}, to=${filter.to()},
+                              userId=${filter.userId()}, logger=${filter.logger()},
+                              message=${filter.message()}, level=${filter.level()},
+                              fingerprint=${filter.fingerprint()}, page=${errors.page() - 1})}">«</a>
+                <span class="join-item btn btn-sm btn-disabled"
+                      th:text="${errors.page()} + ' / ' + ${errors.totalPages()}">1 / 1</span>
+                <a class="join-item btn btn-sm"
+                   th:classappend="${!errors.hasNext()} ? 'btn-disabled' : ''"
+                   th:href="@{/admin/errors(from=${filter.from()}, to=${filter.to()},
+                              userId=${filter.userId()}, logger=${filter.logger()},
+                              message=${filter.message()}, level=${filter.level()},
+                              fingerprint=${filter.fingerprint()}, page=${errors.page() + 1})}">»</a>
+            </div>
+        </div>
+    </div>
+
+</section>
+</body>
+</html>

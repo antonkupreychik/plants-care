@@ -32,6 +32,14 @@ public interface UserRepository extends JpaRepository<User, Long> {
     /** Issue #79: lookup for public {@code GET /calendar/{token}.ics}. */
     Optional<User> findByCalendarToken(String calendarToken);
 
+    /**
+     * Issue #95: только id по chat_id — для журнала доставок, который пишется на
+     * воркер-потоке очереди после КАЖДОЙ отправки. Полную сущность (да ещё с
+     * {@code @EntityGraph} на activeLocation) тянуть ради одного числа незачем.
+     */
+    @Query("SELECT u.id FROM User u WHERE u.telegramChatId = :telegramChatId")
+    Optional<Long> findIdByTelegramChatId(@Param("telegramChatId") Long telegramChatId);
+
     // ===== Mobile auth (issue #88) =====
 
     Optional<User> findByEmail(String email);

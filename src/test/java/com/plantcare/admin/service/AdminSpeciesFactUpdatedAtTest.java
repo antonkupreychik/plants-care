@@ -24,6 +24,9 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.sql.Timestamp;
 import java.time.Instant;
+import com.plantcare.admin.audit.service.AdminAuditService;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 
@@ -67,6 +70,10 @@ class AdminSpeciesFactUpdatedAtTest {
         registry.add("spring.datasource.username", postgres::getUsername);
         registry.add("spring.datasource.password", postgres::getPassword);
     }
+
+    /** Аудит (issue #98) вне слайса — проверяется в {@code AdminAuditWiringTest}. */
+    @MockitoBean
+    private AdminAuditService auditService;
 
     @Autowired
     private AdminSpeciesFactService service;

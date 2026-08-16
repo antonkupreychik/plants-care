@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="ru">
+<body>
+<!--
+  HTMX-фрагмент деталки ошибки (issue #97): что было с этим юзером в час до сбоя.
+  Источник — тот же журнал error_logs: единой ленты «всех действий пользователя»
+  в проекте нет, см. описание PR.
+-->
+<div th:fragment="userContext" id="user-context">
+    <div th:if="${#lists.isEmpty(contextEvents)}" class="text-sm text-base-content/60">
+        За <span th:text="${contextWindowMinutes}">60</span> мин до ошибки других записей
+        по этому юзеру в журнале нет.
+    </div>
+
+    <div th:unless="${#lists.isEmpty(contextEvents)}" class="overflow-x-auto">
+        <table class="table table-sm">
+            <thead>
+            <tr>
+                <th class="w-44">Когда</th>
+                <th class="w-20">Level</th>
+                <th class="w-40">Логгер</th>
+                <th>Сообщение</th>
+                <th class="w-48">Путь</th>
+            </tr>
+            </thead>
+            <tbody>
+            <tr th:each="e : ${contextEvents}">
+                <td class="text-xs">
+                    <a class="link link-hover" th:href="@{/admin/errors/{id}(id=${e.id()})}"
+                       th:text="${e.createdAt()}">—</a>
+                </td>
+                <td>
+                    <span class="badge badge-sm"
+                          th:classappend="${e.level() == 'ERROR'} ? 'badge-error' : 'badge-warning'"
+                          th:text="${e.level()}">ERROR</span>
+                </td>
+                <td class="text-xs font-mono" th:title="${e.loggerName()}"
+                    th:text="${e.shortLogger()}">Logger</td>
+                <td class="text-xs truncate max-w-md" th:text="${e.message()}">сообщение</td>
+                <td class="text-xs font-mono truncate max-w-xs"
+                    th:text="${e.requestPath() != null ? e.requestPath() : '—'}">—</td>
+            </tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+</body>
+</html>

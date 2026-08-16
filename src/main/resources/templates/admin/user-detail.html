@@ -141,6 +141,85 @@
         <form method="dialog" class="modal-backdrop"><button>close</button></form>
     </dialog>
 
+    <!-- Аутентификация (issue #93) -->
+    <div class="card bg-base-100 shadow mb-6">
+        <div class="card-body">
+            <h2 class="card-title">🔐 Аутентификация</h2>
+
+            <div th:if="${linkedProviderCount == 0}" class="alert alert-warning" role="alert">
+                ⚠️ Не привязан ни один провайдер — залогиниться этот юзер не сможет.
+            </div>
+
+            <div class="overflow-x-auto">
+                <table class="table table-sm">
+                    <thead>
+                    <tr>
+                        <th>Провайдер</th>
+                        <th>Идентификатор</th>
+                        <th>Привязан</th>
+                        <th>Последнее использование</th>
+                        <th></th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    <tr th:each="p : ${authProviders}">
+                        <td>
+                            <span class="font-medium" th:text="${p.kind.label}">Telegram</span>
+                            <div class="text-xs text-base-content/50 font-mono"
+                                 th:text="${p.kind.column}">column</div>
+                        </td>
+                        <td>
+                            <code class="text-xs" th:if="${p.linked}"
+                                  th:text="${p.maskedIdentifier}">•••</code>
+                            <span th:unless="${p.linked}" class="text-base-content/50">не привязан</span>
+                            <span th:if="${p.linked and p.kind.name() == 'EMAIL'}"
+                                  class="badge badge-sm ml-2"
+                                  th:classappend="${p.verified} ? 'badge-success' : 'badge-warning'"
+                                  th:text="${p.verified} ? 'verified' : 'не подтверждён'">verified</span>
+                        </td>
+                        <td class="text-xs"
+                            th:text="${p.linkedAt != null} ? ${#temporals.format(p.linkedAt, 'dd.MM.yyyy HH:mm')} : '—'">—</td>
+                        <td class="text-xs"
+                            th:text="${p.lastUsedAt != null} ? ${#temporals.format(p.lastUsedAt, 'dd.MM.yyyy HH:mm')} : '—'">—</td>
+                        <td class="text-right">
+                            <form th:if="${p.linked}" method="post"
+                                  th:action="@{|/admin/users/${user.id}/auth/unlink|}">
+                                <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}"/>
+                                <input type="hidden" name="provider" th:value="${p.kind.name()}"/>
+                                <button class="btn btn-xs btn-error"
+                                        th:attr="onclick=${linkedProviderCount > 1}
+                                            ? 'return confirm(\'Разорвать эту привязку?\') &amp;&amp; confirm(\'Подтверди ещё раз: идентификатор будет стёрт безвозвратно, все refresh-сессии юзера — отозваны.\')'
+                                            : 'return confirm(\'Разорвать эту привязку?\') &amp;&amp; confirm(\'ЭТО ПОСЛЕДНИЙ ПРОВАЙДЕР. После разрыва юзер не сможет залогиниться. Точно продолжаем?\')'">
+                                    Разорвать привязку
+                                </button>
+                            </form>
+                        </td>
+                    </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <p class="text-xs text-base-content/60 mt-2">
+                Идентификаторы маскированы намеренно: полный email и Apple/Google
+                <code>sub</code> — чувствительные данные, в админке они не показываются.
+                «Привязан» и «последнее использование» заполняются только там, где для
+                этого есть данные: per-provider таймстемпы появятся вместе с таблицей
+                привязок (issue #89), «последнее использование» для Email берётся из
+                magic-link'ов.
+            </p>
+        </div>
+    </div>
+
+    <!-- История привязок (issue #93) -->
+    <div class="card bg-base-100 shadow mb-6">
+        <div class="card-body">
+            <h2 class="card-title">История привязок
+                <span class="text-sm font-normal text-base-content/60">(magic link)</span>
+            </h2>
+            <div th:replace="~{admin/_auth-link-history :: linkHistoryFragment}"></div>
+        </div>
+    </div>
+
     <!-- Plants -->
     <div class="card bg-base-100 shadow mb-6">
         <div class="card-body">
@@ -219,6 +298,98 @@
                     </tr>
                     </tbody>
                 </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Фото в хранилище (issue #101) -->
+    <div class="card bg-base-100 shadow mb-6">
+        <div class="card-body">
+            <h2 class="card-title">
+                📷 Фото
+                <span class="text-xs font-normal text-base-content/60">
+                    (issue #101 · S3-совместимый бакет)
+                </span>
+            </h2>
+
+            <div th:if="${#lists.isEmpty(photos)}" class="text-sm text-base-content/60 py-2">
+                У юзера нет фото в хранилище.
+            </div>
+
+            <div th:unless="${#lists.isEmpty(photos)}">
+                <div class="flex flex-wrap items-center gap-3 mb-3">
+                    <span class="text-sm text-base-content/70">
+                        Всего: <span class="font-bold" th:text="${#lists.size(photos)}">0</span>
+                    </span>
+                    <span class="flex-1"></span>
+                    <!-- GDPR-запрос «удалить всё моё» -->
+                    <form method="post"
+                          th:action="@{|/admin/users/${user.id}/photos/delete-all|}"
+                          onsubmit="return confirm('Удалить ВСЕ фото этого юзера? Это soft-delete: физически объекты будут вычищены из бакета по истечении retention.');">
+                        <button type="submit" class="btn btn-sm btn-error btn-outline">
+                            🗑 Удалить все фото (GDPR)
+                        </button>
+                    </form>
+                </div>
+
+                <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
+                    <div th:each="p : ${photos}"
+                         class="rounded overflow-hidden bg-base-200"
+                         th:classappend="${p.purged} ? 'opacity-50' : (${p.deleted} ? 'ring-1 ring-warning' : '')">
+
+                        <!-- Клик по превью — открыть оригинал во весь экран (новая вкладка) -->
+                        <a th:if="${p.previewUrl != null}"
+                           th:href="${p.previewUrl}" target="_blank" rel="noopener"
+                           th:title="'Открыть оригинал · ' + ${p.sizeHuman}">
+                            <img class="w-full aspect-square object-cover"
+                                 th:src="${p.previewUrl}" alt="фото" loading="lazy"/>
+                        </a>
+                        <div th:if="${p.previewUrl == null}"
+                             class="w-full aspect-square flex items-center justify-center text-xs text-base-content/40 text-center px-2"
+                             th:text="${p.purged} ? 'вычищено из бакета' : 'превью недоступно'">
+                            превью недоступно
+                        </div>
+
+                        <div class="p-2 text-xs space-y-1">
+                            <div class="text-base-content/60" th:text="${p.sizeHuman}">0 B</div>
+                            <div class="text-base-content/50" th:text="${p.createdAt}">2026-01-01</div>
+                            <div th:if="${p.plantId != null}" class="truncate"
+                                 th:text="${p.plantName}">Фикус</div>
+
+                            <span th:if="${p.status == 'deleted'}"
+                                  class="badge badge-warning badge-xs">удалено</span>
+                            <span th:if="${p.status == 'purged'}"
+                                  class="badge badge-ghost badge-xs">вычищено</span>
+
+                            <div class="pt-1">
+                                <form th:if="${p.status == 'active'}" method="post"
+                                      th:action="@{'/admin/photos/' + ${p.photoId} + '/delete'}"
+                                      onsubmit="return confirm('Удалить это фото?');">
+                                    <input type="hidden" name="returnTo"
+                                           th:value="'/admin/users/' + ${user.id}"/>
+                                    <button type="submit" class="btn btn-xs btn-error btn-outline w-full">
+                                        🗑 Удалить
+                                    </button>
+                                </form>
+                                <form th:if="${p.status == 'deleted'}" method="post"
+                                      th:action="@{'/admin/photos/' + ${p.photoId} + '/restore'}">
+                                    <input type="hidden" name="returnTo"
+                                           th:value="'/admin/users/' + ${user.id}"/>
+                                    <button type="submit" class="btn btn-xs btn-ghost w-full">
+                                        ♻️ Вернуть
+                                    </button>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <p class="text-xs text-base-content/60 mt-3">
+                    Удаление — soft-delete: фото сразу перестаёт быть доступным юзеру,
+                    а объект физически удаляется из бакета отложенно, по истечении retention
+                    (см. <a class="link" th:href="@{/admin/storage}">Storage</a>).
+                    До этого момента удаление обратимо.
+                </p>
             </div>
         </div>
     </div>
@@ -309,6 +480,49 @@
                 <p class="text-xs text-base-content/60 mt-1">
                     Допустимый формат: <code>[a-z][a-z0-9_]{1,63}</code>.
                 </p>
+            </div>
+        </div>
+    </div>
+
+    <!-- История админских действий с этим юзером (issue #98) -->
+    <div class="card bg-base-100 shadow mt-6">
+        <div class="card-body">
+            <div class="flex items-center justify-between mb-2">
+                <h2 class="card-title text-lg">История админских действий</h2>
+                <a class="link text-sm"
+                   th:href="@{/admin/audit(targetType='USER')}">весь аудит →</a>
+            </div>
+
+            <div th:if="${#lists.isEmpty(auditHistory)}" class="text-sm text-base-content/60">
+                Админы этого юзера ещё не трогали
+            </div>
+
+            <div th:unless="${#lists.isEmpty(auditHistory)}" class="overflow-x-auto">
+                <table class="table table-sm">
+                    <thead>
+                    <tr>
+                        <th>когда (UTC)</th>
+                        <th>админ</th>
+                        <th>действие</th>
+                        <th>details</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    <tr th:each="e : ${auditHistory}">
+                        <td class="text-xs whitespace-nowrap" th:text="${e.occurredAtDisplay()}">—</td>
+                        <td th:text="${e.adminUsername}">admin</td>
+                        <td class="text-xs" th:text="${e.actionLabel()}">действие</td>
+                        <td>
+                            <details th:if="${e.hasDetails()}">
+                                <summary class="cursor-pointer text-xs link">показать</summary>
+                                <pre class="text-xs bg-base-200 p-2 rounded mt-1 overflow-x-auto"
+                                     th:text="${e.details}">{}</pre>
+                            </details>
+                            <span th:unless="${e.hasDetails()}" class="text-base-content/40">—</span>
+                        </td>
+                    </tr>
+                    </tbody>
+                </table>
             </div>
         </div>
     </div>

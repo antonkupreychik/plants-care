@@ -20,6 +20,8 @@ import org.springframework.test.context.TestPropertySource;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import com.plantcare.admin.audit.service.AdminAuditService;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 import java.util.List;
 import java.util.Map;
@@ -61,6 +63,14 @@ class AdminSpeciesFactServiceTest {
         registry.add("spring.datasource.username", postgres::getUsername);
         registry.add("spring.datasource.password", postgres::getPassword);
     }
+
+    /**
+     * Аудит (issue #98) в слайс не входит: {@code @DataJpaTest} не поднимает
+     * ни JdbcTemplate-репозиторий лога, ни ObjectMapper. Здесь проверяется CRUD
+     * фактов, а не проводка аудита — для неё есть {@code AdminAuditWiringTest}.
+     */
+    @MockitoBean
+    private AdminAuditService auditService;
 
     @Autowired
     private AdminSpeciesFactService service;

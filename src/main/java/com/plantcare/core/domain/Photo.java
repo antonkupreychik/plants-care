@@ -60,6 +60,18 @@ public class Photo {
     @Column(name = "deleted_at")
     private Instant deletedAt;
 
+    /**
+     * Момент физического удаления объекта из бакета (issue #101).
+     * {@code null} — бинарь ещё лежит в S3.
+     *
+     * <p>Сама строка {@code photos} не удаляется никогда: на неё ссылается
+     * {@code plant_progress_photos.photo_id} с {@code ON DELETE SET NULL}, а
+     * CHECK {@code chk_progress_photo_source} требует ровно один непустой
+     * источник — удаление строки уронило бы инвариант таймлайна.
+     */
+    @Column(name = "purged_at")
+    private Instant purgedAt;
+
     public Photo(String storageKey, String contentType, long sizeBytes, Long userId, Instant now) {
         this.storageKey = storageKey;
         this.contentType = contentType;
@@ -77,6 +89,34 @@ public class Photo {
 
     public boolean isDeleted() {
         return deletedAt != null;
+    }
+
+    /**
+     * Отменяет soft-delete (issue #101) — возврат ошибочно удалённого фото в
+     * пределах retention-окна.
+     *
+     * <p>После физической чистки возврат бессмысленен: бинаря в бакете нет,
+     * запись осталась тумбстоуном. Поэтому purged-фото не восстанавливаем.
+     */
+    public void restore() {
+        if (purgedAt == null) {
+            this.deletedAt = null;
+        }
+    }
+
+    /**
+     * Помечает объект физически удалённым из бакета (issue #101).
+     * Идемпотентно — первый момент чистки сохраняется.
+     */
+    public void markPurged(Instant now) {
+        if (this.purgedAt == null) {
+            this.purgedAt = now;
+        }
+    }
+
+    /** {@code true}, если бинаря в бакете больше нет (пресайн-ссылку выдавать нельзя). */
+    public boolean isPurged() {
+        return purgedAt != null;
     }
 
     @Override

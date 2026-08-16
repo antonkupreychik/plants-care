@@ -3,6 +3,7 @@ package com.plantcare.bot.telegram;
 import com.plantcare.bot.client.TelegramClientProvider;
 import com.plantcare.bot.config.TelegramRateLimitProperties;
 import com.plantcare.core.metrics.MetricsService;
+import com.plantcare.core.service.NotificationDeliveryRecorder;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -23,6 +24,10 @@ import java.util.concurrent.atomic.AtomicReference;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatNoException;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -55,6 +60,9 @@ class RateLimitedTelegramSenderTest {
     @Mock
     private MetricsService metricsService;
 
+    @Mock
+    private NotificationDeliveryRecorder deliveryRecorder;
+
     private RecordingSleeper sleeper;
     private RateLimitedTelegramSender sender;
 
@@ -64,7 +72,7 @@ class RateLimitedTelegramSenderTest {
         TelegramRateLimitProperties properties = new TelegramRateLimitProperties(
                 25, 100, MAX_RETRIES, DEFAULT_RETRY_AFTER, 60L);
         sender = new RateLimitedTelegramSender(
-                telegramClientProvider, rateLimiter, sleeper, properties, metricsService);
+                telegramClientProvider, rateLimiter, sleeper, properties, metricsService, deliveryRecorder);
         when(telegramClientProvider.getTelegramClient()).thenReturn(telegramClient);
     }
 
@@ -86,6 +94,36 @@ class RateLimitedTelegramSenderTest {
         assertThat(successRan).isTrue();
         assertThat(failureRan).isFalse();
         assertThat(sleeper.sleeps).isEmpty();
+    }
+
+    @Test
+    @DisplayName("Issue #95: should_record_sent_delivery_event_when_send_succeeds")
+    void should_record_sent_delivery_event_when_send_succeeds() throws Exception {
+        sender.sendWithRetry(message("100"), SendCallbacks.none());
+
+        verify(deliveryRecorder).recordTelegramSent(eq(100L), anyLong());
+        verify(deliveryRecorder, never()).recordTelegramFailure(any(), any(), anyLong());
+    }
+
+    @Test
+    @DisplayName("Issue #95: should_record_failed_delivery_event_when_telegram_answers_403")
+    void should_record_failed_delivery_event_when_telegram_answers_403() throws Exception {
+        when(telegramClient.execute(any(SendMessage.class)))
+                .thenThrow(new TelegramApiException("[403] Forbidden: bot was blocked by the user"));
+
+        sender.sendWithRetry(message("100"), SendCallbacks.none());
+
+        verify(deliveryRecorder).recordTelegramFailure(
+                eq(100L), eq(MetricsService.TelegramErrorCode.FORBIDDEN), anyLong());
+    }
+
+    @Test
+    @DisplayName("Issue #95: should_record_event_without_chat_id_when_recipient_is_channel_username")
+    void should_record_event_without_chat_id_when_recipient_is_channel_username() throws Exception {
+        sender.sendWithRetry(message("@some_channel"), SendCallbacks.none());
+
+        // Нечисловой адресат — не ошибка: событие ложится без user_id.
+        verify(deliveryRecorder).recordTelegramSent(isNull(), anyLong());
     }
 
     @Test

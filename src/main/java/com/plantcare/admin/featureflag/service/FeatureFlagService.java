@@ -1,5 +1,8 @@
 package com.plantcare.admin.featureflag.service;
 
+import com.plantcare.admin.audit.AdminAuditAction;
+import com.plantcare.admin.audit.AdminAuditTarget;
+import com.plantcare.admin.audit.service.AdminAuditService;
 import com.plantcare.core.domain.User;
 import com.plantcare.core.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
@@ -37,6 +40,7 @@ public class FeatureFlagService {
     private static final Pattern CODE_PATTERN = Pattern.compile("^[a-z][a-z0-9_]{1,63}$");
 
     private final UserRepository userRepository;
+    private final AdminAuditService auditService;
 
     /**
      * Установить флаг для юзера. {@code enabled=true} → записываем "true";
@@ -73,6 +77,10 @@ public class FeatureFlagService {
             userRepository.save(user);
             log.info("Feature flag {}={} for user {} (admin={})",
                     code, enabled, userId, adminName);
+            auditService.log(
+                    enabled ? AdminAuditAction.USER_FLAG_SET : AdminAuditAction.USER_FLAG_CLEAR,
+                    adminName, AdminAuditTarget.USER, userId,
+                    AdminAuditService.details("flag", code, "enabled", enabled));
         }
         return changed;
     }

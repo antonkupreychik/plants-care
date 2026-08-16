@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      xmlns:layout="http://www.ultraq.net.nz/thymeleaf/layout"
+      layout:decorate="~{admin/_layout}"
+      lang="ru">
+<head><title>Error detail</title></head>
+<body>
+<section layout:fragment="content">
+
+    <div class="flex items-center justify-between mb-4">
+        <h1 class="text-2xl font-bold">
+            Ошибка #<span th:text="${error.id()}">0</span>
+        </h1>
+        <a th:href="@{/admin/errors}" class="btn btn-ghost btn-sm">← К списку</a>
+    </div>
+
+    <!-- Контекст: юзер, URL, correlation_id -->
+    <div class="card bg-base-100 shadow mb-4">
+        <div class="card-body">
+            <h2 class="card-title mb-2">Контекст</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-2 text-sm">
+                <div><span class="text-base-content/60">Когда:</span>
+                    <span th:text="${error.createdAt()}">—</span></div>
+                <div><span class="text-base-content/60">Уровень:</span>
+                    <span class="badge badge-sm"
+                          th:classappend="${error.level() == 'ERROR'} ? 'badge-error' : 'badge-warning'"
+                          th:text="${error.level()}">ERROR</span></div>
+                <div><span class="text-base-content/60">Логгер:</span>
+                    <span class="font-mono text-xs" th:text="${error.loggerName()}">—</span></div>
+                <div><span class="text-base-content/60">Исключение:</span>
+                    <span class="font-mono text-xs"
+                          th:text="${error.exceptionClass() != null ? error.exceptionClass() : '—'}">—</span></div>
+                <div><span class="text-base-content/60">User:</span>
+                    <a th:if="${error.userId() != null}" class="link link-hover"
+                       th:href="@{/admin/users/{id}(id=${error.userId()})}"
+                       th:text="${error.userId()}">42</a>
+                    <span th:if="${error.userId() == null}" class="text-base-content/40">— (фон/аноним)</span>
+                </div>
+                <div><span class="text-base-content/60">URL:</span>
+                    <span class="font-mono text-xs"
+                          th:text="${error.requestPath() != null ? error.requestPath() : '—'}">—</span></div>
+                <div><span class="text-base-content/60">correlation_id:</span>
+                    <span class="font-mono text-xs"
+                          th:text="${error.correlationId() != null ? error.correlationId() : '—'}">—</span></div>
+                <div><span class="text-base-content/60">Поток:</span>
+                    <span class="font-mono text-xs"
+                          th:text="${error.threadName() != null ? error.threadName() : '—'}">—</span></div>
+                <div class="md:col-span-2"><span class="text-base-content/60">fingerprint:</span>
+                    <a class="link link-hover font-mono text-xs"
+                       th:href="@{/admin/errors(fingerprint=${error.fingerprint()})}"
+                       th:text="${error.fingerprint()}">—</a></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Сообщение + полный стек -->
+    <div class="card bg-base-100 shadow mb-4">
+        <div class="card-body">
+            <h2 class="card-title mb-2">Сообщение</h2>
+            <pre class="bg-base-200 rounded p-3 text-xs whitespace-pre-wrap"
+                 th:text="${error.message()}">—</pre>
+
+            <h2 class="card-title mt-4 mb-2">Stack trace</h2>
+            <div th:if="${error.stackTrace() == null}" class="text-base-content/60 text-sm">
+                Событие без исключения — стека нет
+            </div>
+            <pre th:unless="${error.stackTrace() == null}"
+                 class="bg-base-200 rounded p-3 text-xs overflow-x-auto"
+                 th:text="${error.stackTrace()}">—</pre>
+        </div>
+    </div>
+
+    <!-- AC: «найти все события юзера за 1 час до ошибки» — HTMX-подгрузка на месте -->
+    <div class="card bg-base-100 shadow">
+        <div class="card-body">
+            <h2 class="card-title mb-2">События юзера перед ошибкой</h2>
+            <div id="user-context">
+                <button type="button" class="btn btn-sm btn-outline"
+                        th:disabled="${error.userId() == null}"
+                        th:attr="hx-get=@{/admin/errors/{id}/user-context(id=${error.id()})}"
+                        hx-target="#user-context">
+                    Найти все события юзера за
+                    <span th:text="${contextWindowMinutes}">60</span> мин до ошибки
+                </button>
+                <p th:if="${error.userId() == null}" class="text-xs text-base-content/60 mt-2">
+                    У этой ошибки нет пользователя — искать нечего.
+                </p>
+            </div>
+        </div>
+    </div>
+
+</section>
+</body>
+</html>
