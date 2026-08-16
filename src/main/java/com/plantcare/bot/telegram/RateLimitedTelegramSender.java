@@ -4,6 +4,7 @@ import com.plantcare.bot.client.TelegramClientProvider;
 import com.plantcare.bot.config.TelegramRateLimitProperties;
 import com.plantcare.core.metrics.MetricsService;
 import com.plantcare.core.metrics.MetricsService.TelegramErrorCode;
+import com.plantcare.core.service.NotificationDeliveryRecorder;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
@@ -50,6 +51,7 @@ public class RateLimitedTelegramSender {
     private final Sleeper sleeper;
     private final TelegramRateLimitProperties properties;
     private final MetricsService metricsService;
+    private final NotificationDeliveryRecorder deliveryRecorder;
 
     private LinkedBlockingQueue<QueuedMessage> queue;
     private Thread worker;
@@ -138,30 +140,61 @@ public class RateLimitedTelegramSender {
     void sendWithRetry(SendMessage message, SendCallbacks callbacks) throws InterruptedException {
         int maxRetries = Math.max(0, properties.getMaxRetries());
         int attempt = 0;
+        Long chatId = parseChatId(message.getChatId());
         while (true) {
+            // Issue #95: латентность меряем по одной попытке вызова Bot API —
+            // сон между ретраями 429 это ожидание, а не время ответа Telegram.
+            long startNanos = System.nanoTime();
             try {
                 telegramClientProvider.getTelegramClient().execute(message);
+                deliveryRecorder.recordTelegramSent(chatId, elapsedMillis(startNanos));
                 callbacks.runSuccess();
                 return;
             } catch (TelegramApiException e) {
+                long latencyMs = elapsedMillis(startNanos);
                 String msg = e.getMessage();
-                boolean rateLimited = TelegramErrorCode.fromMessage(msg) == TelegramErrorCode.RATE_LIMITED;
+                TelegramErrorCode code = TelegramErrorCode.fromMessage(msg);
+                boolean rateLimited = code == TelegramErrorCode.RATE_LIMITED;
                 if (rateLimited && attempt < maxRetries) {
                     attempt++;
                     long retryAfter = extractRetryAfterSeconds(msg);
                     log.warn("Rate-limited (429) sending to chat {}: retry {}/{} after {}s",
                             message.getChatId(), attempt, maxRetries, retryAfter);
                     metricsService.recordTelegramApiError(TelegramErrorCode.RATE_LIMITED);
+                    // Попытка, съеденная лимитом, тоже попытка доставки — иначе
+                    // дашборд не увидит, что канал душат, пока ретраи спасают.
+                    deliveryRecorder.recordTelegramFailure(chatId, TelegramErrorCode.RATE_LIMITED, latencyMs);
                     sleeper.sleep(retryAfter * 1000L);
                     continue;
                 }
                 // Либо неретраябельная ошибка (403/400/...), либо исчерпали ретраи 429.
-                metricsService.recordTelegramApiError(TelegramErrorCode.fromMessage(msg));
+                metricsService.recordTelegramApiError(code);
+                deliveryRecorder.recordTelegramFailure(chatId, code, latencyMs);
                 log.warn("Send failed for chat {} (attempts={}, rateLimited={}): {}",
                         message.getChatId(), attempt + 1, rateLimited, msg);
                 callbacks.runFailure(e);
                 return;
             }
+        }
+    }
+
+    private static long elapsedMillis(long startNanos) {
+        return TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNanos);
+    }
+
+    /**
+     * {@code SendMessage.chatId} — строка: обычно это числовой chat_id, но API
+     * допускает и {@code @channelusername}. Нечисловое значение не ошибка —
+     * событие доставки просто ляжет без {@code user_id}.
+     */
+    private static Long parseChatId(String rawChatId) {
+        if (rawChatId == null || rawChatId.isBlank()) {
+            return null;
+        }
+        try {
+            return Long.valueOf(rawChatId.trim());
+        } catch (NumberFormatException e) {
+            return null;
         }
     }
 
