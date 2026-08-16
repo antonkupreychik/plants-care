@@ -393,7 +393,7 @@ public class NotificationSchedulerService {
         }
         List<PushFanOutService.PushTarget> targets = devices.stream()
                 .map(device -> new PushFanOutService.PushTarget(
-                        device.getId(), device.getPushToken(), text, taskType))
+                        device.getId(), user.getId(), device.getPushToken(), text, taskType))
                 .toList();
         pushFanOutService.enqueue(targets);
     }
@@ -418,7 +418,7 @@ public class NotificationSchedulerService {
         TaskType metricTaskType = schedules.get(0).getTaskType();
         List<PushFanOutService.PushTarget> targets = devices.stream()
                 .map(device -> new PushFanOutService.PushTarget(
-                        device.getId(), device.getPushToken(), digestText, metricTaskType))
+                        device.getId(), user.getId(), device.getPushToken(), digestText, metricTaskType))
                 .toList();
         pushFanOutService.enqueue(targets);
     }

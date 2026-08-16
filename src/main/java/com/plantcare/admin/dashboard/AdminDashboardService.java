@@ -3,6 +3,7 @@ package com.plantcare.admin.dashboard;
 import com.plantcare.admin.config.AdminProperties;
 import com.plantcare.admin.dashboard.dto.DashboardDto;
 import com.plantcare.admin.dashboard.health.SchedulerHealthProvider;
+import com.plantcare.admin.notifications.service.AdminNotificationHealthService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
@@ -21,17 +22,20 @@ public class AdminDashboardService {
 
     private final AdminDashboardRepository repository;
     private final SchedulerHealthProvider schedulerHealth;
+    private final AdminNotificationHealthService notificationHealthService;
     private final ExecutorService executor;
     private final ZoneId timezone;
 
     public AdminDashboardService(
             AdminDashboardRepository repository,
             SchedulerHealthProvider schedulerHealth,
+            AdminNotificationHealthService notificationHealthService,
             @Qualifier("adminQueryExecutor") ExecutorService executor,
             AdminProperties props
     ) {
         this.repository = repository;
         this.schedulerHealth = schedulerHealth;
+        this.notificationHealthService = notificationHealthService;
         this.executor = executor;
         this.timezone = resolveTimezone(props.getDashboard().getTimezone());
     }
@@ -60,8 +64,13 @@ public class AdminDashboardService {
                 .supplyAsync(() -> repository.findTopStuckUsers(5), executor);
         var recentF = CompletableFuture
                 .supplyAsync(() -> repository.findRecentCareActions(10), executor);
+        // Issue #95: красная плашка «канал доставки деградирует» на главной.
+        var alertingChannelsF = CompletableFuture.supplyAsync(
+                () -> notificationHealthService.alertingChannels(
+                        AdminNotificationHealthService.DEFAULT_HOURS), executor);
 
-        CompletableFuture.allOf(activeUsersF, totalPlantsF, careTodayF, dau24hF, stuckF, recentF).join();
+        CompletableFuture.allOf(activeUsersF, totalPlantsF, careTodayF, dau24hF, stuckF, recentF,
+                alertingChannelsF).join();
 
         long elapsed = System.currentTimeMillis() - start;
         if (elapsed > 500) {
@@ -76,6 +85,7 @@ public class AdminDashboardService {
                 schedulerHealth.currentHealth(),
                 stuckF.join(),
                 recentF.join(),
+                alertingChannelsF.join(),
                 elapsed);
     }
 }

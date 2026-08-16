@@ -141,6 +141,85 @@
         <form method="dialog" class="modal-backdrop"><button>close</button></form>
     </dialog>
 
+    <!-- Аутентификация (issue #93) -->
+    <div class="card bg-base-100 shadow mb-6">
+        <div class="card-body">
+            <h2 class="card-title">🔐 Аутентификация</h2>
+
+            <div th:if="${linkedProviderCount == 0}" class="alert alert-warning" role="alert">
+                ⚠️ Не привязан ни один провайдер — залогиниться этот юзер не сможет.
+            </div>
+
+            <div class="overflow-x-auto">
+                <table class="table table-sm">
+                    <thead>
+                    <tr>
+                        <th>Провайдер</th>
+                        <th>Идентификатор</th>
+                        <th>Привязан</th>
+                        <th>Последнее использование</th>
+                        <th></th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    <tr th:each="p : ${authProviders}">
+                        <td>
+                            <span class="font-medium" th:text="${p.kind.label}">Telegram</span>
+                            <div class="text-xs text-base-content/50 font-mono"
+                                 th:text="${p.kind.column}">column</div>
+                        </td>
+                        <td>
+                            <code class="text-xs" th:if="${p.linked}"
+                                  th:text="${p.maskedIdentifier}">•••</code>
+                            <span th:unless="${p.linked}" class="text-base-content/50">не привязан</span>
+                            <span th:if="${p.linked and p.kind.name() == 'EMAIL'}"
+                                  class="badge badge-sm ml-2"
+                                  th:classappend="${p.verified} ? 'badge-success' : 'badge-warning'"
+                                  th:text="${p.verified} ? 'verified' : 'не подтверждён'">verified</span>
+                        </td>
+                        <td class="text-xs"
+                            th:text="${p.linkedAt != null} ? ${#temporals.format(p.linkedAt, 'dd.MM.yyyy HH:mm')} : '—'">—</td>
+                        <td class="text-xs"
+                            th:text="${p.lastUsedAt != null} ? ${#temporals.format(p.lastUsedAt, 'dd.MM.yyyy HH:mm')} : '—'">—</td>
+                        <td class="text-right">
+                            <form th:if="${p.linked}" method="post"
+                                  th:action="@{|/admin/users/${user.id}/auth/unlink|}">
+                                <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}"/>
+                                <input type="hidden" name="provider" th:value="${p.kind.name()}"/>
+                                <button class="btn btn-xs btn-error"
+                                        th:attr="onclick=${linkedProviderCount > 1}
+                                            ? 'return confirm(\'Разорвать эту привязку?\') &amp;&amp; confirm(\'Подтверди ещё раз: идентификатор будет стёрт безвозвратно, все refresh-сессии юзера — отозваны.\')'
+                                            : 'return confirm(\'Разорвать эту привязку?\') &amp;&amp; confirm(\'ЭТО ПОСЛЕДНИЙ ПРОВАЙДЕР. После разрыва юзер не сможет залогиниться. Точно продолжаем?\')'">
+                                    Разорвать привязку
+                                </button>
+                            </form>
+                        </td>
+                    </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <p class="text-xs text-base-content/60 mt-2">
+                Идентификаторы маскированы намеренно: полный email и Apple/Google
+                <code>sub</code> — чувствительные данные, в админке они не показываются.
+                «Привязан» и «последнее использование» заполняются только там, где для
+                этого есть данные: per-provider таймстемпы появятся вместе с таблицей
+                привязок (issue #89), «последнее использование» для Email берётся из
+                magic-link'ов.
+            </p>
+        </div>
+    </div>
+
+    <!-- История привязок (issue #93) -->
+    <div class="card bg-base-100 shadow mb-6">
+        <div class="card-body">
+            <h2 class="card-title">История привязок
+                <span class="text-sm font-normal text-base-content/60">(magic link)</span>
+            </h2>
+            <div th:replace="~{admin/_auth-link-history :: linkHistoryFragment}"></div>
+        </div>
+    </div>
+
     <!-- Plants -->
     <div class="card bg-base-100 shadow mb-6">
         <div class="card-body">

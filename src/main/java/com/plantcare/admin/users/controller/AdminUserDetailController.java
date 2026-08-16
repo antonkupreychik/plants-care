@@ -3,6 +3,7 @@ package com.plantcare.admin.users.controller;
 import com.plantcare.admin.audit.AdminAuditTarget;
 import com.plantcare.admin.audit.service.AdminAuditService;
 import com.plantcare.admin.config.AdminSecurityConfig;
+import com.plantcare.admin.users.service.AdminUserAuthService;
 import com.plantcare.admin.users.service.AdminUserDetailService;
 import com.plantcare.core.domain.featureflag.FeatureFlag;
 import lombok.RequiredArgsConstructor;
@@ -28,6 +29,15 @@ public class AdminUserDetailController {
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found"));
         model.addAttribute("activeMenu", "users");
         model.addAttribute("user", user);
+        // Секция «Аутентификация» (issue #93). Отдельными атрибутами, а не полями
+        // UserDetailDto: провайдеры и история читаются своим сервисом и своими
+        // запросами, а история ещё и перерисовывается HTMX'ом независимо от
+        // остальной страницы.
+        model.addAttribute("userId", id);
+        model.addAttribute("authProviders", authService.loadProviders(id));
+        model.addAttribute("linkedProviderCount", authService.countLinked(id));
+        model.addAttribute("linkHistory",
+                authService.loadLinkHistory(id, null, null, 1));
         // Каталог известных флагов — рендерим их toggle'ами; ad-hoc флаги
         // (которые в каталог не входят, но включены у юзера) — отдельной секцией.
         model.addAttribute("flagCatalog", FeatureFlag.CATALOG);
