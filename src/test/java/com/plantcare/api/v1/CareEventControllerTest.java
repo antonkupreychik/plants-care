@@ -1,6 +1,6 @@
 package com.plantcare.api.v1;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import com.plantcare.api.auth.exception.AuthTokenException;
 import com.plantcare.api.ApiExceptionHandler;
 import com.plantcare.api.CurrentUserProvider;

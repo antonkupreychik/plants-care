@@ -21,7 +21,10 @@
     <properties>
         <java.version>21</java.version>
 
-        <hypersistence-utils.version>3.15.3</hypersistence-utils.version>
+        <!-- Вариант -hibernate-73 3.15.4 собран против Hibernate 7.4.0.Final, что совпадает
+             с Boot 4.1 (7.4.1). Вариант -70 таргетит 7.0.10 и падает на 7.4 с
+             IncompatibleClassChangeError (JsonJavaTypeDescriptor overrides final method). -->
+        <hypersistence-utils.version>3.15.4</hypersistence-utils.version>
         <springdoc.version>3.1.0</springdoc.version>
         <lombok.version>1.18.46</lombok.version>
         <jacoco.version>0.8.14</jacoco.version>
@@ -165,9 +168,13 @@
             <scope>runtime</scope>
         </dependency>
 
+        <!-- Boot 4: автоконфигурация Flyway вынесена в модуль spring-boot-flyway.
+             Голый flyway-core её больше НЕ приносит — на Boot 4 миграции просто
+             перестают накатываться молча, а Hibernate падает на validate.
+             Стартер тянет и flyway-core, и автоконфигурацию. -->
         <dependency>
-            <groupId>org.flywaydb</groupId>
-            <artifactId>flyway-core</artifactId>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-flyway</artifactId>
         </dependency>
 
         <dependency>
@@ -178,7 +185,7 @@
         <!-- JSONB support -->
         <dependency>
             <groupId>io.hypersistence</groupId>
-            <artifactId>hypersistence-utils-hibernate-70</artifactId>
+            <artifactId>hypersistence-utils-hibernate-73</artifactId>
             <version>${hypersistence-utils.version}</version>
         </dependency>
 
@@ -284,6 +291,16 @@
         <dependency>
             <groupId>org.springframework.security</groupId>
             <artifactId>spring-security-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- Boot 4: SecurityMockMvcAutoConfiguration (подключение springSecurity() к MockMvc)
+             вынесена в модуль spring-boot-security-test и НЕ входит в starter-webmvc-test.
+             Без неё security-фильтры в @WebMvcTest не отрабатывают, request.getUserPrincipal()
+             пуст, и параметр метода Authentication приезжает в контроллер как null. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security-test</artifactId>
             <scope>test</scope>
         </dependency>
 

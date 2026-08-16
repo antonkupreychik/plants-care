@@ -2,10 +2,12 @@ package com.plantcare.bot.config;
 
 import com.plantcare.core.config.RedisProperties;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
-import com.fasterxml.jackson.databind.DeserializationFeature;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.SerializationFeature;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import tools.jackson.databind.DefaultTyping;
+import tools.jackson.databind.DeserializationFeature;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.cfg.DateTimeFeature;
+import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.jsontype.BasicPolymorphicTypeValidator;
 import io.lettuce.core.ClientOptions;
 import io.lettuce.core.SocketOptions;
 import io.lettuce.core.TimeoutOptions;
@@ -16,7 +18,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.core.RedisTemplate;
-import org.springframework.data.redis.serializer.GenericJackson2JsonRedisSerializer;
+import org.springframework.data.redis.serializer.GenericJacksonJsonRedisSerializer;
 import org.springframework.data.redis.serializer.StringRedisSerializer;
 
 /**
@@ -28,7 +30,7 @@ import org.springframework.data.redis.serializer.StringRedisSerializer;
  * <p>Принципы:
  * <ul>
  *   <li>Lettuce — неблокирующий клиент; shared connection thread-safe.</li>
- *   <li>Сериализация значений через {@link GenericJackson2JsonRedisSerializer} с type info.</li>
+ *   <li>Сериализация значений через {@link GenericJacksonJsonRedisSerializer} с type info.</li>
  *   <li>Ключи — строки с префиксом {@code pc:} (задаётся в {@link RedisProperties#keyPrefix()}).</li>
  *   <li>Таймауты подключения/команды настраиваются из {@link RedisProperties}.</li>
  *   <li>Redis НЕ является жёстким пререквизитом для старта (graceful degradation).</li>
@@ -73,18 +75,24 @@ public class RedisConfig {
     // не парсятся («Malformed request body»), ответы засоряются @class. Этот mapper —
     // ТОЛЬКО для Redis-сериализации, создаётся локально для redisTemplate().
     private ObjectMapper redisObjectMapper() {
-        var mapper = new ObjectMapper();
-        mapper.registerModule(new JavaTimeModule());
-        mapper.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
-        mapper.disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);
-        // Включаем type info: без этого GenericJackson2JsonRedisSerializer
-        // не сможет корректно десериализовать значения обратно в конкретный тип.
-        mapper.activateDefaultTyping(
-                mapper.getPolymorphicTypeValidator(),
-                ObjectMapper.DefaultTyping.NON_FINAL,
-                JsonTypeInfo.As.PROPERTY
-        );
-        return mapper;
+        // Jackson 3: ObjectMapper неизменяем, конфигурация только через builder.
+        // JavaTimeModule больше не нужен — поддержка java.time встроена в databind,
+        // а WRITE_DATES_AS_TIMESTAMPS переехал из SerializationFeature в DateTimeFeature.
+        return JsonMapper.builder()
+                .disable(DateTimeFeature.WRITE_DATES_AS_TIMESTAMPS)
+                .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
+                // Включаем type info: без этого GenericJacksonJsonRedisSerializer
+                // не сможет корректно десериализовать значения обратно в конкретный тип.
+                // Jackson 3 больше не отдаёт публичный LaissezFaire-валидатор (он package-private),
+                // поэтому явно разрешаем любой подтип — это ровно то поведение, что было
+                // на Jackson 2. Безопасно: в этот Redis пишем только мы сами, чужой JSON
+                // сюда не попадает, а mapper используется исключительно для Redis-значений.
+                .activateDefaultTyping(
+                        BasicPolymorphicTypeValidator.builder().allowIfSubType(Object.class).build(),
+                        DefaultTyping.NON_FINAL,
+                        JsonTypeInfo.As.PROPERTY
+                )
+                .build();
     }
 
     /**
@@ -92,7 +100,7 @@ public class RedisConfig {
      *
      * <ul>
      *   <li>Ключи: строки (UTF-8).</li>
-     *   <li>Значения: JSON с type info через {@link GenericJackson2JsonRedisSerializer}.</li>
+     *   <li>Значения: JSON с type info через {@link GenericJacksonJsonRedisSerializer}.</li>
      *   <li>Hash-ключи и hash-значения — аналогично.</li>
      * </ul>
      *
@@ -108,7 +116,7 @@ public class RedisConfig {
         template.setConnectionFactory(connectionFactory);
 
         var stringSerializer = new StringRedisSerializer();
-        var jsonSerializer = new GenericJackson2JsonRedisSerializer(redisObjectMapper());
+        var jsonSerializer = new GenericJacksonJsonRedisSerializer(redisObjectMapper());
 
         template.setKeySerializer(stringSerializer);
         template.setHashKeySerializer(stringSerializer);
@@ -117,7 +125,7 @@ public class RedisConfig {
         template.setDefaultSerializer(jsonSerializer);
         template.afterPropertiesSet();
 
-        log.info("RedisTemplate initialized with GenericJackson2JsonRedisSerializer");
+        log.info("RedisTemplate initialized with GenericJacksonJsonRedisSerializer");
         return template;
     }
 }

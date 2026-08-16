@@ -1,7 +1,7 @@
 package com.plantcare.api.service;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 import com.plantcare.api.generated.model.LocationDto;
 import com.plantcare.api.generated.model.PageResponsePlantDto;
 import com.plantcare.api.generated.model.PlantDto;
@@ -113,7 +113,7 @@ class UiViewServiceTest {
             field(view, "layoutJson", layout);
             field(view, "minCatalogVersion", minVersion);
             return view;
-        } catch (ReflectiveOperationException | com.fasterxml.jackson.core.JsonProcessingException e) {
+        } catch (ReflectiveOperationException | tools.jackson.core.JacksonException e) {
             throw new IllegalStateException(e);
         }
     }

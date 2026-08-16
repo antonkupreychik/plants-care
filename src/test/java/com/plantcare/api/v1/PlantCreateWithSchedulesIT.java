@@ -1,7 +1,7 @@
 package com.plantcare.api.v1;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 import com.plantcare.bot.support.IntegrationTestBase;
 import com.plantcare.core.domain.CareSchedule;
 import com.plantcare.core.domain.User;

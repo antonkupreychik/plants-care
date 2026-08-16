@@ -15,7 +15,6 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.redirectedUrl;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.redirectedUrlPattern;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @AutoConfigureMockMvc
@@ -52,7 +51,10 @@ class AdminAuthenticationTest extends IntegrationTestBase {
     void unauthenticatedRedirectsToLogin() throws Exception {
         mockMvc.perform(get("/admin"))
                 .andExpect(status().is3xxRedirection())
-                .andExpect(redirectedUrlPattern("**/admin/login"));
+                // Spring Security 7 отдаёт относительный редирект (/admin/login) вместо
+                // абсолютного (http://localhost/admin/login), как было в Security 6.
+                // Паттерн '**/admin/login' на относительный путь не матчится — проверяем точно.
+                .andExpect(redirectedUrl("/admin/login"));
     }
 
     @Test
