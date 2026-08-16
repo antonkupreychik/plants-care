@@ -21,6 +21,7 @@ import org.springframework.web.server.ResponseStatusException;
 public class AdminUserDetailController {
 
     private final AdminUserDetailService service;
+    private final AdminUserAuthService authService;
     private final AdminAuditService auditService;
 
     @GetMapping("/admin/users/{id}")
