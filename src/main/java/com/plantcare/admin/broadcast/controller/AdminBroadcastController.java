@@ -141,7 +141,7 @@ public class AdminBroadcastController {
     @PostMapping("/admin/broadcast/{id}/stop")
     public String stop(@PathVariable Long id, Authentication auth, RedirectAttributes ra) {
         log.info("Admin {} stopping broadcast {}", auth.getName(), id);
-        boolean stopped = service.requestStop(id);
+        boolean stopped = service.requestStop(id, auth.getName());
         if (stopped) {
             ra.addFlashAttribute("flash", "⏹ Останов запрошен (id=" + id + ")");
         } else {

@@ -120,10 +120,19 @@
                     <a th:href="@{/admin/errors}"
                        th:classappend="${activeMenu == 'errors'} ? 'active' : ''">
                         Errors
+                    <a th:href="@{/admin/notifications/health}"
+                       th:classappend="${activeMenu == 'notifications-health'} ? 'active' : ''">
+                        Каналы
                     </a>
                 </li>
                 <li>
                     <a th:href="@{/admin/broadcast}"
                        th:classappend="${activeMenu == 'broadcast'} ? 'active' : ''">
                         Broadcast
+                    </a>
+                </li>
+                <li>
+                    <a th:href="@{/admin/audit}"
+                       th:classappend="${activeMenu == 'audit'} ? 'active' : ''">
+                        Audit
                     </a>

@@ -1,5 +1,8 @@
 package com.plantcare.admin.service;
 
+import com.plantcare.admin.audit.AdminAuditAction;
+import com.plantcare.admin.audit.AdminAuditTarget;
+import com.plantcare.admin.audit.service.AdminAuditService;
 import com.plantcare.admin.dto.SpeciesFormDto;
 import com.plantcare.admin.dto.SpeciesListItem;
 import com.plantcare.admin.exception.DuplicateSpeciesNameException;
@@ -46,6 +49,7 @@ public class AdminSpeciesService {
 
     private final SpeciesRepository speciesRepository;
     private final PlantRepository plantRepository;
+    private final AdminAuditService auditService;
 
     /**
      * Возвращает страницу видов с числом привязанных растений для каждого.
@@ -94,6 +98,9 @@ public class AdminSpeciesService {
         Species saved = speciesRepository.save(species);
 
         log.info("Admin [{}] created species id={} name='{}'", adminUsername, saved.getId(), saved.getName());
+        auditService.log(AdminAuditAction.SPECIES_CREATE, adminUsername,
+                AdminAuditTarget.SPECIES, saved.getId(),
+                AdminAuditService.details("name", saved.getName(), "latinName", saved.getLatinName()));
         return saved;
     }
 
@@ -103,10 +110,14 @@ public class AdminSpeciesService {
         validateUniqueName(id, dto.getName());
 
         Species species = findById(id);
+        String nameBefore = species.getName();
         applyDto(species, dto);
         Species saved = speciesRepository.save(species);
 
         log.info("Admin [{}] updated species id={} name='{}'", adminUsername, saved.getId(), saved.getName());
+        auditService.log(AdminAuditAction.SPECIES_UPDATE, adminUsername,
+                AdminAuditTarget.SPECIES, saved.getId(),
+                AdminAuditService.details("nameBefore", nameBefore, "nameAfter", saved.getName()));
         return saved;
     }
 
@@ -118,6 +129,7 @@ public class AdminSpeciesService {
     @CacheEvict(cacheNames = {"species-list", "species-detail"}, allEntries = true)
     public Species patchField(Long id, String field, String rawValue, String adminUsername) {
         Species species = findById(id);
+        String before = readField(species, field);
 
         switch (field) {
             case "name" -> {
@@ -149,6 +161,10 @@ public class AdminSpeciesService {
         Species saved = speciesRepository.save(species);
         log.info("Admin [{}] patched species id={} field='{}' value='{}'",
                 adminUsername, id, field, rawValue);
+        auditService.log(AdminAuditAction.SPECIES_UPDATE, adminUsername,
+                AdminAuditTarget.SPECIES, id,
+                AdminAuditService.details("field", field, "before", before,
+                        "after", readField(saved, field)));
         return saved;
     }
 
@@ -156,8 +172,13 @@ public class AdminSpeciesService {
     @CacheEvict(cacheNames = {"species-list", "species-detail"}, allEntries = true)
     public void delete(Long id, String adminUsername) {
         Species species = findById(id);
+        String name = species.getName();
+        long linkedPlants = plantRepository.countBySpeciesId(id);
         speciesRepository.delete(species);
-        log.info("Admin [{}] deleted species id={} name='{}'", adminUsername, id, species.getName());
+        log.info("Admin [{}] deleted species id={} name='{}'", adminUsername, id, name);
+        auditService.log(AdminAuditAction.SPECIES_DELETE, adminUsername,
+                AdminAuditTarget.SPECIES, id,
+                AdminAuditService.details("name", name, "linkedPlants", linkedPlants));
     }
 
     @Transactional(readOnly = true)
@@ -166,6 +187,27 @@ public class AdminSpeciesService {
     }
 
     // ------------------------------------------------------------------ helpers
+
+    /**
+     * Текущее значение inline-редактируемого поля — нужно, чтобы аудит
+     * {@code SPECIES_UPDATE} нёс осмысленный before/after, а не только новое
+     * значение. Незнакомое поле сюда не доходит: switch в {@code patchField}
+     * бракует его раньше, поэтому здесь {@code null} — безопасный ответ.
+     */
+    private static String readField(Species s, String field) {
+        Object value = switch (field) {
+            case "name" -> s.getName();
+            case "latinName" -> s.getLatinName();
+            case "wateringDays" -> s.getWateringDays();
+            case "mistingDays" -> s.getMistingDays();
+            case "fertilizingDays" -> s.getFertilizingDays();
+            case "popularity" -> s.getPopularity();
+            case "lightPreference" -> s.getLightPreference();
+            case "careDifficulty" -> s.getCareDifficulty();
+            default -> null;
+        };
+        return value == null ? null : String.valueOf(value);
+    }
 
     private Pageable buildPageable(int page, String sortField, String sortDir) {
         String safeField = SORTABLE_FIELDS.contains(sortField) ? sortField : DEFAULT_SORT;
