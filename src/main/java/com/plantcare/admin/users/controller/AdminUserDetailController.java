@@ -1,5 +1,7 @@
 package com.plantcare.admin.users.controller;
 
+import com.plantcare.admin.audit.AdminAuditTarget;
+import com.plantcare.admin.audit.service.AdminAuditService;
 import com.plantcare.admin.config.AdminSecurityConfig;
 import com.plantcare.admin.users.service.AdminUserAuthService;
 import com.plantcare.admin.users.service.AdminUserDetailService;
@@ -19,7 +21,7 @@ import org.springframework.web.server.ResponseStatusException;
 public class AdminUserDetailController {
 
     private final AdminUserDetailService service;
-    private final AdminUserAuthService authService;
+    private final AdminAuditService auditService;
 
     @GetMapping("/admin/users/{id}")
     public String detail(@PathVariable long id, Model model) {
@@ -45,6 +47,10 @@ public class AdminUserDetailController {
             descriptions.put(code, FeatureFlag.describe(code));
         }
         model.addAttribute("flagDescriptions", descriptions);
+        // Issue #98: последние админские действия именно с этим юзером —
+        // чтобы саппорт-кейс «я делал X, а юзер видит Y» разбирался на месте.
+        model.addAttribute("auditHistory",
+                auditService.recentForTarget(AdminAuditTarget.USER, id));
         return "admin/user-detail";
     }
 }

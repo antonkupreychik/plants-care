@@ -1,5 +1,8 @@
 package com.plantcare.admin.users.service;
 
+import com.plantcare.admin.audit.AdminAuditAction;
+import com.plantcare.admin.audit.AdminAuditTarget;
+import com.plantcare.admin.audit.service.AdminAuditService;
 import com.plantcare.admin.users.repository.AdminUserActionRepository;
 import com.plantcare.admin.users.dto.SendMessageResult;
 import lombok.extern.slf4j.Slf4j;
@@ -21,12 +24,15 @@ public class AdminUserActionService {
 
     private final AdminUserActionRepository repository;
     private final ObjectProvider<TelegramClient> telegramClientProvider;
+    private final AdminAuditService auditService;
 
     public AdminUserActionService(
             AdminUserActionRepository repository,
-            @Qualifier("adminTelegramClient") ObjectProvider<TelegramClient> telegramClientProvider) {
+            @Qualifier("adminTelegramClient") ObjectProvider<TelegramClient> telegramClientProvider,
+            AdminAuditService auditService) {
         this.repository = repository;
         this.telegramClientProvider = telegramClientProvider;
+        this.auditService = auditService;
     }
 
     @Transactional
@@ -34,6 +40,7 @@ public class AdminUserActionService {
         int updated = repository.resetState(userId);
         if (updated == 0) throw notFound(userId);
         log.info("Admin action RESET_STATE: user_id={}, admin={}", userId, adminName);
+        auditService.log(AdminAuditAction.USER_RESET_STATE, adminName, AdminAuditTarget.USER, userId);
     }
 
     @Transactional
@@ -43,6 +50,9 @@ public class AdminUserActionService {
         repository.setBlocked(userId, newBlocked);
         log.info("Admin action TOGGLE_BLOCK: user_id={}, new_value={}, admin={}",
                 userId, newBlocked, adminName);
+        auditService.log(AdminAuditAction.USER_TOGGLE_BLOCK, adminName,
+                AdminAuditTarget.USER, userId,
+                AdminAuditService.details("before", info.blocked(), "after", newBlocked));
         return newBlocked;
     }
 
@@ -54,6 +64,9 @@ public class AdminUserActionService {
         repository.findBasic(userId).orElseThrow(() -> notFound(userId));
         repository.setPausedUntil(userId, until);
         log.info("Admin action PAUSE: user_id={}, until={}, admin={}", userId, until, adminName);
+        auditService.log(AdminAuditAction.USER_PAUSE, adminName,
+                AdminAuditTarget.USER, userId,
+                AdminAuditService.details("pausedUntil", until.toString()));
         return until;
     }
 
@@ -62,6 +75,7 @@ public class AdminUserActionService {
         repository.findBasic(userId).orElseThrow(() -> notFound(userId));
         repository.setPausedUntil(userId, null);
         log.info("Admin action UNPAUSE: user_id={}, admin={}", userId, adminName);
+        auditService.log(AdminAuditAction.USER_UNPAUSE, adminName, AdminAuditTarget.USER, userId);
     }
 
     public SendMessageResult sendMessage(long userId, String text, String adminName) {
@@ -88,6 +102,11 @@ public class AdminUserActionService {
                     .build());
             log.info("Admin action SEND_MESSAGE: user_id={}, len={}, admin={}",
                     userId, text.length(), adminName);
+            // Текст сообщения в аудит НЕ кладём — он может быть личной перепиской
+            // с юзером; для разбора саппорт-кейса хватает факта и длины.
+            auditService.log(AdminAuditAction.USER_SEND_MESSAGE, adminName,
+                    AdminAuditTarget.USER, userId,
+                    AdminAuditService.details("textLength", text.length()));
             return SendMessageResult.ok();
         } catch (TelegramApiException e) {
             log.warn("Admin SEND_MESSAGE failed: user_id={}, error={}", userId, e.getMessage());

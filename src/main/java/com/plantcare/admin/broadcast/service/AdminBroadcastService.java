@@ -1,5 +1,8 @@
 package com.plantcare.admin.broadcast.service;
 
+import com.plantcare.admin.audit.AdminAuditAction;
+import com.plantcare.admin.audit.AdminAuditTarget;
+import com.plantcare.admin.audit.service.AdminAuditService;
 import com.plantcare.admin.broadcast.repository.AdminBroadcastRepository;
 import com.plantcare.bot.client.TelegramClientProvider;
 import com.plantcare.core.domain.AdminBroadcast;
@@ -58,6 +61,7 @@ public class AdminBroadcastService {
     private final TelegramClientProvider telegramClientProvider;
     private final UserRepository userRepository;
     private final ExecutorService broadcastExecutor;
+    private final AdminAuditService auditService;
 
     /**
      * Каждый DB-апдейт в фоновом цикле оборачиваем коротким TX. @Transactional
@@ -73,7 +77,8 @@ public class AdminBroadcastService {
             TelegramClientProvider telegramClientProvider,
             UserRepository userRepository,
             @Qualifier("broadcastExecutor") ExecutorService broadcastExecutor,
-            PlatformTransactionManager transactionManager
+            PlatformTransactionManager transactionManager,
+            AdminAuditService auditService
     ) {
         this.broadcastRepository = broadcastRepository;
         this.audienceResolver = audienceResolver;
@@ -81,6 +86,7 @@ public class AdminBroadcastService {
         this.userRepository = userRepository;
         this.broadcastExecutor = broadcastExecutor;
         this.txTemplate = new TransactionTemplate(transactionManager);
+        this.auditService = auditService;
     }
 
     /**
@@ -137,6 +143,14 @@ public class AdminBroadcastService {
         // 3) В лог НЕ кладём текст целиком (issue: может быть конфиденциальным).
         log.info("Broadcast {} started by {}: filter={}, audience={}, length={}",
                 broadcast.getId(), adminName, filter, audience.size(), finalText.length());
+        // По той же причине текст не попадает и в аудит — только параметры запуска.
+        auditService.log(AdminAuditAction.BROADCAST_SENT, adminName,
+                AdminAuditTarget.BROADCAST, broadcast.getId(),
+                AdminAuditService.details(
+                        "filter", String.valueOf(filter),
+                        "timezones", timezones == null ? List.of() : List.copyOf(timezones),
+                        "audienceSize", audience.size(),
+                        "textLength", finalText.length()));
 
         // 4) Снимок id+text для async-таски — Hibernate-сессия закроется на выходе
         // из этого метода, нельзя тащить detached-entity внутрь executor'а.
@@ -153,11 +167,13 @@ public class AdminBroadcastService {
      * Реальный цикл проверяет статус сам перед каждой следующей итерацией.
      */
     @Transactional
-    public boolean requestStop(Long broadcastId) {
+    public boolean requestStop(Long broadcastId, String adminName) {
         int updated = broadcastRepository.requestStop(
                 broadcastId, BroadcastStatus.RUNNING, BroadcastStatus.STOPPED);
         if (updated > 0) {
-            log.info("Broadcast {} stop requested", broadcastId);
+            log.info("Broadcast {} stop requested by {}", broadcastId, adminName);
+            auditService.log(AdminAuditAction.BROADCAST_STOPPED, adminName,
+                    AdminAuditTarget.BROADCAST, broadcastId);
         }
         return updated > 0;
     }

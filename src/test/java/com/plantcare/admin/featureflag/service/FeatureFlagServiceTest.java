@@ -1,5 +1,6 @@
 package com.plantcare.admin.featureflag.service;
 
+import com.plantcare.admin.audit.service.AdminAuditService;
 import com.plantcare.core.domain.User;
 import com.plantcare.core.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -29,6 +30,7 @@ import static org.mockito.Mockito.when;
 class FeatureFlagServiceTest {
 
     @Mock private UserRepository userRepository;
+    @Mock private AdminAuditService auditService;
 
     @InjectMocks
     private FeatureFlagService service;

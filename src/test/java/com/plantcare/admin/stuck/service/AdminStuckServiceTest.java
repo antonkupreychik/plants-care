@@ -1,5 +1,6 @@
 package com.plantcare.admin.stuck.service;
 
+import com.plantcare.admin.audit.service.AdminAuditService;
 import com.plantcare.admin.stuck.dto.StuckUserItemDto;
 import com.plantcare.admin.stuck.repository.AdminStuckRepository;
 import com.plantcare.admin.users.service.AdminUserActionService;
@@ -36,6 +37,7 @@ class AdminStuckServiceTest {
 
     @Mock private AdminStuckRepository repository;
     @Mock private AdminUserActionService userActionService;
+    @Mock private AdminAuditService auditService;
 
     @InjectMocks
     private AdminStuckService service;

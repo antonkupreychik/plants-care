@@ -1,5 +1,7 @@
 package com.plantcare.admin.stuck.service;
 
+import com.plantcare.admin.audit.AdminAuditAction;
+import com.plantcare.admin.audit.service.AdminAuditService;
 import com.plantcare.admin.stuck.dto.StuckUserItemDto;
 import com.plantcare.admin.stuck.repository.AdminStuckRepository;
 import com.plantcare.admin.users.service.AdminUserActionService;
@@ -28,6 +30,7 @@ public class AdminStuckService {
 
     private final AdminStuckRepository repository;
     private final AdminUserActionService userActionService;
+    private final AdminAuditService auditService;
 
     public List<StuckUserItemDto> listStuck() {
         LocalDateTime now = LocalDateTime.now();
@@ -61,6 +64,11 @@ public class AdminStuckService {
         }
         log.info("Bulk stuck-reset by {}: success={}, failed={}, total={}",
                 adminName, success, failed, userIds.size());
+        // Каждый юзер уже записан отдельной USER_RESET_STATE в AdminUserActionService;
+        // эта запись — сводка операции, без target_id (затронут не один объект).
+        auditService.log(AdminAuditAction.STUCK_BULK_RESET, adminName, null, null,
+                AdminAuditService.details("requested", userIds.size(),
+                        "success", success, "failed", failed));
         return new BulkResetResult(success, failed);
     }
 
