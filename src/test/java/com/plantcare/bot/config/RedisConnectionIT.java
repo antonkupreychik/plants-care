@@ -4,9 +4,9 @@ import com.plantcare.bot.support.IntegrationTestBase;
 import com.plantcare.core.config.RedisProperties;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.actuate.health.Health;
-import org.springframework.boot.actuate.health.Status;
-import org.springframework.boot.actuate.data.redis.RedisHealthIndicator;
+import org.springframework.boot.health.contributor.Health;
+import org.springframework.boot.health.contributor.Status;
+import org.springframework.boot.data.redis.health.DataRedisHealthIndicator;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.core.RedisTemplate;
 
@@ -19,7 +19,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * <ul>
  *   <li>RedisConnectionFactory доступна и создаётся корректно.</li>
  *   <li>RedisTemplate инжектируется и выполняет базовые команды (ping).</li>
- *   <li>RedisHealthIndicator возвращает UP при доступном Redis.</li>
+ *   <li>DataRedisHealthIndicator возвращает UP при доступном Redis.</li>
  *   <li>Namespacing ключей (префикс {@code pc:}) через RedisProperties.</li>
  * </ul>
  *
@@ -74,7 +74,7 @@ class RedisConnectionIT extends IntegrationTestBase {
     @Test
     void should_return_up_status_in_health_indicator_when_redis_is_reachable() {
         // arrange
-        var healthIndicator = new RedisHealthIndicator(redisConnectionFactory);
+        var healthIndicator = new DataRedisHealthIndicator(redisConnectionFactory);
 
         // act
         Health health = healthIndicator.health();

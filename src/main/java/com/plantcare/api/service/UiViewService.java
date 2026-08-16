@@ -1,6 +1,6 @@
 package com.plantcare.api.service;
 
-import com.fasterxml.jackson.databind.JsonNode;
+import tools.jackson.databind.JsonNode;
 import com.plantcare.api.generated.model.LocationDto;
 import com.plantcare.api.generated.model.PlantDto;
 import com.plantcare.api.generated.model.TaskDto;
@@ -411,7 +411,7 @@ public class UiViewService {
      */
     private static Map<String, Object> staticBlock(JsonNode blockTemplate) {
         Map<String, Object> block = new LinkedHashMap<>();
-        blockTemplate.fields().forEachRemaining(e -> block.put(e.getKey(), unwrap(e.getValue())));
+        blockTemplate.properties().forEach(e -> block.put(e.getKey(), unwrap(e.getValue())));
         return block;
     }
 
@@ -490,7 +490,7 @@ public class UiViewService {
         }
         if (node.isObject()) {
             Map<String, Object> map = new LinkedHashMap<>();
-            node.fields().forEachRemaining(e -> map.put(e.getKey(), unwrap(e.getValue())));
+            node.properties().forEach(e -> map.put(e.getKey(), unwrap(e.getValue())));
             return map;
         }
         if (node.isArray()) {

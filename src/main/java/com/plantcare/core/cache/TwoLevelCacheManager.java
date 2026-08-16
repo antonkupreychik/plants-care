@@ -7,7 +7,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.cache.Cache;
 import org.springframework.cache.CacheManager;
 import org.springframework.data.redis.core.RedisTemplate;
-import org.springframework.data.redis.serializer.Jackson2JsonRedisSerializer;
+import org.springframework.data.redis.serializer.JacksonJsonRedisSerializer;
 import org.springframework.data.redis.serializer.RedisSerializer;
 import org.springframework.lang.Nullable;
 
@@ -49,7 +49,7 @@ public class TwoLevelCacheManager implements CacheManager {
      * использует {@link CacheInvalidationListener} на принимающей стороне.
      */
     private static final RedisSerializer<CacheInvalidationMessage> MESSAGE_SERIALIZER =
-            new Jackson2JsonRedisSerializer<>(CacheInvalidationMessage.class);
+            new JacksonJsonRedisSerializer<>(CacheInvalidationMessage.class);
 
     /** Сериализатор сообщений инвалидации — для переиспользования листенером. */
     public static RedisSerializer<CacheInvalidationMessage> messageSerializer() {

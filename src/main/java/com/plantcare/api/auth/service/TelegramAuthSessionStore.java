@@ -1,9 +1,9 @@
 package com.plantcare.api.auth.service;
 
-import com.fasterxml.jackson.databind.DeserializationFeature;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.SerializationFeature;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import tools.jackson.databind.DeserializationFeature;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.cfg.DateTimeFeature;
+import tools.jackson.databind.json.JsonMapper;
 import com.plantcare.api.config.TelegramAuthProperties;
 import com.plantcare.core.config.RedisProperties;
 import lombok.extern.slf4j.Slf4j;
@@ -54,10 +54,13 @@ public class TelegramAuthSessionStore {
         this.redisProperties = redisProperties;
         this.telegramAuthProperties = telegramAuthProperties;
         this.clock = clock;
-        this.objectMapper = new ObjectMapper()
-                .registerModule(new JavaTimeModule())
-                .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
-                .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);
+        // Jackson 3: ObjectMapper неизменяем — конфигурируем через builder.
+        // java.time встроен в databind, отдельный JavaTimeModule не нужен;
+        // WRITE_DATES_AS_TIMESTAMPS переехал в DateTimeFeature.
+        this.objectMapper = JsonMapper.builder()
+                .disable(DateTimeFeature.WRITE_DATES_AS_TIMESTAMPS)
+                .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
+                .build();
     }
 
     /** Создаёт новую (ещё не привязанную к коду) сессию с TTL = {@code sessionTtl}. */
