@@ -8,7 +8,7 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>3.5.14</version>
+        <version>4.1.0</version>
         <relativePath/>
     </parent>
 
@@ -21,21 +21,22 @@
     <properties>
         <java.version>21</java.version>
 
-        <hypersistence-utils.version>3.8.3</hypersistence-utils.version>
-        <springdoc.version>2.8.13</springdoc.version>
-        <testcontainers.version>1.20.3</testcontainers.version>
+        <!-- Вариант -hibernate-73 3.15.4 собран против Hibernate 7.4.0.Final, что совпадает
+             с Boot 4.1 (7.4.1). Вариант -70 таргетит 7.0.10 и падает на 7.4 с
+             IncompatibleClassChangeError (JsonJavaTypeDescriptor overrides final method). -->
+        <hypersistence-utils.version>3.15.4</hypersistence-utils.version>
+        <springdoc.version>3.1.0</springdoc.version>
         <lombok.version>1.18.46</lombok.version>
         <jacoco.version>0.8.14</jacoco.version>
         <openapi-generator.version>7.10.0</openapi-generator.version>
         <swagger-annotations.version>2.2.25</swagger-annotations.version>
-        <jackson-databind-nullable.version>0.2.6</jackson-databind-nullable.version>
         <!-- Issue #127: ArchUnit — проверка границ модульного монолита (core ∌ bot/admin/api). -->
-        <archunit.version>1.3.0</archunit.version>
-        <!-- Issue #114: Sentry 7.x. -jakarta-вариант таргетит jakarta.* и совместим
-             со Spring Boot 3.5.x (текущая 3.5.14). 7.22.5 — последняя стабильная в линии 7.x. -->
-        <sentry.version>7.22.5</sentry.version>
-        <!-- Эпик #277 (фаза 1, #279): ShedLock 5.x совместим со Spring 6 / Boot 3.5.x. -->
-        <shedlock.version>5.16.0</shedlock.version>
+        <archunit.version>1.5.0</archunit.version>
+        <!-- Issue #114: Sentry 8.x. Артефакт sentry-spring-boot-4-starter собран против
+             Boot 4.1.0; прежний -jakarta-вариант даже в 8.53.0 таргетит Boot 3.5.x. -->
+        <sentry.version>8.53.0</sentry.version>
+        <!-- Эпик #277 (фаза 1, #279): ShedLock 7.x — линия под Spring 7 / Boot 4.x. -->
+        <shedlock.version>7.8.0</shedlock.version>
         <!-- Issue #90 (Slice A): AWS SDK v2 для S3-совместимого object storage (Railway).
              Лёгкий sync-клиент url-connection-client вместо netty-async (см. зависимости ниже). -->
         <awssdk.version>2.30.18</awssdk.version>
@@ -85,7 +86,7 @@
              на проде после запуска REST API (#84) и mobile (#88+). Обоснование в issue. -->
         <dependency>
             <groupId>io.sentry</groupId>
-            <artifactId>sentry-spring-boot-starter-jakarta</artifactId>
+            <artifactId>sentry-spring-boot-4-starter</artifactId>
             <version>${sentry.version}</version>
         </dependency>
 
@@ -136,9 +137,15 @@
              bucket4j was initially planned but is not yet cached locally; Caffeine provides
              equivalent in-memory sliding-window semantics with zero new transitive deps. -->
 
+        <!-- Подготовка к Spring Boot 4: взят «голый» telegrambots-longpolling вместо
+             spring-boot-стартера. Стартер собран против Boot 3.5.x и тянет его
+             автоконфигурацию (TelegramBotStarterConfiguration), которой мы не пользуемся:
+             TelegramBotsLongPollingApplication создаётся руками в TelegramBotConfig,
+             а TelegramClient — в AdminTelegramConfig. Импортов из пакета
+             ...longpolling.starter в коде нет. -->
         <dependency>
             <groupId>org.telegram</groupId>
-            <artifactId>telegrambots-springboot-longpolling-starter</artifactId>
+            <artifactId>telegrambots-longpolling</artifactId>
             <version>9.5.0</version>
             <scope>compile</scope>
         </dependency>
@@ -161,9 +168,13 @@
             <scope>runtime</scope>
         </dependency>
 
+        <!-- Boot 4: автоконфигурация Flyway вынесена в модуль spring-boot-flyway.
+             Голый flyway-core её больше НЕ приносит — на Boot 4 миграции просто
+             перестают накатываться молча, а Hibernate падает на validate.
+             Стартер тянет и flyway-core, и автоконфигурацию. -->
         <dependency>
-            <groupId>org.flywaydb</groupId>
-            <artifactId>flyway-core</artifactId>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-flyway</artifactId>
         </dependency>
 
         <dependency>
@@ -174,7 +185,7 @@
         <!-- JSONB support -->
         <dependency>
             <groupId>io.hypersistence</groupId>
-            <artifactId>hypersistence-utils-hibernate-63</artifactId>
+            <artifactId>hypersistence-utils-hibernate-73</artifactId>
             <version>${hypersistence-utils.version}</version>
         </dependency>
 
@@ -185,16 +196,14 @@
             <version>${springdoc.version}</version>
         </dependency>
 
-        <!-- Runtime deps для кода, сгенерированного openapi-generator (spring) -->
+        <!-- Runtime deps для кода, сгенерированного openapi-generator (spring).
+             jackson-databind-nullable убран: JsonNullable не используется ни в src/,
+             ни в 134 файлах target/generated-sources. Держал Jackson 2 на класспасе
+             без причины — мешает переходу на Jackson 3. -->
         <dependency>
             <groupId>io.swagger.core.v3</groupId>
             <artifactId>swagger-annotations</artifactId>
             <version>${swagger-annotations.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>org.openapitools</groupId>
-            <artifactId>jackson-databind-nullable</artifactId>
-            <version>${jackson-databind-nullable.version}</version>
         </dependency>
 
         <!-- Issue #279, эпик #277 фаза 1: ShedLock на JDBC (Postgres) — distributed
@@ -264,23 +273,49 @@
             <scope>test</scope>
         </dependency>
 
+        <!-- Boot 4 разнёс тестовые срезы по отдельным модулям: @WebMvcTest/@AutoConfigureMockMvc
+             уехали из spring-boot-test-autoconfigure в spring-boot-webmvc-test,
+             @DataJpaTest — в spring-boot-data-jpa-test. Без этих стартеров срезы не компилируются. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-webmvc-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-jpa-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+
         <dependency>
             <groupId>org.springframework.security</groupId>
             <artifactId>spring-security-test</artifactId>
             <scope>test</scope>
         </dependency>
 
+        <!-- Boot 4: SecurityMockMvcAutoConfiguration (подключение springSecurity() к MockMvc)
+             вынесена в модуль spring-boot-security-test и НЕ входит в starter-webmvc-test.
+             Без неё security-фильтры в @WebMvcTest не отрабатывают, request.getUserPrincipal()
+             пуст, и параметр метода Authentication приезжает в контроллер как null. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- Версия Testcontainers намеренно не пинуется: её задаёт BOM spring-boot-dependencies
+             (импортирует testcontainers-bom). В Testcontainers 2.0 артефакты переименованы:
+             postgresql -> testcontainers-postgresql, junit-jupiter -> testcontainers-junit-jupiter. -->
         <dependency>
             <groupId>org.testcontainers</groupId>
-            <artifactId>postgresql</artifactId>
-            <version>${testcontainers.version}</version>
+            <artifactId>testcontainers-postgresql</artifactId>
             <scope>test</scope>
         </dependency>
 
         <dependency>
             <groupId>org.testcontainers</groupId>
-            <artifactId>junit-jupiter</artifactId>
-            <version>${testcontainers.version}</version>
+            <artifactId>testcontainers-junit-jupiter</artifactId>
             <scope>test</scope>
         </dependency>
 

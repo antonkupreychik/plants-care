@@ -5,12 +5,11 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.web.client.TestRestTemplate;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
+import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.web.servlet.client.RestTestClient;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
@@ -64,16 +63,25 @@ class PrometheusEndpointIntegrationTest {
         registry.add("admin.password-bcrypt-hash", () -> "");
     }
 
-    @Autowired private TestRestTemplate restTemplate;
+    // Boot 4 удалил TestRestTemplate; замена — RestTestClient из spring-test,
+    // автоконфигурации для него нет, поэтому строим его на @LocalServerPort.
+    @LocalServerPort private int port;
     @Autowired private MetricsService metricsService;
+
+    private RestTestClient client() {
+        return RestTestClient.bindToServer().baseUrl("http://localhost:" + port).build();
+    }
 
     @Test
     @DisplayName("Endpoint отдаёт 200 OK когда admin отключён (пустые креды)")
     void should_return_200_when_admin_disabled_in_test_profile() {
-        ResponseEntity<String> response = restTemplate.getForEntity("/actuator/prometheus", String.class);
+        String body = client().get().uri("/actuator/prometheus")
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody(String.class)
+                .returnResult().getResponseBody();
 
-        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-        assertThat(response.getBody()).isNotBlank();
+        assertThat(body).isNotBlank();
     }
 
     @Test
@@ -86,11 +94,12 @@ class PrometheusEndpointIntegrationTest {
         metricsService.recordDigestSent();
         metricsService.updateActiveDau(5L);
 
-        ResponseEntity<String> response = restTemplate.getForEntity("/actuator/prometheus", String.class);
+        String body = client().get().uri("/actuator/prometheus")
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody(String.class)
+                .returnResult().getResponseBody();
 
-        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-
-        String body = response.getBody();
         assertThat(body)
                 .as("Prometheus body should expose our custom counters with dots converted to underscores")
                 .contains("users_registered_total")
@@ -104,11 +113,14 @@ class PrometheusEndpointIntegrationTest {
     void should_include_low_cardinality_tags_in_prometheus_output() {
         metricsService.recordNotificationSent(MetricsService.CHANNEL_TELEGRAM, TaskType.MISTING);
 
-        ResponseEntity<String> response = restTemplate.getForEntity("/actuator/prometheus", String.class);
+        String body = client().get().uri("/actuator/prometheus")
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody(String.class)
+                .returnResult().getResponseBody();
 
-        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
         // Не привязываемся к точному порядку label'ов — проверяем сам факт их наличия.
-        assertThat(response.getBody())
+        assertThat(body)
                 .contains("channel=\"telegram\"")
                 .contains("task_type=\"MISTING\"");
     }

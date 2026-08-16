@@ -78,7 +78,6 @@
       "Bash(gh pr review:*)",
       "Bash(gh issue create:*)",
       "Bash(gh issue edit:*)",
-      "Edit(pom.xml)",
       "Write(src/main/resources/db/migration/*)",
       "mcp__notion__notion-create-pages",
       "mcp__notion__notion-update-page"

@@ -9,7 +9,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
 import org.telegram.telegrambots.meta.api.objects.Update;
 import org.telegram.telegrambots.meta.api.objects.location.Location;
@@ -33,10 +33,10 @@ class AwaitingTimezoneStateHandlerTest extends IntegrationTestBase {
     @Autowired
     private UserService userService;
 
-    @MockBean
+    @MockitoBean
     private TelegramClient telegramClient;
 
-    @MockBean
+    @MockitoBean
     private TimeZoneEngine timeZoneEngine;
 
     private User testUser;
