@@ -10,13 +10,17 @@ paths:
         Возвращает страницу истории ухода за растением, принадлежащим
         текущему пользователю (`sub` из bearer-токена).
 
-        В выдачу попадают только активные (не отменённые) записи всех типов
-        ухода **кроме `SOIL_CHECK`** — это служебный тип, который наружу не
-        выставляется.
+        В выдачу попадают все активные (не отменённые) записи ухода, включая
+        `SOIL_CHECK` (issue #222) — мобильный дневник показывает проверки
+        грунта наравне с остальными типами.
 
         Пагинация — `limit/offset`. `limit` строго в диапазоне [1, 100]
         (значения вне диапазона отдаются как 400). `offset` < 0 нормализуется
         в 0.
+
+        Опциональный параметр `type` позволяет фильтровать историю по типу
+        ухода. Допустимые значения: `WATER`, `SPRAY`, `FERTILIZE`, `SOIL_CHECK`.
+        Если не задан — возвращаются все типы.
       security:
         - bearerAuth: []
       parameters:
@@ -40,6 +44,14 @@ paths:
             format: int32
             default: 0
             minimum: 0
+        - name: type
+          in: query
+          required: false
+          description: |
+            Фильтр по типу ухода. Допустимые значения: `WATER`, `SPRAY`, `FERTILIZE`, `SOIL_CHECK`.
+            Если не задан — возвращаются все типы.
+          schema:
+            $ref: './care-events.yaml#/schemas/CareEventType'
       responses:
         '200':
           description: Страница истории.
@@ -49,6 +61,33 @@ paths:
                 $ref: '#/schemas/PlantHistoryResponse'
         '400':
           $ref: '../_common/responses.yaml#/BadRequest'
+        '404':
+          $ref: '../_common/responses.yaml#/NotFound'
+
+  ItemHistorySummary:
+    get:
+      tags: [Plant History]
+      operationId: getPlantHistorySummary
+      summary: Сводная статистика по всей истории растения
+      description: |
+        Возвращает агрегированную статистику по **всей** истории ухода за
+        растением (не по странице). Учитываются только активные (не отменённые)
+        записи. Тип `SOIL_CHECK` из выдачи исключён.
+
+        Доступ только к неархивированному растению текущего пользователя
+        (`sub` из bearer-токена). Если растение не найдено или принадлежит
+        другому пользователю — 404.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '../_common/parameters.yaml#/PlantIdPath'
+      responses:
+        '200':
+          description: Сводная статистика посчитана.
+          content:
+            application/json:
+              schema:
+                $ref: '#/schemas/PlantHistorySummaryDto'
         '404':
           $ref: '../_common/responses.yaml#/NotFound'
 
@@ -75,3 +114,36 @@ schemas:
         type: integer
         format: int32
         example: 0
+
+  PlantHistorySummaryDto:
+    type: object
+    description: Агрегированная статистика по всей истории ухода за растением.
+    required: [total, onTimeCount, onTimePercent, byType]
+    properties:
+      total:
+        type: integer
+        format: int64
+        description: Всего активных (не отменённых) записей истории.
+        example: 47
+      onTimeCount:
+        type: integer
+        format: int64
+        description: Из них выполненных вовремя (`was_on_time = true`).
+        example: 38
+      onTimePercent:
+        type: integer
+        format: int32
+        description: Процент вовремя выполненных. 0 если `total = 0`.
+        example: 81
+      byType:
+        type: object
+        description: |
+          Разбивка по типам ухода. Только типы с `count > 0`, `SOIL_CHECK` исключён.
+          Ключи — значения `CareEventType` (`WATER`, `SPRAY`, `FERTILIZE`).
+        additionalProperties:
+          type: integer
+          format: int64
+        example:
+          WATER: 20
+          SPRAY: 15
+          FERTILIZE: 12

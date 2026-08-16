@@ -1,0 +1,21 @@
+meta {
+  name: Locations – get by id
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/api/v1/locations/{{locationId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{accessToken}}
+}
+
+assert {
+  res.status: eq 200
+  res.body.id: eq {{locationId}}
+  res.body.name: isDefined
+}

@@ -1,6 +1,7 @@
 package com.plantcare.core.service;
 
 import com.plantcare.core.domain.CareSchedule;
+import com.plantcare.core.domain.Location;
 import com.plantcare.core.domain.enums.TaskType;
 import com.plantcare.core.repository.CareHistoryRepository;
 import com.plantcare.core.repository.CareScheduleRepository;
@@ -30,6 +31,8 @@ import java.util.Map;
  * (б) done-сегодня — активные расписания, по которым есть активная (не-cancelled)
  * запись {@code care_history} в окне сегодняшнего дня. Дедуп по (plantId, taskType)
  * в пользу done.
+ *
+ * <p>Issue #250 (мультидомность): растения локаций на паузе исключаются из выдачи.
  */
 @Slf4j
 @Service
@@ -44,6 +47,9 @@ public class TodayApiService {
     /**
      * Задачи ухода на сегодня в таймзоне пользователя: pending (дедлайн до конца дня)
      * и выполненные сегодня. Дедуп по (plantId, taskType) — done перекрывает pending.
+     *
+     * <p>Растения локаций, у которых выставлен {@code paused_until} в будущем,
+     * исключаются (issue #250 — пауза локации).
      *
      * @param userId   внутренний id пользователя
      * @param timezone строка таймзоны пользователя
@@ -65,6 +71,12 @@ public class TodayApiService {
 
         List<TodayTask> tasks = new ArrayList<>();
         for (CareSchedule schedule : schedules) {
+            // Пропускаем растения из локаций на паузе (issue #250).
+            Location location = schedule.getPlant().getLocation();
+            if (location != null && location.isPaused()) {
+                continue;
+            }
+
             TaskKey key = new TaskKey(schedule.getPlant().getId(), schedule.getTaskType());
             LocalDateTime doneAt = doneByKey.get(key);
             boolean pending = !schedule.getNextDueAt().isAfter(endOfToday);

@@ -28,6 +28,10 @@ import java.util.Map;
  * <p>Смена таймзоны делегируется {@link UserSettingsService#changeTimezone(User, ZoneId)},
  * чтобы сохранить пересчёт активных расписаний (локальное время дня не «съезжает»).
  * Внешних вызовов (Telegram) внутри транзакции нет — только чтение/запись БД.
+ *
+ * <p>{@code calendarSubscriptionUrl} читается из уже существующего {@code calendar_token} юзера
+ * (lazy — токен генерируется только при первом обращении к {@code GET /calendar/{token}.ics}).
+ * При {@code null}-токене поле {@code calendarSubscriptionUrl} тоже {@code null} (issue #208).
  */
 @Slf4j
 @Service
@@ -38,6 +42,8 @@ public class UserProfileService {
     private final PlantRepository plantRepository;
     private final TodayApiService todayApiService;
     private final UserSettingsService userSettingsService;
+    private final CareHistoryService careHistoryService;
+    private final CalendarExportService calendarExportService;
 
     /**
      * Собранный профиль пользователя для {@code GET /api/v1/me}.
@@ -45,6 +51,8 @@ public class UserProfileService {
      * <p>{@code avatar} — плейсхолдер: в схеме нет колонки под аватар, поэтому
      * всегда {@code null}. {@code notificationsUnread} — плейсхолдер {@code 0}:
      * фид уведомлений (issue #183) ещё не влит в эту ветку.
+     * <p>{@code calendarSubscriptionUrl} — {@code null}, если у юзера нет токена
+     * (токен создаётся лениво при первом обращении к эндпоинту {@code .ics}).
      */
     public record Profile(
             long id,
@@ -55,6 +63,7 @@ public class UserProfileService {
             String avatar,
             int plantsTotal,
             int tasksToday,
+            long totalCareEvents,
             int notificationsUnread,
             LocalTime quietHoursStart,
             LocalTime quietHoursEnd,
@@ -67,7 +76,9 @@ public class UserProfileService {
             boolean appleLinked,
             boolean googleLinked,
             boolean emailLinked,
-            boolean telegramLinked
+            boolean telegramLinked,
+            boolean isGuest,
+            String calendarSubscriptionUrl
     ) {
     }
 
@@ -101,6 +112,8 @@ public class UserProfileService {
                 .filter(t -> t.doneAt() == null)
                 .count();
 
+        long totalCareEvents = careHistoryService.countAllByUser(user.getId());
+
         // notificationsUnread — плейсхолдер: фид уведомлений (issue #183) ещё не влит.
         int notificationsUnread = 0;
 
@@ -108,6 +121,12 @@ public class UserProfileService {
         OffsetDateTime createdAt = user.getCreatedAt() == null
                 ? null
                 : user.getCreatedAt().atOffset(ZoneOffset.UTC);
+
+        // calendarSubscriptionUrl — только если токен уже существует (не создаём его здесь,
+        // read-only транзакция). Токен генерируется лениво при первом обращении к .ics.
+        String calendarSubscriptionUrl = user.getCalendarToken() != null
+                ? calendarExportService.buildCalendarUrl(user.getCalendarToken())
+                : null;
 
         return new Profile(
                 user.getId(),
@@ -118,6 +137,7 @@ public class UserProfileService {
                 null, // avatar — плейсхолдер, колонки в схеме нет.
                 plantsTotal,
                 tasksToday,
+                totalCareEvents,
                 notificationsUnread,
                 user.getQuietHoursStart(),
                 user.getQuietHoursEnd(),
@@ -130,7 +150,9 @@ public class UserProfileService {
                 user.getAppleSubject() != null,
                 user.getGoogleSubject() != null,
                 user.getEmail() != null,
-                user.getTelegramChatId() != null
+                user.getTelegramChatId() != null,
+                user.isGuest(),
+                calendarSubscriptionUrl
         );
     }
 
@@ -187,6 +209,23 @@ public class UserProfileService {
                 update.weatherEnabled() != null);
 
         return getProfile(user);
+    }
+
+    /**
+     * Устанавливает координаты погодной локации пользователя (issue #257,
+     * mobile gap: weather-location). После вызова {@link User#isWeatherUsable()}
+     * вернёт {@code true}, если у юзера ещё включён {@code weatherEnabled}.
+     *
+     * @param user аутентифицированный пользователь
+     * @param lat  широта [-90, 90]
+     * @param lon  долгота [-180, 180]
+     */
+    @Transactional
+    public void setWeatherLocation(User user, double lat, double lon) {
+        user.setWeatherLat(lat);
+        user.setWeatherLon(lon);
+        userRepository.save(user);
+        log.info("PUT /me/weather-location: userId={}, lat={}, lon={}", user.getId(), lat, lon);
     }
 
     private static ZoneId parseZone(String timezone) {

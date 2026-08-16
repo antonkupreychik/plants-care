@@ -30,9 +30,29 @@ class LayeredArchitectureTest {
                     .resideInAnyPackage(
                             "com.plantcare.bot..",
                             "com.plantcare.admin..",
-                            "com.plantcare.api..")
+                            "com.plantcare.api..",
+                            "com.plantcare.delivery..")
                     .because("core — ядро модульного монолита и не должно знать про слои доставки "
-                            + "(bot/admin/api). Зависимости текут только внутрь, к core (#127).");
+                            + "(bot/admin/api/delivery). Зависимости текут только внутрь, к core (#127). "
+                            + "В частности, выбор FcmPushSender живёт в com.plantcare.delivery.push, "
+                            + "а core знает только про порт PushSender и NoopPushSender (#176).");
+
+    /**
+     * Слой доставки push ({@code com.plantcare.delivery}) — отдельный канал, не связанный с
+     * Telegram-ботом. Он не должен зависеть ни от Telegram API ({@code org.telegram.*}), ни от
+     * пакета бота ({@code com.plantcare.bot}): FCM-шлюз обращается только к core-порту
+     * {@link com.plantcare.core.service.PushSender} и Firebase Admin SDK (#176).
+     */
+    @ArchTest
+    static final ArchRule delivery_must_not_depend_on_bot_or_telegram =
+            noClasses()
+                    .that().resideInAPackage("com.plantcare.delivery..")
+                    .should().dependOnClassesThat()
+                    .resideInAnyPackage(
+                            "com.plantcare.bot..",
+                            "org.telegram..")
+                    .because("delivery (FCM push) — независимый канал доставки и не должен зависеть "
+                            + "от Telegram-бота или Telegram API; только от core-порта PushSender (#176).");
 
     /**
      * Telegram API ({@code org.telegram.*}) — деталь слоя доставки (бот). Если core строит

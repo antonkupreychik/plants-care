@@ -61,6 +61,17 @@ public class ShoppingController implements ShoppingApi {
     }
 
     @Override
+    public void clearCheckedShoppingItems(Boolean checked) {
+        // OpenAPI-схема гарантирует checked=true (enum [true]),
+        // но добавляем явную проверку для защиты от рефлекторного вызова с false.
+        if (!Boolean.TRUE.equals(checked)) {
+            throw new IllegalArgumentException("Параметр checked должен быть true");
+        }
+        Long userId = currentUserProvider.currentUserId();
+        shoppingListService.clearChecked(userId);
+    }
+
+    @Override
     public void deleteShoppingItem(Long id) {
         Long userId = currentUserProvider.currentUserId();
         try {

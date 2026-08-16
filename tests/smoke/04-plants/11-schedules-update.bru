@@ -1,0 +1,30 @@
+meta {
+  name: Plants – update WATERING schedule
+  type: http
+  seq: 11
+}
+
+put {
+  url: {{baseUrl}}/api/v1/plants/{{plantId}}/schedules/WATERING
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{accessToken}}
+}
+
+body:json {
+  {
+    "every": 7,
+    "amountMl": 200,
+    "enabled": true,
+    "seasonalOverride": "DISABLED"
+  }
+}
+
+assert {
+  res.status: eq 200
+  res.body.every: eq 7
+  res.body.enabled: eq true
+}

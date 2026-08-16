@@ -16,7 +16,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class SpeciesSeedTest extends IntegrationTestBase {
 
-    private static final int EXPECTED_SEEDED_SPECIES = 30;
+    // V2 сидит 30 видов + V49 (#298) добавляет 110 идемпотентных (INSERT ... WHERE NOT EXISTS) = 140.
+    private static final int EXPECTED_SEEDED_SPECIES = 140;
 
     @Autowired
     private JdbcTemplate jdbc;

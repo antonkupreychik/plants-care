@@ -1,0 +1,33 @@
+meta {
+  name: Calendar – 7-day range
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/api/v1/calendar
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{accessToken}}
+}
+
+script:pre-request {
+  const today = new Date();
+  const from = today.toISOString().split("T")[0];
+  const to = new Date(today.getTime() + 6 * 86400000).toISOString().split("T")[0];
+  bru.setVar("calFrom", from);
+  bru.setVar("calTo", to);
+}
+
+params:query {
+  from: {{calFrom}}
+  to: {{calTo}}
+}
+
+assert {
+  res.status: eq 200
+  res.body: isObject
+}

@@ -16,6 +16,7 @@ import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import org.hibernate.annotations.UpdateTimestamp;
 
 import java.time.LocalDateTime;
 
@@ -75,6 +76,15 @@ public class CareHistory extends BaseEntity {
     @OneToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "cancelled_by")
     private CareHistory cancelledBy;
+
+    /**
+     * Когда запись была изменена. Обновляется Hibernate при каждом UPDATE (issue #91).
+     * Используется в офлайн-синке: клиент передаёт since, сервер возвращает всё,
+     * что изменилось позднее.
+     */
+    @UpdateTimestamp
+    @Column(name = "updated_at", nullable = false)
+    private LocalDateTime updatedAt;
 
     /**
      * Возвращает true, если запись была отменена компенсирующей.

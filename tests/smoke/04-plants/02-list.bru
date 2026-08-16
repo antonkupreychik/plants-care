@@ -1,0 +1,26 @@
+meta {
+  name: Plants – list all
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/api/v1/plants
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{accessToken}}
+}
+
+params:query {
+  limit: 20
+  offset: 0
+}
+
+assert {
+  res.status: eq 200
+  res.body.items: isArray
+  res.body.total: isNumber
+}

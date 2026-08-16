@@ -213,6 +213,14 @@ public class LocationMenuService {
             )));
         }
 
+        // Совместный уход (issue #77): поделиться доступом к этой комнате.
+        rows.add(new InlineKeyboardRow(List.of(
+                InlineKeyboardButton.builder()
+                        .text("🤝 Поделиться доступом")
+                        .callbackData("LOCATION:SHARE:" + location.getId())
+                        .build()
+        )));
+
         rows.add(new InlineKeyboardRow(List.of(
                 InlineKeyboardButton.builder()
                         .text("✏️ Переименовать")
@@ -223,6 +231,23 @@ public class LocationMenuService {
                         .callbackData("LOCATION:EMOJI:" + location.getId())
                         .build()
         )));
+
+        // Issue #70: кнопка паузы/возобновления локации.
+        if (location.isPaused()) {
+            rows.add(new InlineKeyboardRow(List.of(
+                    InlineKeyboardButton.builder()
+                            .text("▶️ Возобновить локацию")
+                            .callbackData("LOC_RESUME:" + location.getId())
+                            .build()
+            )));
+        } else {
+            rows.add(new InlineKeyboardRow(List.of(
+                    InlineKeyboardButton.builder()
+                            .text("⏸ Поставить на паузу")
+                            .callbackData("LOCATION:PAUSE_MENU:" + location.getId())
+                            .build()
+            )));
+        }
 
         if (!location.isDefaultLocation()) {
             rows.add(new InlineKeyboardRow(List.of(
@@ -235,7 +260,7 @@ public class LocationMenuService {
 
         rows.add(new InlineKeyboardRow(List.of(
                 InlineKeyboardButton.builder()
-                        .text("⬅️ К комнатам")
+                        .text("⬅️ К локациям")
                         .callbackData("MENU:LOCATIONS")
                         .build()
         )));

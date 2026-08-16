@@ -1,0 +1,25 @@
+meta {
+  name: Edge – 400 calendar range > 60 days
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/api/v1/calendar
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{accessToken}}
+}
+
+params:query {
+  from: 2025-01-01
+  to: 2025-12-31
+}
+
+assert {
+  res.status: eq 400
+  res.body.error: isDefined
+}

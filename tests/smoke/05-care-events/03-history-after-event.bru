@@ -1,0 +1,30 @@
+meta {
+  name: Care Events – history reflects logged event
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/api/v1/plants/{{plantId}}/history
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{accessToken}}
+}
+
+params:query {
+  type: WATER
+  limit: 10
+  offset: 0
+}
+
+assert {
+  res.status: eq 200
+  res.body.items: isArray
+}
+
+script:post-response {
+  expect(res.body.items.length).to.be.gte(1);
+}

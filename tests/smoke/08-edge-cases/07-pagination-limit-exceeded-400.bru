@@ -1,0 +1,21 @@
+meta {
+  name: Edge – 400 limit=101 exceeds max
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/api/v1/species
+  body: none
+  auth: none
+}
+
+params:query {
+  limit: 101
+  offset: 0
+}
+
+assert {
+  res.status: eq 400
+  res.body.error: isDefined
+}

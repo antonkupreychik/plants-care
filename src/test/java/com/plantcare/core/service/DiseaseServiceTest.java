@@ -7,6 +7,8 @@ import com.plantcare.bot.support.IntegrationTestBase;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 
 import java.util.List;
 
@@ -163,5 +165,52 @@ class DiseaseServiceTest extends IntegrationTestBase {
 
         assertThat(results).extracting(DiseaseCard::name)
                 .contains("Паутинный клещ");
+    }
+
+    // ------------------------------------------------------------------ findPage / searchPage (issue #255)
+
+    @Test
+    void should_return_paged_result_when_findPage() {
+        Page<DiseaseCard> page = diseaseService.findPage(PageRequest.of(0, 5));
+
+        assertThat(page.getContent()).hasSizeLessThanOrEqualTo(5);
+        assertThat(page.getTotalElements()).isGreaterThanOrEqualTo(20);
+        assertThat(page.getContent()).extracting(DiseaseCard::name)
+                .isSortedAccordingTo(String::compareTo);
+    }
+
+    @Test
+    void should_return_second_page_when_offset_applied() {
+        Page<DiseaseCard> firstPage = diseaseService.findPage(PageRequest.of(0, 5));
+        Page<DiseaseCard> secondPage = diseaseService.findPage(PageRequest.of(1, 5));
+
+        assertThat(firstPage.getContent()).isNotEqualTo(secondPage.getContent());
+        assertThat(secondPage.getNumber()).isEqualTo(1);
+    }
+
+    @Test
+    void should_search_by_name_paged_when_searchPage() {
+        Page<DiseaseCard> page = diseaseService.searchPage("клещ", PageRequest.of(0, 20));
+
+        assertThat(page.getContent()).extracting(DiseaseCard::name)
+                .contains("Паутинный клещ");
+        assertThat(page.getTotalElements()).isGreaterThanOrEqualTo(1);
+    }
+
+    @Test
+    void should_search_by_symptom_word_paged_when_searchPage() {
+        // «налёт» присутствует в symptoms/search_tags нескольких грибковых болезней
+        Page<DiseaseCard> page = diseaseService.searchPage("налёт", PageRequest.of(0, 20));
+
+        assertThat(page.getContent()).extracting(DiseaseCard::name)
+                .contains("Мучнистая роса");
+    }
+
+    @Test
+    void should_return_empty_page_when_searchPage_blank_query() {
+        Page<DiseaseCard> page = diseaseService.searchPage("  ", PageRequest.of(0, 20));
+
+        assertThat(page.getContent()).isEmpty();
+        assertThat(page.getTotalElements()).isZero();
     }
 }

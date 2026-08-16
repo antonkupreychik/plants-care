@@ -62,10 +62,19 @@ tags:
       soft-delete (флаг `archivedAt`), физически записи в БД остаются.
   - name: Plant History
     description: История событий ухода для конкретного растения с пагинацией.
+  - name: Plant Events
+    description: |
+      Журнал редких разовых событий растения (пересадка, замена грунта,
+      обрезка, обработка от вредителей) с пагинацией и дедупом повторных нажатий.
   - name: Locations
     description: |
       Локации (комнаты/места) пользователя, в которых стоят растения. Каждый
       пользователь имеет «дефолтную» локацию, создаваемую автоматически.
+  - name: Rooms
+    description: |
+      CRUD комнат внутри локации (issue #283). Комната принадлежит локации;
+      GET/POST идут через /locations/{locationId}/rooms,
+      PATCH/DELETE — через /rooms/{id}.
   - name: Care Events
     description: |
       Регистрация выполнения ухода (полив, опрыскивание, удобрение) и его отмена.
@@ -84,6 +93,10 @@ tags:
     description: Публичный справочник видов растений. Без авторизации.
   - name: Care Types
     description: Публичный справочник типов ухода (полив, опрыскивание, и т.п.). Без авторизации.
+  - name: Diseases
+    description: Публичный справочник болезней и вредителей комнатных растений. Без авторизации.
+  - name: Weather
+    description: Текущий снимок погоды для рекомендаций по уходу.
   - name: Schedules
     description: |
       Расписания ухода конкретного растения (полив, опрыскивание, удобрение,
@@ -96,6 +109,57 @@ tags:
     description: |
       Персистентный inbox уведомлений пользователя для мобильного приложения
       (gap G17): лента со счётчиком непрочитанных и идемпотентная отметка прочтения.
+  - name: Vacation
+    description: |
+      Режим отпуска (issue #189, mobile G21, экран 25): пользователь задаёт
+      диапазон дат отъезда; на этот период напоминания приостанавливаются.
+      Дедлайны не переносятся — просроченные задачи показываются в сводке
+      «С возвращением!» после окончания отпуска.
+  - name: Sharing
+    description: |
+      Совместный уход (gap G22, экран 26): владелец приглашает соухаживающего
+      по контакту (@username / телефон), выбирает растения и даёт право
+      отмечать уход.
+  - name: LocationSharing
+    description: |
+      REST API совместного ухода по локации (issue #251): OWNER создаёт одноразовый
+      инвайт, CARETAKER принимает его по токену. Оба видят растения/задачи локации;
+      отметка ухода одним участником закрывает задачу для всех.
+  - name: Devices
+    description: |
+      Регистрация и отвязка мобильных устройств для push-уведомлений
+      (issue #175, ADR-014). Хранит push-токены (FCM / APNs) для будущей
+      отправки уведомлений.
+  - name: Sync
+    description: |
+      Офлайн-синхронизация (issue #91): инкрементальная выдача изменений для
+      мобильного приложения. Клиент передаёт `since` (серверное время из предыдущего
+      ответа) и получает все сущности, изменённые после этого момента, а также
+      список удалений. Server timestamp wins при конфликтах.
+  - name: UI
+    description: |
+      Server-Driven UI (issue #284): сервер собирает композицию экранов из
+      блоков. Состав/порядок блоков управляется таблицей `ui_views`, ответ
+      `GET /api/v1/ui/{screen}` — опаковый JSON-объект (клиент рендерит блоки
+      по их `type`). Данные блоков гидрируются из существующих сервисов;
+      вёрстку применяет клиент. Версия каталога блоков передаётся в заголовке
+      `X-UI-Catalog-Version` — блоки выше неё в ответ не попадают.
+  - name: PlantTemplates
+    description: |
+      Пользовательские шаблоны растений (issue #254): сохранение набора интервалов
+      ухода из существующего растения, быстрое создание нового растения по шаблону.
+      Максимум 30 шаблонов на пользователя.
+  - name: Photos
+    description: |
+      Хранилище фото в S3-совместимом бакете (issue #90, Slice A): загрузка
+      (multipart), выдача через presigned URL (302 redirect) и soft-delete.
+      Все эндпоинты требуют bearer-токен.
+  - name: PhotoProgress
+    description: |
+      Фото-дневник развития растения (issue #253): загрузка снимков прогресса
+      (multipart в S3), история с датами и presigned URL, сравнение двух
+      снимков «до/после» и частота напоминаний о фото. REST поверх
+      `PhotoProgressService`; растение должно принадлежать пользователю.
 
 paths:
   /api/v1/auth/apple:
@@ -112,6 +176,10 @@ paths:
     $ref: './resources/auth.yaml#/paths/Logout'
   /api/v1/auth/logout-all:
     $ref: './resources/auth.yaml#/paths/LogoutAll'
+  /api/v1/auth/guest:
+    $ref: './resources/guest.yaml#/paths/GuestLogin'
+  /api/v1/auth/guest/convert:
+    $ref: './resources/guest.yaml#/paths/GuestConvert'
 
   /api/v1/health:
     $ref: './resources/health.yaml#/paths/Health'
@@ -120,8 +188,18 @@ paths:
     $ref: './resources/plants.yaml#/paths/Collection'
   /api/v1/plants/{id}:
     $ref: './resources/plants.yaml#/paths/Item'
+  /api/v1/plants/{id}/archive:
+    $ref: './resources/plants.yaml#/paths/ItemArchive'
+  /api/v1/plants/{id}/restore:
+    $ref: './resources/plants.yaml#/paths/ItemRestore'
   /api/v1/plants/{id}/history:
     $ref: './resources/plant-history.yaml#/paths/ItemHistory'
+  /api/v1/plants/{id}/history/summary:
+    $ref: './resources/plant-history.yaml#/paths/ItemHistorySummary'
+  /api/v1/plants/{id}/events:
+    $ref: './resources/plant-events.yaml#/paths/Collection'
+  /api/v1/plants/{id}/acclimation:
+    $ref: './resources/plants.yaml#/paths/ItemAcclimation'
   /api/v1/plants/{id}/health:
     $ref: './resources/plants.yaml#/paths/ItemHealth'
   /api/v1/plants/{id}/family:
@@ -132,11 +210,33 @@ paths:
     $ref: './resources/schedules.yaml#/paths/Collection'
   /api/v1/plants/{id}/schedules/{type}:
     $ref: './resources/schedules.yaml#/paths/Item'
+  /api/v1/plants/{id}/schedules/{type}/postpone:
+    $ref: './resources/schedules.yaml#/paths/ItemPostpone'
+
+  /api/v1/plants/{id}/photo-progress:
+    $ref: './resources/plant-photo-progress.yaml#/paths/Collection'
+  /api/v1/plants/{id}/photo-progress/compare:
+    $ref: './resources/plant-photo-progress.yaml#/paths/Compare'
+  /api/v1/plants/{id}/photo-progress/frequency:
+    $ref: './resources/plant-photo-progress.yaml#/paths/Frequency'
+
+  /api/v1/plant-templates:
+    $ref: './resources/plant-templates.yaml#/paths/Collection'
+  /api/v1/plant-templates/{id}:
+    $ref: './resources/plant-templates.yaml#/paths/Item'
+  /api/v1/plant-templates/{id}/instantiate:
+    $ref: './resources/plant-templates.yaml#/paths/Instantiate'
 
   /api/v1/locations:
     $ref: './resources/locations.yaml#/paths/Collection'
   /api/v1/locations/{id}:
     $ref: './resources/locations.yaml#/paths/Item'
+  /api/v1/locations/{id}/activate:
+    $ref: './resources/locations.yaml#/paths/ItemActivate'
+  /api/v1/locations/{id}/pause:
+    $ref: './resources/locations.yaml#/paths/ItemPause'
+  /api/v1/locations/{id}/resume:
+    $ref: './resources/locations.yaml#/paths/ItemResume'
 
   /api/v1/care-events:
     $ref: './resources/care-events.yaml#/paths/Collection'
@@ -168,8 +268,15 @@ paths:
   /api/v1/care-types:
     $ref: './resources/care-types.yaml#/paths/Collection'
 
+  /api/v1/diseases:
+    $ref: './resources/diseases.yaml#/paths/Collection'
+  /api/v1/diseases/{id}:
+    $ref: './resources/diseases.yaml#/paths/Item'
+
   /api/v1/shopping:
     $ref: './resources/shopping.yaml#/paths/Collection'
+  /api/v1/shopping/clear:
+    $ref: './resources/shopping.yaml#/paths/CollectionClear'
   /api/v1/shopping/{id}:
     $ref: './resources/shopping.yaml#/paths/Item'
 
@@ -178,8 +285,54 @@ paths:
   /api/v1/notifications/{id}/read:
     $ref: './resources/notifications.yaml#/paths/Item'
 
+  /api/v1/vacation:
+    $ref: './resources/vacation.yaml#/paths/Vacation'
+
   /api/v1/me:
     $ref: './resources/me.yaml#/paths/Me'
+  /api/v1/me/weather-location:
+    $ref: './resources/me.yaml#/paths/WeatherLocation'
+  /api/v1/me/seasonal:
+    $ref: './resources/me.yaml#/paths/Seasonal'
+  /api/v1/me/seasonal/{season}:
+    $ref: './resources/me.yaml#/paths/SeasonalItem'
+
+  /api/v1/sharing:
+    $ref: './resources/sharing.yaml#/paths/Collection'
+  /api/v1/sharing/invites:
+    $ref: './resources/sharing.yaml#/paths/Invites'
+
+  /api/v1/locations/{locationId}/rooms:
+    $ref: './resources/rooms.yaml#/paths/CollectionByLocation'
+  /api/v1/rooms/{id}:
+    $ref: './resources/rooms.yaml#/paths/Item'
+
+  /api/v1/locations/{id}/invites:
+    $ref: './resources/location-sharing.yaml#/paths/CreateInvite'
+  /api/v1/locations/{id}/members:
+    $ref: './resources/location-sharing.yaml#/paths/Members'
+  /api/v1/locations/{id}/members/{userId}:
+    $ref: './resources/location-sharing.yaml#/paths/RevokeAccess'
+  /api/v1/invites/{token}/accept:
+    $ref: './resources/location-sharing.yaml#/paths/AcceptInvite'
+  /api/v1/shared-locations:
+    $ref: './resources/location-sharing.yaml#/paths/SharedLocations'
+
+  /api/v1/devices:
+    $ref: './resources/devices.yaml#/paths/Collection'
+  /api/v1/devices/{id}:
+    $ref: './resources/devices.yaml#/paths/Item'
+
+  /api/v1/sync:
+    $ref: './resources/sync.yaml#/paths/Collection'
+
+  /api/v1/ui/{screen}:
+    $ref: './resources/ui.yaml#/paths/Screen'
+
+  /api/v1/photos:
+    $ref: './resources/photos.yaml#/paths/Collection'
+  /api/v1/photos/{id}:
+    $ref: './resources/photos.yaml#/paths/Item'
 
 components:
   securitySchemes:
@@ -199,6 +352,8 @@ components:
       $ref: './_common/parameters.yaml#/PlantIdPath'
     LocationIdPath:
       $ref: './_common/parameters.yaml#/LocationIdPath'
+    RoomIdPath:
+      $ref: './_common/parameters.yaml#/RoomIdPath'
 
   responses:
     BadRequest:
@@ -213,6 +368,8 @@ components:
       $ref: './_common/responses.yaml#/NotFound'
     Conflict:
       $ref: './_common/responses.yaml#/Conflict'
+    UnprocessableEntity:
+      $ref: './_common/responses.yaml#/UnprocessableEntity'
 
   # Все доменные схемы регистрируются здесь, чтобы они появились в
   # /v3/api-docs и были генерированы openapi-generator'ом как Java-классы
@@ -233,6 +390,14 @@ components:
       $ref: './resources/auth.yaml#/schemas/LogoutRequest'
     TokenPairResponse:
       $ref: './resources/auth.yaml#/schemas/TokenPairResponse'
+    GuestLoginRequest:
+      $ref: './resources/guest.yaml#/schemas/GuestLoginRequest'
+    GuestLoginResponse:
+      $ref: './resources/guest.yaml#/schemas/GuestLoginResponse'
+    GuestConvertRequest:
+      $ref: './resources/guest.yaml#/schemas/GuestConvertRequest'
+    GuestConvertResponse:
+      $ref: './resources/guest.yaml#/schemas/GuestConvertResponse'
 
     HealthResponse:
       $ref: './resources/health.yaml#/schemas/HealthResponse'
@@ -243,6 +408,8 @@ components:
       $ref: './resources/plants.yaml#/schemas/PlantCreateRequest'
     PlantUpdateRequest:
       $ref: './resources/plants.yaml#/schemas/PlantUpdateRequest'
+    PlantArchiveRequest:
+      $ref: './resources/plants.yaml#/schemas/PlantArchiveRequest'
     PageResponsePlantDto:
       $ref: './resources/plants.yaml#/schemas/PageResponsePlantDto'
     PlantDiagnosisDto:
@@ -256,6 +423,17 @@ components:
 
     PlantHistoryResponse:
       $ref: './resources/plant-history.yaml#/schemas/PlantHistoryResponse'
+    PlantHistorySummaryDto:
+      $ref: './resources/plant-history.yaml#/schemas/PlantHistorySummaryDto'
+
+    PlantEventType:
+      $ref: './resources/plant-events.yaml#/schemas/PlantEventType'
+    PlantEventDto:
+      $ref: './resources/plant-events.yaml#/schemas/PlantEventDto'
+    PlantEventRequest:
+      $ref: './resources/plant-events.yaml#/schemas/PlantEventRequest'
+    PlantEventPageResponse:
+      $ref: './resources/plant-events.yaml#/schemas/PlantEventPageResponse'
 
     LocationDto:
       $ref: './resources/locations.yaml#/schemas/LocationDto'
@@ -263,6 +441,15 @@ components:
       $ref: './resources/locations.yaml#/schemas/LocationCreateRequest'
     LocationUpdateRequest:
       $ref: './resources/locations.yaml#/schemas/LocationUpdateRequest'
+    LocationPauseRequest:
+      $ref: './resources/locations.yaml#/schemas/LocationPauseRequest'
+
+    RoomDto:
+      $ref: './resources/rooms.yaml#/schemas/RoomDto'
+    RoomCreateRequest:
+      $ref: './resources/rooms.yaml#/schemas/RoomCreateRequest'
+    RoomUpdateRequest:
+      $ref: './resources/rooms.yaml#/schemas/RoomUpdateRequest'
 
     CareEventType:
       $ref: './resources/care-events.yaml#/schemas/CareEventType'
@@ -303,10 +490,21 @@ components:
     CareTypeDto:
       $ref: './resources/care-types.yaml#/schemas/CareTypeDto'
 
+    DiseaseDto:
+      $ref: './resources/diseases.yaml#/schemas/DiseaseDto'
+    PageResponseDiseaseDto:
+      $ref: './resources/diseases.yaml#/schemas/PageResponseDiseaseDto'
+
     CareScheduleDto:
       $ref: './resources/schedules.yaml#/schemas/CareScheduleDto'
     CareScheduleUpdateRequest:
       $ref: './resources/schedules.yaml#/schemas/CareScheduleUpdateRequest'
+    SeasonalScheduleDto:
+      $ref: './resources/schedules.yaml#/schemas/SeasonalScheduleDto'
+    ScheduleInput:
+      $ref: './resources/schedules.yaml#/schemas/ScheduleInput'
+    SchedulePostponeRequest:
+      $ref: './resources/schedules.yaml#/schemas/SchedulePostponeRequest'
 
     ShoppingItemDto:
       $ref: './resources/shopping.yaml#/schemas/ShoppingItemDto'
@@ -321,10 +519,85 @@ components:
       $ref: './resources/me.yaml#/schemas/MeResponse'
     MeUpdateRequest:
       $ref: './resources/me.yaml#/schemas/MeUpdateRequest'
+    WeatherLocationRequest:
+      $ref: './resources/me.yaml#/schemas/WeatherLocationRequest'
     NotificationDto:
       $ref: './resources/notifications.yaml#/schemas/NotificationDto'
     NotificationsResponse:
       $ref: './resources/notifications.yaml#/schemas/NotificationsResponse'
+
+    VacationRequest:
+      $ref: './resources/vacation.yaml#/schemas/VacationRequest'
+    VacationResponse:
+      $ref: './resources/vacation.yaml#/schemas/VacationResponse'
+
+    SharingStatus:
+      $ref: './resources/sharing.yaml#/schemas/SharingStatus'
+    SharingMemberDto:
+      $ref: './resources/sharing.yaml#/schemas/SharingMemberDto'
+    SharingMembersResponse:
+      $ref: './resources/sharing.yaml#/schemas/SharingMembersResponse'
+    SharingInviteCreateRequest:
+      $ref: './resources/sharing.yaml#/schemas/SharingInviteCreateRequest'
+
+    LocationAccessRole:
+      $ref: './resources/location-sharing.yaml#/schemas/LocationAccessRole'
+    LocationMemberDto:
+      $ref: './resources/location-sharing.yaml#/schemas/LocationMemberDto'
+    LocationMembersResponse:
+      $ref: './resources/location-sharing.yaml#/schemas/LocationMembersResponse'
+    LocationInviteResponse:
+      $ref: './resources/location-sharing.yaml#/schemas/LocationInviteResponse'
+    AcceptInviteResponse:
+      $ref: './resources/location-sharing.yaml#/schemas/AcceptInviteResponse'
+    SharedLocationDto:
+      $ref: './resources/location-sharing.yaml#/schemas/SharedLocationDto'
+    SharedLocationsResponse:
+      $ref: './resources/location-sharing.yaml#/schemas/SharedLocationsResponse'
+
+    DeviceRegisterRequest:
+      $ref: './resources/devices.yaml#/schemas/DeviceRegisterRequest'
+    DeviceDto:
+      $ref: './resources/devices.yaml#/schemas/DeviceDto'
+
+    SyncResponse:
+      $ref: './resources/sync.yaml#/schemas/SyncResponse'
+    SyncPlantDto:
+      $ref: './resources/sync.yaml#/schemas/SyncPlantDto'
+    SyncLocationDto:
+      $ref: './resources/sync.yaml#/schemas/SyncLocationDto'
+    SyncCareEventDto:
+      $ref: './resources/sync.yaml#/schemas/SyncCareEventDto'
+    SyncDeletionDto:
+      $ref: './resources/sync.yaml#/schemas/SyncDeletionDto'
+
+    PlantTemplateDto:
+      $ref: './resources/plant-templates.yaml#/schemas/PlantTemplateDto'
+    PlantTemplateCareRuleDto:
+      $ref: './resources/plant-templates.yaml#/schemas/PlantTemplateCareRuleDto'
+    PlantTemplateCreateRequest:
+      $ref: './resources/plant-templates.yaml#/schemas/PlantTemplateCreateRequest'
+    PlantTemplateInstantiateRequest:
+      $ref: './resources/plant-templates.yaml#/schemas/PlantTemplateInstantiateRequest'
+
+    ScreenLayout:
+      $ref: './resources/ui.yaml#/schemas/ScreenLayout'
+
+    PhotoUploadResponse:
+      $ref: './resources/photos.yaml#/schemas/PhotoUploadResponse'
+
+    PhotoProgressFrequencyValue:
+      $ref: './resources/plant-photo-progress.yaml#/schemas/PhotoProgressFrequencyValue'
+    PhotoProgressItemDto:
+      $ref: './resources/plant-photo-progress.yaml#/schemas/PhotoProgressItemDto'
+    PhotoProgressHistoryResponse:
+      $ref: './resources/plant-photo-progress.yaml#/schemas/PhotoProgressHistoryResponse'
+    PhotoProgressCompareResponse:
+      $ref: './resources/plant-photo-progress.yaml#/schemas/PhotoProgressCompareResponse'
+    PhotoProgressFrequencyRequest:
+      $ref: './resources/plant-photo-progress.yaml#/schemas/PhotoProgressFrequencyRequest'
+    PhotoProgressFrequencyResponse:
+      $ref: './resources/plant-photo-progress.yaml#/schemas/PhotoProgressFrequencyResponse'
 
     ApiErrorResponse:
       $ref: './_common/errors.yaml#/schemas/ApiErrorResponse'

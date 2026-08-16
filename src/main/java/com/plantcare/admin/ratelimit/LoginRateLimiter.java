@@ -1,46 +1,47 @@
 package com.plantcare.admin.ratelimit;
 
-import com.github.benmanes.caffeine.cache.Cache;
-import com.github.benmanes.caffeine.cache.Caffeine;
 import com.plantcare.admin.config.AdminProperties;
 import com.plantcare.admin.config.AdminSecurityConfig;
+import com.plantcare.core.ratelimit.RedisRateLimiter;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
-import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * In-memory rate limiter на Caffeine. Ключ — IP, значение — счётчик неудач.
- * TTL = window-seconds. Bucket4j для одного админа избыточен.
+ * Rate limiter админ-логина. Ключ — IP, значение — счётчик неудачных попыток,
+ * TTL = window-seconds.
+ *
+ * <p>Issue #280 (эпик #277 фаза 2): мигрирован с per-instance Caffeine на общий
+ * Redis-счётчик ({@link RedisRateLimiter}) — при нескольких инстансах лимит брутфорса
+ * админ-логина общий, а не ×N. Caffeine — L1-fallback внутри {@link RedisRateLimiter}
+ * (fail-open при недоступном Redis). Публичный API не изменился.
  */
 @Component
 @ConditionalOnExpression(AdminSecurityConfig.ADMIN_ENABLED_EXPR)
 public class LoginRateLimiter {
 
-    private final Cache<String, AtomicInteger> attempts;
-    private final int maxAttempts;
+    private static final String SCOPE = "admin-login";
 
-    public LoginRateLimiter(AdminProperties props) {
+    private final RedisRateLimiter rateLimiter;
+    private final int maxAttempts;
+    private final Duration window;
+
+    public LoginRateLimiter(AdminProperties props, RedisRateLimiter rateLimiter) {
+        this.rateLimiter = rateLimiter;
         this.maxAttempts = props.getRateLimit().getMaxAttempts();
-        this.attempts = Caffeine.newBuilder()
-                .expireAfterWrite(Duration.ofSeconds(props.getRateLimit().getWindowSeconds()))
-                .maximumSize(10_000)
-                .build();
+        this.window = Duration.ofSeconds(props.getRateLimit().getWindowSeconds());
     }
 
     public boolean isBlocked(String ip) {
-        AtomicInteger c = attempts.getIfPresent(ip);
-        return c != null && c.get() >= maxAttempts;
+        return rateLimiter.isOverLimit(SCOPE, ip, maxAttempts, window);
     }
 
     public void recordFailure(String ip) {
-        attempts.asMap()
-                .computeIfAbsent(ip, k -> new AtomicInteger(0))
-                .incrementAndGet();
+        rateLimiter.increment(SCOPE, ip, window);
     }
 
     public void reset(String ip) {
-        attempts.invalidate(ip);
+        rateLimiter.reset(SCOPE, ip);
     }
 }

@@ -2,6 +2,7 @@ package com.plantcare.core.service;
 
 import com.plantcare.core.domain.CareHistory;
 import com.plantcare.core.domain.CareSchedule;
+import com.plantcare.core.domain.enums.TaskType;
 import com.plantcare.core.repository.CareHistoryRepository;
 import com.plantcare.core.repository.CareScheduleRepository;
 import lombok.RequiredArgsConstructor;
@@ -11,26 +12,34 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
+import java.util.EnumMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.stream.Collectors;
 
 /**
  * Сервис для экрана «📜 История» в карточке растения и стриков (issue #51).
  *
  * Логика стриков:
  *
- *  <b>Per-plant streak</b> — «выполнений подряд без пропусков».
+ *  <b>Per-plant streak</b> — «дней подряд с on-time-уходом, без пропуска расписания».
  *  Алгоритм:
  *   1) Если у любого активного расписания этого растения {@code nextDueAt + 1 day < now}
  *      и нет более свежего "сделано" — стрик 0 (просроченная задача висит).
- *   2) Иначе идём по истории DESC: пока {@code onTime=true} → +1, на первой
- *      late-записи стоп.
+ *   2) Иначе идём по истории DESC: пока {@code onTime=true} собираем уникальные ДНИ
+ *      (в TZ юзера), на первой late-записи стоп. Результат — число уникальных дней
+ *      в непрерывном on-time-прогоне: несколько уходов в один день дают +1, а не +N.
+ *  «Подряд» здесь = непрерывный прогон on-time-уходов без пропуска расписания
+ *  (стоп на late), а НЕ календарно-смежные дни — растение с интервалом 7 дней
+ *  тоже умеет набирать стрик &gt; 1.
  *  Compensating (cancelled) записи пропускаются.
  *
  *  <b>Per-user streak</b> — «дни подряд, в которые юзер сделал хотя бы одно действие».
@@ -74,6 +83,7 @@ public class CareHistoryService {
 
     private final CareHistoryRepository careHistoryRepository;
     private final CareScheduleRepository careScheduleRepository;
+    private final Clock clock;
 
     /**
      * Одна страница истории растения в обратном хронологическом порядке.
@@ -93,14 +103,69 @@ public class CareHistoryService {
      * <p>Использует нативный SQL с LIMIT/OFFSET вместо page-based пагинации,
      * чтобы offset=5, limit=20 возвращал записи 5-24, а не 0-19.
      *
+     * @param plantId  id растения
+     * @param offset   смещение от начала (0-based)
+     * @param limit    количество записей [1, 100]
+     * @param taskType опциональный фильтр по типу ухода; {@code null} — все типы
+     */
+    @Transactional(readOnly = true)
+    public List<CareHistory> getHistoryPageWithLimit(Long plantId, int offset, int limit, TaskType taskType) {
+        int safeOffset = Math.max(0, offset);
+        String typeStr = taskType != null ? taskType.name() : null;
+        return careHistoryRepository.findActiveByPlantIdWithRealOffsetAndType(plantId, limit, safeOffset, typeStr);
+    }
+
+    /**
+     * Срез истории с реальным offset без фильтра по типу — делегирует к основному методу.
+     *
      * @param plantId id растения
      * @param offset  смещение от начала (0-based)
      * @param limit   количество записей [1, 100]
      */
     @Transactional(readOnly = true)
     public List<CareHistory> getHistoryPageWithLimit(Long plantId, int offset, int limit) {
-        int safeOffset = Math.max(0, offset);
-        return careHistoryRepository.findActiveByPlantIdWithRealOffset(plantId, limit, safeOffset);
+        return getHistoryPageWithLimit(plantId, offset, limit, null);
+    }
+
+    /**
+     * Суммарное число активных (не-cancelled) записей ухода по всем растениям
+     * пользователя за всё время, включая архивированные растения (issue #226).
+     *
+     * @param userId id пользователя
+     * @return общее число уходов
+     */
+    @Transactional(readOnly = true)
+    public long countAllByUser(Long userId) {
+        return careHistoryRepository.countAllByUserId(userId);
+    }
+
+    /**
+     * Сводная статистика по всей истории растения (issue #206).
+     *
+     * <p>Возвращает: общее число активных записей, число on-time, процент on-time,
+     * разбивку по типам ухода (без SOIL_CHECK, только типы с count > 0).
+     *
+     * @param plantId id растения
+     * @return сводка
+     */
+    @Transactional(readOnly = true)
+    public HistorySummary getHistorySummary(Long plantId) {
+        long total = countHistory(plantId);
+        long onTimeCount = careHistoryRepository.countActiveOnTimeByPlantId(plantId);
+        int onTimePercent = total == 0 ? 0 : (int) Math.round(100.0 * onTimeCount / total);
+
+        Map<TaskType, Long> byType = careHistoryRepository.countActiveByPlantIdGroupedByType(plantId)
+                .stream()
+                .filter(r -> r.getTaskType() != TaskType.SOIL_CHECK)
+                .filter(r -> r.getCount() > 0)
+                .collect(Collectors.toMap(
+                        CareHistoryRepository.TaskTypeCount::getTaskType,
+                        CareHistoryRepository.TaskTypeCount::getCount,
+                        Long::sum,
+                        () -> new EnumMap<>(TaskType.class)
+                ));
+
+        return new HistorySummary(total, onTimeCount, onTimePercent, byType);
     }
 
     /**
@@ -113,18 +178,31 @@ public class CareHistoryService {
     }
 
     /**
+     * Сколько активных записей у растения с опциональным фильтром по типу ухода.
+     * При {@code taskType == null} возвращает общее число — аналогично {@link #countHistory(Long)}.
+     *
+     * @param plantId  id растения
+     * @param taskType тип ухода для фильтрации, или {@code null} — все типы
+     */
+    @Transactional(readOnly = true)
+    public long countHistory(Long plantId, TaskType taskType) {
+        String typeStr = taskType != null ? taskType.name() : null;
+        return careHistoryRepository.countActiveByPlantIdAndType(plantId, typeStr);
+    }
+
+    /**
      * Сводка статистики по растению. Если {@link PlantStats#total()} меньше
      * {@link #MIN_ACTIONS_FOR_STATS} — UI должен скрыть блок и показать заглушку.
      */
     @Transactional(readOnly = true)
-    public PlantStats getPlantStats(Long plantId) {
+    public PlantStats getPlantStats(Long plantId, String timezone) {
         long total = countHistory(plantId);
 
         if (total == 0) {
             return new PlantStats(0, 0, 0);
         }
 
-        LocalDateTime since = LocalDateTime.now().minusDays(ON_TIME_WINDOW_DAYS);
+        LocalDateTime since = LocalDateTime.now(clock).minusDays(ON_TIME_WINDOW_DAYS);
         long actionsInWindow = careHistoryRepository.countActiveByPlantIdSince(plantId, since);
         long onTimeInWindow = careHistoryRepository.countActiveOnTimeByPlantIdSince(plantId, since);
 
@@ -132,19 +210,26 @@ public class CareHistoryService {
                 ? 0
                 : (int) Math.round(100.0 * onTimeInWindow / actionsInWindow);
 
-        int streak = computePlantStreak(plantId);
+        int streak = computePlantStreak(plantId, timezone);
 
         return new PlantStats(streak, onTimePct, total);
     }
 
     /**
-     * Стрик по конкретному растению. Алгоритм описан в javadoc класса.
+     * Стрик по конкретному растению — число уникальных дней с on-time-уходом
+     * в непрерывном прогоне (стоп на первой late-записи). Повторы в один день
+     * (в TZ юзера) не накручивают стрик: 5 поливов за сутки = +1 день, а не +5.
+     * Алгоритм целиком описан в javadoc класса.
      * Публичный для удобства тестирования и переиспользования.
+     *
+     * @param plantId  id растения
+     * @param timezone IANA-таймзона юзера для определения границ суток; пустая/
+     *                 невалидная → UTC (см. {@link #safeZone(String)})
      */
     @Transactional(readOnly = true)
-    public int computePlantStreak(Long plantId) {
+    public int computePlantStreak(Long plantId, String timezone) {
         // 1) Просроченные расписания (без своего done) сразу обнуляют стрик.
-        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime now = LocalDateTime.now(clock);
         List<CareSchedule> schedules = careScheduleRepository.findAllByPlantId(plantId);
         for (CareSchedule s : schedules) {
             if (!s.isActive() || s.getNextDueAt() == null) continue;
@@ -154,20 +239,27 @@ public class CareHistoryService {
             }
         }
 
-        // 2) Иначе идём по истории с конца, пока все on-time.
+        // 2) Иначе идём по истории с конца, пока все on-time, и считаем
+        //    уникальные ДНИ (в TZ юзера), а не количество записей.
+        ZoneId tz = safeZone(timezone);
         List<CareHistory> recent = careHistoryRepository.findAllByPlantIdOrderByDoneAtDesc(
                 plantId, Limit.of(STREAK_LOOKBACK));
 
-        int count = 0;
+        Set<LocalDate> uniqueDays = new HashSet<>();
         for (CareHistory h : recent) {
             if (h.isCancelled()) continue; // компенсирующие игнорируем
             if (h.isOnTime()) {
-                count++;
+                // doneAt хранится как LocalDateTime в UTC → переводим в TZ юзера.
+                LocalDate day = h.getDoneAt()
+                        .atOffset(ZoneOffset.UTC)
+                        .atZoneSameInstant(tz)
+                        .toLocalDate();
+                uniqueDays.add(day);
             } else {
-                break;
+                break; // первая late-запись обрывает прогон
             }
         }
-        return count;
+        return uniqueDays.size();
     }
 
     /**
@@ -195,7 +287,7 @@ public class CareHistoryService {
             }
         }
 
-        LocalDate today = LocalDate.now(tz);
+        LocalDate today = LocalDate.now(clock.withZone(tz));
         LocalDate latest = uniqueDays.last();
 
         // Если последняя активность раньше «вчера» — стрик сломан.
@@ -239,4 +331,14 @@ public class CareHistoryService {
             return total >= MIN_ACTIONS_FOR_STATS;
         }
     }
+
+    /**
+     * Агрегированная статистика по всей истории растения (issue #206).
+     *
+     * @param total          всего активных (не-cancelled) записей
+     * @param onTimeCount    из них on-time
+     * @param onTimePercent  процент on-time; 0 если total = 0
+     * @param byType         разбивка по типам (без SOIL_CHECK, только count > 0)
+     */
+    public record HistorySummary(long total, long onTimeCount, int onTimePercent, Map<TaskType, Long> byType) {}
 }

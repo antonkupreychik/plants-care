@@ -1,10 +1,12 @@
 package com.plantcare.admin;
 
 import com.plantcare.bot.support.IntegrationTestBase;
+import net.iakovlev.timeshape.TimeZoneEngine;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
@@ -16,6 +18,12 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @AutoConfigureMockMvc
 @DisplayName("Admin disabled — env-переменные не заданы")
 class AdminDisabledTest extends IntegrationTestBase {
+
+    // Admin is disabled in this test (empty username/password-hash), which forces a separate
+    // Spring context. Mock the TimeZoneEngine so its heavy geo-dataset is NOT loaded here —
+    // the real engine is tested in AwaitingTimezoneStateHandlerTest.
+    @MockBean
+    TimeZoneEngine timeZoneEngine;
 
     @DynamicPropertySource
     static void adminProps(DynamicPropertyRegistry registry) {

@@ -111,7 +111,8 @@ echo 'testcontainers.reuse.enable=true' >> ~/.testcontainers.properties
 |---|---|---|---|
 | `/api/v1/care-events` | `POST` | 201 | Регистрация ухода (WATER/SPRAY/FERTILIZE). Поле `clientId` обеспечивает идемпотентность: повторный запрос с тем же `clientId` возвращает существующую запись без дублирования |
 | `/api/v1/care-events/{id}` | `DELETE` | 204 | Отмена события через compensation pattern: запись не удаляется физически, создаётся компенсирующая запись |
-| `/api/v1/plants/{id}/history` | `GET` | 200 | История ухода за растением с offset-пагинацией. Query params: `limit` [1–100], default 20; `offset`, default 0. Проверяет ownership растения |
+| `/api/v1/plants/{id}/history` | `GET` | 200 | История ухода за растением с offset-пагинацией. Query params: `limit` [1–100], default 20; `offset`, default 0; `type` (`WATER`/`SPRAY`/`FERTILIZE`) — фильтр по типу, если не задан — все типы. Невалидное значение `type` → 400. Проверяет ownership растения |
+| `/api/v1/plants/{id}/history/summary` | `GET` | 200 | Агрегат по всей истории: `total`, `onTimeCount`, `onTimePercent`, `byType` (разбивка по типам, ключи `WATER`/`SPRAY`/`FERTILIZE`, только типы с count > 0; `SOIL_CHECK` исключён). Учитываются только не отменённые записи. Проверяет ownership растения |
 | `/api/v1/today` | `GET` | 200 | Задачи ухода на сегодня в таймзоне пользователя |
 | `/api/v1/calendar` | `GET` | 200 | Расписание за произвольный период. Query params: `from`, `to` (ISO date). Диапазон не более 60 дней. Дни без задач в ответ не включаются |
 | `/api/v1/calendar/progress` | `GET` | 200 | Прогресс выполнения по дням за период: карта `{ "YYYY-MM-DD": { "planned", "done" } }`, где `planned` — запланированные occurrence'ы расписаний, `done` — выполненные (не отменённые) записи ухода за этот локальный день в таймзоне пользователя. Query params: `from`, `to` (ISO date), диапазон не более 60 дней. Дни без планов и без выполнений не включаются |
@@ -126,13 +127,22 @@ echo 'testcontainers.reuse.enable=true' >> ~/.testcontainers.properties
 |---|---|---|
 | `GET` | `/api/v1/plants` | Список растений. Параметры: `locationId` (фильтр), `offset` (по умолч. 0), `limit` (по умолч. 20, макс. 100) |
 | `GET` | `/api/v1/plants/{id}` | Одно растение |
-| `POST` | `/api/v1/plants` | Создать растение (без расписания полива) |
+| `POST` | `/api/v1/plants` | Создать растение. Опциональное поле `schedules` позволяет задать расписания сразу при создании |
 | `PUT` | `/api/v1/plants/{id}` | Обновить растение. PATCH-семантика: обновляются только переданные поля (`name`, `notes`, `locationId`) |
 | `DELETE` | `/api/v1/plants/{id}` | Soft-delete: выставляет `archivedAt`, из выборок не возвращается |
 
+При создании растения через REST засеваются все четыре расписания ухода (`WATERING`/`MISTING`/`FERTILIZING`/`SOIL_CHECK`). Если массив `schedules` не передан или пуст — применяются дефолты вида, включён по умолчанию только `WATERING`. Если `schedules` передан — переданные типы создаются с `enabled=true` и указанными параметрами (`every`, `unit`, `amountMl?`); отсутствующие типы получают дефолтный интервал с `enabled=false`. Дублирующийся тип в массиве → 400.
+Оба `GET`-эндпоинта включают в каждый объект `PlantDto` поля здоровья (issue #207):
+
+| Поле | Тип | Описание |
+|---|---|---|
+| `healthScore` | `integer\|null` | Балл здоровья 0–100. `null` при недостаточных данных |
+| `healthZone` | `GREEN\|YELLOW\|RED\|null` | Цветовая зона. `null` при недостаточных данных |
+| `healthInsufficientData` | `boolean\|null` | `true` — менее 3 активных записей ухода, `score`/`zone` равны `null` |
+
 При создании растения через REST засеваются все четыре расписания ухода (`WATERING`/`MISTING`/`FERTILIZING`/`SOIL_CHECK`) из дефолтов вида; включён по умолчанию только `WATERING`.
 
-### Schedules (issue #185)
+### Schedules (issue #185, #188)
 
 Расписания ухода конкретного растения. У каждого растения ровно четыре расписания по числу типов ухода. Все эндпоинты user-scoped (JWT).
 
@@ -141,13 +151,21 @@ echo 'testcontainers.reuse.enable=true' >> ~/.testcontainers.properties
 | `GET` | `/api/v1/plants/{id}/schedules` | Все четыре расписания в фиксированном порядке. Если расписание ещё не настроено — отдаётся дефолтный интервал вида с `enabled=false` |
 | `PUT` | `/api/v1/plants/{id}/schedules/{type}` | Создать/обновить расписание типа `{type}`; пересчитывает `nextDueAt` |
 
-`type` ∈ `WATERING` / `MISTING` / `FERTILIZING` / `SOIL_CHECK`. Тело `PUT`: `{ "every", "unit", "amountMl?", "enabled" }`. Элемент ответа:
+`type` ∈ `WATERING` / `MISTING` / `FERTILIZING` / `SOIL_CHECK`. Тело `PUT`: `{ "every", "unit", "amountMl?", "enabled", "seasonalOverride?" }`. Элемент ответа:
 
 ```json
-{ "type": "WATERING", "every": 7, "unit": "DAY", "amountMl": 250, "enabled": true, "nextDueAt": "2026-06-05T08:00:00Z" }
+{
+  "type": "WATERING", "every": 7, "unit": "DAY", "amountMl": 250,
+  "enabled": true, "nextDueAt": "2026-06-05T08:00:00Z",
+  "seasonal": { "active": true, "summerIntervalDays": 5, "winterIntervalDays": 10 }
+}
 ```
 
 `unit` сейчас всегда `DAY`. `amountMl` осмыслен только для `WATERING` (для остальных типов игнорируется). `nextDueAt` (UTC) заполнен только при `enabled=true`, иначе `null`.
+
+`seasonalOverride` в теле `PUT` — per-plant переопределение авто-подстройки: `INHERIT` (следовать глобальной настройке пользователя), `ON` (включить только для этого растения), `OFF` (выключить только для этого растения). Отсутствие поля не меняет текущее значение.
+
+Поле `seasonal` в ответе: `active` — применяется ли сезонность для этого растения; `summerIntervalDays` / `winterIntervalDays` — эффективный интервал при соответствующем сезоне (preview, не зависит от текущего времени года).
 
 ### Locations
 
@@ -426,6 +444,72 @@ quiet hours), бот шлёт мягкую нотификацию с кнопк�
 
 `supplies` (по умолчанию «Грунт», «Дренаж») и `message-template` задаются списком/строкой
 в `application.yml`, env-override для них не предусмотрен.
+
+## Universal Links (iOS) / App Links (Android) — magic-link диплинки (issue #215)
+
+Magic-link письма теперь используют `https://`-ссылки вместо кастомной схемы `plantcare://`.
+Это позволяет почтовым клиентам (Gmail, Apple Mail) делать ссылки кликабельными и открывать
+мобильное приложение напрямую через Universal Links (iOS) / App Links (Android).
+
+### Как это работает
+
+1. Бэкенд отдаёт `.well-known`-файлы, которые ОС запрашивает при установке приложения.
+2. При клике на `https://<домен>/auth/verify?token=...` ОС открывает приложение напрямую.
+3. Если приложение не установлено — браузер показывает фоллбэк-страницу с инструкцией.
+
+### Env-переменные
+
+#### Magic-link URL (уже существующая переменная)
+
+| Переменная | Дефолт | Описание |
+|---|---|---|
+| `AUTH_MAGIC_LINK_BASE_URL` | `https://plants-care.up.railway.app/auth/verify` | Базовый URL magic-link в письме |
+
+Для дев-стенда: `https://plants-care-development.up.railway.app/auth/verify`
+
+#### iOS Universal Links (AASA)
+
+Требуется от app-команды: Team ID и bundle ID приложения.
+
+| Переменная | Пример | Описание |
+|---|---|---|
+| `DEEP_LINK_IOS_APP_IDS` | `TEAMID1234.com.example.plantcare` | appID(ы) в формате `<TeamID>.<BundleId>`, через запятую если несколько |
+| `DEEP_LINK_IOS_PATHS` | `/auth/verify*` | Пути, которые AASA разрешает открывать в приложении |
+
+#### Android App Links (assetlinks.json)
+
+Требуется от app-команды: package name и SHA-256 отпечатки подписи.
+
+| Переменная | Пример | Описание |
+|---|---|---|
+| `DEEP_LINK_ANDROID_PACKAGE_NAME` | `com.example.plantcare` | Package name Android-приложения |
+| `DEEP_LINK_ANDROID_SHA256_CERT_FINGERPRINTS` | `AA:BB:CC:...,DD:EE:FF:...` | SHA-256 отпечатки сертификата подписи (debug + release), через запятую |
+
+### Проверка (curl + валидаторы)
+
+```bash
+# Apple App Site Association (iOS)
+curl -i https://plants-care.up.railway.app/.well-known/apple-app-site-association
+# Ожидаем: HTTP/2 200, Content-Type: application/json, тело с "applinks"
+
+# Digital Asset Links (Android)
+curl -i https://plants-care.up.railway.app/.well-known/assetlinks.json
+# Ожидаем: HTTP/2 200, Content-Type: application/json, тело с "delegate_permission/common.handle_all_urls"
+
+# Fallback-страница
+curl -i https://plants-care.up.railway.app/auth/verify
+# Ожидаем: HTTP/2 200, Content-Type: text/html; без токена — показывает инструкцию "открой на телефоне"
+```
+
+Онлайн-валидаторы:
+- iOS: [https://branch.io/resources/aasa-validator/](https://branch.io/resources/aasa-validator/)
+- Android: [https://digitalassetlinks.googleapis.com/v1/statements:list?source.web.site=https://plants-care.up.railway.app&relation=delegate_permission/common.handle_all_urls](https://digitalassetlinks.googleapis.com/v1/statements:list?source.web.site=https://plants-care.up.railway.app&relation=delegate_permission/common.handle_all_urls)
+
+### Настройка мобильного приложения
+
+Бэкенд готов. Для полной интеграции app-команда должна добавить:
+- **iOS**: `Associated Domains` → `applinks:<домен>` в entitlements.
+- **Android**: `intent-filter` с `autoVerify="true"` в `AndroidManifest.xml`.
 
 ## Деплой на Railway
 

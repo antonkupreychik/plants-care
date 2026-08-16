@@ -1,5 +1,6 @@
 ---
 name: docs-writer
+model: claude-sonnet-4-6
 description: Обновляет документацию (README, javadoc на публичные API, CHANGELOG) на основе фактически внесённых изменений. Запускать ПОСЛЕ reviewer'а, последним в цепочке. Не выдумывает то, чего нет в коде.
 tools: Read, Write, Edit, Glob, Grep, Bash
 ---
@@ -17,7 +18,7 @@ tools: Read, Write, Edit, Glob, Grep, Bash
 
 Получаешь от оркестратора: «реализована фича X по issue #N». Дальше:
 
-1. `git diff main...HEAD` — посмотри, что **реально** изменилось.
+1. `git diff origin/develop...HEAD` (база PR — `develop`, не `main`) — посмотри, что **реально** изменилось.
 2. Определи, что из этого требует документации:
     - Изменился публичный API сервиса? → возможно javadoc.
     - Появилась новая команда бота? → README + javadoc на хендлере.

@@ -12,6 +12,7 @@ import com.plantcare.bot.telegram.SendCallbacks;
 import io.sentry.Sentry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -59,7 +60,10 @@ public class PhotoProgressSchedulerService {
     private final PhotoProgressService photoProgressService;
     private final RateLimitedTelegramSender telegramSender;
 
+    // Issue #279: hourly-задача — lockAtMostFor 90 мин, lockAtLeastFor 55 мин.
     @Scheduled(fixedRate = INTERVAL_MS)
+    @SchedulerLock(name = "PhotoProgressSchedulerService_checkPhotoPrompts",
+            lockAtMostFor = "PT90M", lockAtLeastFor = "PT55M")
     public void checkPhotoPrompts() {
         // Issue #114: изолированный scope на тик — тег layer=scheduler не течёт на
         // соседние задачи shared-потока @Scheduled.

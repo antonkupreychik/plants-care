@@ -1,4 +1,4 @@
-# CRUD локаций пользователя.
+# CRUD локаций пользователя + activate / pause / resume (issue #250).
 
 paths:
   Collection:
@@ -7,7 +7,7 @@ paths:
       operationId: listLocations
       summary: Список локаций пользователя
       description: |
-        Возвращает все локации, принадлежащие текущему пользователю
+        Возвращает все незаархивированные локации, принадлежащие текущему пользователю
         (`sub` из bearer-токена). Без пагинации — у пользователя обычно
         меньше десятка локаций.
       security:
@@ -71,7 +71,7 @@ paths:
                 $ref: '#/schemas/LocationDto'
         '404':
           $ref: '../_common/responses.yaml#/NotFound'
-    put:
+    patch:
       tags: [Locations]
       operationId: updateLocation
       summary: Обновить локацию
@@ -100,35 +100,23 @@ paths:
     delete:
       tags: [Locations]
       operationId: deleteLocation
-      summary: Удалить локацию
+      summary: Архивировать локацию
       description: |
-        Удаляет локацию. Если в локации есть растения — обязательно передать
-        `targetLocationId`, чтобы переместить их в другую локацию того же
-        пользователя.
-
-        Если растений нет — `targetLocationId` игнорируется.
-
-        Особый код ошибки `LOCATION_NOT_EMPTY` возвращается, когда в локации
-        есть растения, а `targetLocationId` не задан.
+        Архивирует (soft-delete) локацию. Если в локации есть активные растения —
+        возвращает 409 с `code=LOCATION_NOT_EMPTY`. Перенос растений перед удалением
+        выполняется отдельным вызовом (`PATCH /plants/{id}` с новым `locationId`),
+        каскадного переноса нет.
       security:
         - bearerAuth: []
       parameters:
         - $ref: '../_common/parameters.yaml#/LocationIdPath'
-        - name: targetLocationId
-          in: query
-          required: false
-          description: Локация, куда переместить растения. Обязателен, если в удаляемой локации есть растения.
-          schema:
-            type: integer
-            format: int64
-            example: 2
       responses:
         '204':
-          description: Локация удалена.
-        '400':
+          description: Локация архивирована.
+        '409':
           description: |
-            Невалидный запрос или попытка удалить непустую локацию без
-            `targetLocationId`. В последнем случае `code=LOCATION_NOT_EMPTY`.
+            В локации есть активные растения. Перенесите их перед удалением.
+            `code=LOCATION_NOT_EMPTY`.
           content:
             application/json:
               schema:
@@ -139,7 +127,85 @@ paths:
                   value:
                     error:
                       code: LOCATION_NOT_EMPTY
-                      message: Provide targetLocationId to move plants
+                      message: "Локация содержит активные растения. Перенесите их перед удалением."
+        '404':
+          $ref: '../_common/responses.yaml#/NotFound'
+
+  ItemActivate:
+    post:
+      tags: [Locations]
+      operationId: activateLocation
+      summary: Сделать локацию активной
+      description: |
+        Устанавливает данную локацию как активную для пользователя
+        (`users.active_location_id`). Предыдущая активная локация теряет флаг `isActive`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '../_common/parameters.yaml#/LocationIdPath'
+      responses:
+        '200':
+          description: Локация стала активной.
+          content:
+            application/json:
+              schema:
+                $ref: '#/schemas/LocationDto'
+        '404':
+          $ref: '../_common/responses.yaml#/NotFound'
+
+  ItemPause:
+    post:
+      tags: [Locations]
+      operationId: pauseLocation
+      summary: Поставить локацию на паузу
+      description: |
+        Ставит локацию на паузу на указанное количество дней (1–180).
+        На время паузы растения этой локации исключаются из шедулера уведомлений
+        и из «сегодняшних дел». Глобальная пауза пользователя (`users.paused_until`)
+        имеет приоритет.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '../_common/parameters.yaml#/LocationIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/schemas/LocationPauseRequest'
+            example:
+              days: 7
+      responses:
+        '200':
+          description: Локация на паузе.
+          content:
+            application/json:
+              schema:
+                $ref: '#/schemas/LocationDto'
+        '400':
+          $ref: '../_common/responses.yaml#/BadRequest'
+        '404':
+          $ref: '../_common/responses.yaml#/NotFound'
+
+  ItemResume:
+    post:
+      tags: [Locations]
+      operationId: resumeLocation
+      summary: Снять паузу с локации
+      description: |
+        Снимает паузу (`paused_until = null`). После этого растения локации
+        снова попадают в шедулер и «сегодняшние дела».
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '../_common/parameters.yaml#/LocationIdPath'
+      responses:
+        '200':
+          description: Пауза снята.
+          content:
+            application/json:
+              schema:
+                $ref: '#/schemas/LocationDto'
         '404':
           $ref: '../_common/responses.yaml#/NotFound'
 
@@ -147,7 +213,7 @@ schemas:
   LocationDto:
     type: object
     description: Локация (комната/место), в которой пользователь держит растения.
-    required: [id, name, defaultLocation]
+    required: [id, name, defaultLocation, isActive]
     properties:
       id:
         type: integer
@@ -163,6 +229,19 @@ schemas:
         type: boolean
         description: Является ли локация дефолтной для пользователя.
         example: false
+      isActive:
+        type: boolean
+        description: |
+          Является ли локация текущей активной локацией пользователя
+          (`users.active_location_id`).
+        example: false
+      pausedUntil:
+        type: string
+        format: date-time
+        nullable: true
+        description: |
+          Если задано — уведомления и задачи по растениям этой локации
+          приостановлены до указанного момента (UTC).
       createdAt:
         type: string
         format: date-time
@@ -196,3 +275,15 @@ schemas:
         type: string
         maxLength: 16
         nullable: true
+
+  LocationPauseRequest:
+    type: object
+    required: [days]
+    description: Запрос на паузу локации.
+    properties:
+      days:
+        type: integer
+        minimum: 1
+        maximum: 180
+        description: Количество дней паузы (1–180).
+        example: 7

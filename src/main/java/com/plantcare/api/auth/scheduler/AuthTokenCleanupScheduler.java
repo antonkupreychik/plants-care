@@ -6,6 +6,7 @@ import com.plantcare.core.repository.MagicLinkTokenRepository;
 import com.plantcare.core.repository.RevokedRefreshTokenRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
@@ -39,7 +40,10 @@ public class AuthTokenCleanupScheduler {
     private final Clock clock;
 
     /** Каждый час в 10-ю минуту (UTC), со смещением от прочих hourly-задач. */
+    // Issue #279: hourly-задача — cleanup идемпотентен, но дубли всё равно нежелательны.
     @Scheduled(cron = "0 10 * * * *", zone = "UTC")
+    @SchedulerLock(name = "AuthTokenCleanupScheduler_cleanup",
+            lockAtMostFor = "PT90M", lockAtLeastFor = "PT55M")
     @Transactional
     public void cleanup() {
         SentryTags.runWithLayer(Layer.SCHEDULER, "AuthTokenCleanupScheduler", () -> {

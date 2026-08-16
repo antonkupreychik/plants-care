@@ -47,6 +47,43 @@ public class PlantTemplateService {
     private final com.plantcare.core.seasonal.service.SeasonalIntervalService seasonalIntervalService;
 
     // =================================================================
+    // createEmpty — создать пустой шаблон (без источника-растения)
+    // =================================================================
+
+    /**
+     * Создаёт шаблон без правил ухода — «чистый каркас» с именем.
+     * Используется REST API, когда {@code fromPlantId} не передан.
+     *
+     * @throws IllegalStateException    если достигнут лимит {@value #MAX_TEMPLATES_PER_USER}
+     * @throws IllegalArgumentException если имя невалидно или дублирует существующее
+     */
+    @Transactional
+    public PlantTemplate createEmpty(User user, String rawName) {
+        String name = rawName == null ? "" : rawName.trim();
+        validateName(name);
+
+        if (templateRepository.countByUserId(user.getId()) >= MAX_TEMPLATES_PER_USER) {
+            throw new IllegalStateException(
+                    "Достигнут лимит " + MAX_TEMPLATES_PER_USER + " шаблонов. " +
+                    "Удали неиспользуемые в ⚙️ Настройки → ⭐ Мои шаблоны.");
+        }
+
+        if (templateRepository.existsByUserIdAndNameIgnoreCase(user.getId(), name)) {
+            throw new IllegalArgumentException(
+                    "Шаблон с именем «" + name + "» уже существует. Выбери другое название.");
+        }
+
+        PlantTemplate template = PlantTemplate.builder()
+                .userId(user.getId())
+                .name(name)
+                .build();
+        template = templateRepository.save(template);
+
+        log.info("Created empty template '{}' (id={}) for user {}", name, template.getId(), user.getId());
+        return template;
+    }
+
+    // =================================================================
     // saveFromPlant — сохранить шаблон из существующего растения
     // =================================================================
 
@@ -72,27 +109,30 @@ public class PlantTemplateService {
                     "Шаблон с именем «" + name + "» уже существует. Выбери другое название.");
         }
 
-        PlantTemplate template = PlantTemplate.builder()
-                .userId(user.getId())
-                .name(name)
-                .build();
-        template = templateRepository.save(template);
-
         // Копируем только активные расписания — отключённые тумблером не нужны
         List<CareSchedule> activeSchedules = careScheduleRepository
                 .findAllByPlantId(plantId).stream()
                 .filter(CareSchedule::isActive)
                 .toList();
 
-        final PlantTemplate savedTemplate = template;
+        PlantTemplate template = PlantTemplate.builder()
+                .userId(user.getId())
+                .name(name)
+                .build();
+
+        // Добавляем правила до сохранения — CascadeType.ALL сохранит их вместе с шаблоном.
+        // Это гарантирует, что возвращаемый template.getCareRules() заполнен
+        // и не требует дополнительной перезагрузки из БД.
         for (CareSchedule schedule : activeSchedules) {
             PlantTemplateCareRule rule = PlantTemplateCareRule.builder()
-                    .template(savedTemplate)
+                    .template(template)
                     .careType(schedule.getTaskType())
                     .intervalDays(schedule.getIntervalDays())
                     .build();
-            careRuleRepository.save(rule);
+            template.getCareRules().add(rule);
         }
+
+        template = templateRepository.save(template);
 
         log.info("Saved template '{}' (id={}) from plant {} for user {}",
                 name, template.getId(), plantId, user.getId());

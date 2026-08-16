@@ -1,0 +1,19 @@
+meta {
+  name: Cleanup – delete test plant
+  type: http
+  seq: 1
+}
+
+delete {
+  url: {{baseUrl}}/api/v1/plants/{{plantId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{accessToken}}
+}
+
+assert {
+  res.status: eq 204
+}

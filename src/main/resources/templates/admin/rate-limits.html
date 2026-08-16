@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      xmlns:layout="http://www.ultraq.net.nz/thymeleaf/layout"
+      layout:decorate="~{admin/_layout}"
+      lang="ru">
+<head>
+    <title>Rate Limits</title>
+</head>
+<body>
+<section layout:fragment="content">
+    <div class="flex items-center justify-between mb-4">
+        <h1 class="text-2xl font-bold">Rate Limit Events</h1>
+        <div class="flex gap-2">
+            <a th:href="@{/admin/rate-limits(hours=1)}"
+               th:classappend="${hours == 1} ? 'btn-primary' : 'btn-ghost'"
+               class="btn btn-sm">1h</a>
+            <a th:href="@{/admin/rate-limits(hours=6)}"
+               th:classappend="${hours == 6} ? 'btn-primary' : 'btn-ghost'"
+               class="btn btn-sm">6h</a>
+            <a th:href="@{/admin/rate-limits(hours=24)}"
+               th:classappend="${hours == 24} ? 'btn-primary' : 'btn-ghost'"
+               class="btn btn-sm">24h</a>
+        </div>
+    </div>
+
+    <!-- Summary card -->
+    <div class="stats shadow bg-base-100 mb-6">
+        <div class="stat">
+            <div class="stat-title">429 событий за период</div>
+            <div class="stat-value text-warning" th:text="${totalEvents}">0</div>
+            <div class="stat-desc" th:text="'последние ' + ${hours} + ' ч'">последние 24 ч</div>
+        </div>
+    </div>
+
+    <!-- Top violators table -->
+    <div class="card bg-base-100 shadow">
+        <div class="card-body">
+            <h2 class="card-title mb-4">Топ нарушителей</h2>
+
+            <div th:if="${#lists.isEmpty(topViolators)}"
+                 class="text-base-content/60 text-sm py-4">
+                Нарушений нет за выбранный период
+            </div>
+
+            <div th:unless="${#lists.isEmpty(topViolators)}" class="overflow-x-auto">
+                <table class="table table-sm">
+                    <thead>
+                    <tr>
+                        <th>IP</th>
+                        <th>User ID</th>
+                        <th>Событий</th>
+                        <th>Последнее</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    <tr th:each="v : ${topViolators}">
+                        <td class="font-mono text-xs" th:text="${v.ip()}">0.0.0.0</td>
+                        <td th:text="${v.userId() != null ? v.userId() : '—'}">—</td>
+                        <td>
+                            <span class="badge badge-warning" th:text="${v.eventCount()}">0</span>
+                        </td>
+                        <td class="text-xs text-base-content/60" th:text="${v.lastSeen()}">—</td>
+                    </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</section>
+</body>
+</html>

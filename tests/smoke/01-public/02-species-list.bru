@@ -1,0 +1,23 @@
+meta {
+  name: Species – list default page
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/api/v1/species
+  body: none
+  auth: none
+}
+
+params:query {
+  limit: 20
+  offset: 0
+}
+
+assert {
+  res.status: eq 200
+  res.body.items: isArray
+  res.body.total: isNumber
+  res.body.total: gte 0
+}

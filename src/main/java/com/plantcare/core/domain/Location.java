@@ -12,6 +12,10 @@ import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import org.hibernate.annotations.UpdateTimestamp;
+
+import java.time.Instant;
+import java.time.LocalDateTime;
 
 @Entity
 @Table(name = "locations")
@@ -39,11 +43,60 @@ public class Location extends BaseEntity {
     @Builder.Default
     private boolean defaultLocation = false;
 
+    /**
+     * Когда запись была изменена. Обновляется Hibernate при каждом UPDATE (issue #91).
+     */
+    @UpdateTimestamp
+    @Column(name = "updated_at", nullable = false)
+    private LocalDateTime updatedAt;
+
+    /**
+     * Момент физического удаления для синк-протокола (issue #91).
+     * NULL = не удалено.
+     */
+    @Column(name = "deleted_at")
+    private LocalDateTime deletedAt;
+
+    /**
+     * UUID от мобильного клиента для идемпотентности (issue #91).
+     * NULL для записей Telegram-бота. Partial unique index на стороне БД.
+     */
+    @Column(name = "client_id", length = 64)
+    private String clientId;
+
+    /**
+     * Если задано — уведомления по растениям этой локации не шлются до этого момента.
+     * NULL = локация активна (не на паузе). Хранится в UTC (TIMESTAMPTZ).
+     */
+    @Column(name = "paused_until")
+    private Instant pausedUntil;
+
+    /**
+     * Soft-delete: локация архивирована, не показывается в основном списке.
+     * NULL = не архивирована.
+     */
+    @Column(name = "archived_at")
+    private Instant archivedAt;
+
     public String getDisplayName() {
         if (emoji == null || emoji.isBlank()) {
             return name;
         }
 
         return emoji + " " + name;
+    }
+
+    /**
+     * Проверяет, находится ли локация на паузе прямо сейчас.
+     */
+    public boolean isPaused() {
+        return pausedUntil != null && Instant.now().isBefore(pausedUntil);
+    }
+
+    /**
+     * Проверяет, архивирована ли локация.
+     */
+    public boolean isArchived() {
+        return archivedAt != null;
     }
 }

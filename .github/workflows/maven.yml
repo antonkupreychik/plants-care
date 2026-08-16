@@ -10,9 +10,9 @@ name: Java CI with Maven
 
 on:
   push:
-    branches: [ "main", "feature", "tech" ]
+    branches: [ "main", "develop", "feature", "tech" ]
   pull_request:
-    branches: [ "main", "feature" ]
+    branches: [ "main", "develop", "feature", "tech" ]
 
 jobs:
   build:
@@ -28,4 +28,13 @@ jobs:
         distribution: 'temurin'
         cache: maven
     - name: Build with Maven
+      env:
+        MAVEN_OPTS: "-Xmx512m"
+      # Issue #239: TimeZoneEngine теперь единый синглтон на весь прогон JVM
+      # (TimeZoneEngineBean.Holder), поэтому тест-форк больше не держит N копий
+      # гео-датасета и укладывается в дефолтный heap без -Xmx-распухания.
+      # ВАЖНО: не задавать -DargLine здесь — это перезаписывает argLine, в который
+      # jacoco:prepare-agent внедряет свой java-agent, и тогда покрытие не
+      # инструментируется и jacoco:check падает. Heap при необходимости — через
+      # MAVEN_OPTS форка, а не через argLine.
       run: mvn package

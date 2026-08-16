@@ -9,6 +9,7 @@ import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.Clock;
 import java.time.ZonedDateTime;
 
 /**
@@ -41,11 +42,12 @@ public class SeasonalIntervalService {
     public static final int MAX_INTERVAL_DAYS = 60;
 
     private final SeasonResolver seasonResolver;
+    private final Clock clock;
 
     /** Эффективный интервал для растения в его текущем сезоне. */
     public int effectiveIntervalDays(Plant plant, User user, int baseIntervalDays) {
         return effectiveIntervalDaysAt(plant, user, baseIntervalDays,
-                ZonedDateTime.now());
+                ZonedDateTime.now(clock));
     }
 
     /**
@@ -76,6 +78,35 @@ public class SeasonalIntervalService {
             case OFF     -> false;                      // форс-выкл
             case INHERIT -> user.isSeasonalEnabled();   // как у юзера
         };
+    }
+
+    /**
+     * Эффективный интервал для заданного сезона — без учёта текущего времени.
+     * Используется для preview-диаграммы в mobile G20 (issue #188).
+     */
+    public int effectiveIntervalForSeason(Plant plant, User user, int baseIntervalDays, Season season) {
+        if (!isSeasonalActive(plant, user)) {
+            return clamp(baseIntervalDays);
+        }
+        int seasonal = switch (user.getSeasonalMode()) {
+            case MULTIPLIER -> {
+                BigDecimal m = season.isSummer()
+                        ? user.getSummerMultiplier()
+                        : user.getWinterMultiplier();
+                if (m == null) yield baseIntervalDays;
+                yield BigDecimal.valueOf(baseIntervalDays)
+                        .multiply(m)
+                        .setScale(0, RoundingMode.HALF_UP)
+                        .intValue();
+            }
+            case FIXED -> {
+                Integer override = season.isSummer()
+                        ? user.getSummerIntervalOverrideDays()
+                        : user.getWinterIntervalOverrideDays();
+                yield override != null ? override : baseIntervalDays;
+            }
+        };
+        return clamp(seasonal);
     }
 
     /** Хелпер для UI — какой сезон сейчас (для отображения «сейчас: лето»). */

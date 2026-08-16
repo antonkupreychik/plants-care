@@ -9,17 +9,25 @@ import com.plantcare.api.generated.model.PlantDiagnosisDto;
 import com.plantcare.api.generated.model.PlantDto;
 import com.plantcare.api.generated.model.PlantFamilyMemberDto;
 import com.plantcare.api.generated.model.PlantFamilyResponse;
+import com.plantcare.api.generated.model.PlantArchiveRequest;
 import com.plantcare.api.generated.model.PlantHealthDto;
 import com.plantcare.api.generated.model.PlantUpdateRequest;
+import com.plantcare.api.generated.model.ScheduleInput;
 import com.plantcare.core.domain.Plant;
 import com.plantcare.core.domain.User;
+import com.plantcare.core.domain.enums.TaskType;
 import com.plantcare.core.service.HealthScoreService;
+import com.plantcare.core.service.PlantAcclimationService;
 import com.plantcare.core.service.PlantDiagnosisReportService;
 import com.plantcare.core.service.PlantService;
+import com.plantcare.core.service.PlantService.ScheduleInputDto;
 import com.plantcare.core.service.UserService;
+import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.time.Clock;
+import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
 
@@ -34,37 +42,73 @@ import java.util.List;
 public class PlantController implements PlantsApi {
 
     private final PlantService plantService;
+    private final PlantAcclimationService plantAcclimationService;
     private final UserService userService;
     private final CurrentUserProvider currentUserProvider;
+    private final Clock clock;
 
     @Override
-    public PageResponsePlantDto listPlants(Long locationId, Integer offset, Integer limit) {
+    public PageResponsePlantDto listPlants(String status, Long locationId, Integer offset, Integer limit) {
         Long userId = currentUserProvider.currentUserId();
+
+        if ("archived".equalsIgnoreCase(status)) {
+            List<PlantDto> archived = plantService.listArchivedPlants(userId).stream()
+                    .map(this::toArchivedDto)
+                    .toList();
+            // Архивная выдача не пагинируется на сервере (экран показывает весь список):
+            // отдаём всё одной страницей, total = размеру списка.
+            return new PageResponsePlantDto(archived, archived.size(), 0, archived.size());
+        }
 
         int safeLimit = Math.min(Math.max(limit, 1), 100);
         int safeOffset = Math.max(offset, 0);
 
-        List<Plant> plants = plantService.listPlants(userId, locationId, safeOffset, safeLimit);
+        List<PlantService.PlantWithHealth> plantsWithHealth =
+                plantService.listPlantsWithHealth(userId, locationId, safeOffset, safeLimit);
         long total = plantService.countPlants(userId, locationId);
 
-        List<PlantDto> items = plants.stream()
-                .map(PlantController::toDto)
+        List<PlantDto> items = plantsWithHealth.stream()
+                .map(pwh -> toDto(pwh.plant(), pwh.health()))
                 .toList();
 
         return new PageResponsePlantDto(items, (int) total, safeOffset, safeLimit);
     }
 
     @Override
+    public PlantDto archivePlant(Long id, PlantArchiveRequest request) {
+        Long userId = currentUserProvider.currentUserId();
+
+        Boolean gifted = request != null ? request.getGifted() : null;
+        String note = request != null ? request.getNote() : null;
+
+        Plant archived = plantService.archivePlantWithReason(userId, id, gifted, note);
+
+        PlantDto dto = toDto(archived);
+        applyArchiveReason(dto, archived);
+        return dto;
+    }
+
+    @Override
+    public PlantDto restorePlant(Long id) {
+        Long userId = currentUserProvider.currentUserId();
+
+        Plant restored = plantService.restorePlant(userId, id);
+        return toDto(restored);
+    }
+
+    @Override
     public PlantDto getPlant(Long id) {
         Long userId = currentUserProvider.currentUserId();
-        Plant plant = plantService.getPlantOrThrow(userId, id);
+        PlantService.PlantWithHealth pwh = plantService.getPlantWithHealth(userId, id);
 
-        return toDto(plant);
+        return toDto(pwh.plant(), pwh.health());
     }
 
     @Override
     public PlantDto createPlant(PlantCreateRequest request) {
         User user = userService.getByIdOrThrow(currentUserProvider.currentUserId());
+
+        List<ScheduleInputDto> schedules = toScheduleInputDtos(request.getSchedules());
 
         Plant plant = plantService.createPlant(
                 user,
@@ -72,10 +116,32 @@ public class PlantController implements PlantsApi {
                 request.getNotes(),
                 request.getLocationId(),
                 request.getSpeciesId(),
-                request.getParentPlantId()
+                request.getParentPlantId(),
+                request.getAcquiredAt(),
+                schedules
         );
 
+        // Акклиматизация вызывается вне транзакции createPlant: она открывает свою транзакцию внутри.
+        if (Boolean.TRUE.equals(request.getIsNew())) {
+            plantAcclimationService.enable(user, plant.getId());
+            // Перечитываем растение с обновлёнными полями акклиматизации.
+            plant = plantService.getPlantOrThrow(user.getId(), plant.getId());
+        }
+
         return toDto(plant);
+    }
+
+    private static List<ScheduleInputDto> toScheduleInputDtos(List<ScheduleInput> raw) {
+        if (raw == null || raw.isEmpty()) {
+            return null;
+        }
+        return raw.stream()
+                .map(s -> new ScheduleInputDto(
+                        TaskType.valueOf(s.getType().getValue()),
+                        s.getEvery(),
+                        s.getAmountMl()
+                ))
+                .toList();
     }
 
     @Override
@@ -87,7 +153,9 @@ public class PlantController implements PlantsApi {
                 id,
                 request.getName(),
                 request.getNotes(),
-                request.getLocationId()
+                request.getLocationId(),
+                request.getSpeciesId(),
+                request.getClearSpecies()
         );
 
         return toDto(updated);
@@ -96,7 +164,18 @@ public class PlantController implements PlantsApi {
     @Override
     public void deletePlant(Long id) {
         Long userId = currentUserProvider.currentUserId();
-        plantService.archivePlant(userId, id);
+        plantService.hardDeletePlant(userId, id);
+    }
+
+    @Override
+    public void disablePlantAcclimation(Long id) {
+        User user = userService.getByIdOrThrow(currentUserProvider.currentUserId());
+        // disable() идемпотентен: возвращает null если растение не найдено или архивировано.
+        // Бросаем 404 в этом случае — клиент должен знать, что растение не существует.
+        Plant plant = plantAcclimationService.disable(user, id);
+        if (plant == null) {
+            throw new EntityNotFoundException("Растение не найдено или архивировано: " + id);
+        }
     }
 
     @Override
@@ -152,7 +231,7 @@ public class PlantController implements PlantsApi {
         return response;
     }
 
-    private static PlantDto toDto(Plant plant) {
+    private PlantDto toDto(Plant plant) {
         PlantDto dto = new PlantDto(plant.getId(), plant.getName(), plant.isArchived())
                 .notes(plant.getNotes())
                 .photoFileId(plant.getPhotoFileId());
@@ -171,7 +250,52 @@ public class PlantController implements PlantsApi {
             dto.createdAt(plant.getCreatedAt().atOffset(ZoneOffset.UTC));
         }
 
+        dto.acquiredAt(plant.getAcquiredAt());
+
+        LocalDateTime now = LocalDateTime.now(clock);
+        boolean inAcclimation = plant.isInAcclimation(now);
+        dto.inAcclimation(inAcclimation);
+
+        if (plant.getAcclimationUntil() != null) {
+            dto.acclimationUntil(plant.getAcclimationUntil().atOffset(ZoneOffset.UTC));
+        }
+
         return dto;
+    }
+
+    private PlantDto toDto(Plant plant, HealthScoreService.HealthScore health) {
+        PlantDto dto = toDto(plant);
+        if (health != null) {
+            dto.healthInsufficientData(health.insufficientData());
+            if (!health.insufficientData()) {
+                dto.healthScore(health.score())
+                   .healthZone(PlantDto.HealthZoneEnum.fromValue(health.zone().name()));
+            }
+        }
+        return dto;
+    }
+
+    /**
+     * Архивное растение с агрегатами для экрана «Архив» (issue #219).
+     * Поверх базового DTO добавляет поля выбытия и счётчики.
+     */
+    private PlantDto toArchivedDto(PlantService.ArchivedPlant archived) {
+        Plant plant = archived.plant();
+
+        PlantDto dto = toDto(plant);
+        applyArchiveReason(dto, plant);
+        dto.totalCareDays(archived.totalCareDays())
+                .totalCareEvents(archived.totalCareEvents());
+        return dto;
+    }
+
+    /** Заполняет поля выбытия (archivedAt/gifted/note) из растения (issue #219). */
+    private void applyArchiveReason(PlantDto dto, Plant plant) {
+        if (plant.getArchivedAt() != null) {
+            dto.archivedAt(plant.getArchivedAt().atOffset(ZoneOffset.UTC));
+        }
+        dto.gifted(plant.getArchiveGifted())
+                .note(plant.getArchiveNote());
     }
 
     private static PlantFamilyMemberDto toFamilyMemberDto(Plant plant) {

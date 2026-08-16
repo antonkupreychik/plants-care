@@ -12,21 +12,17 @@ import com.plantcare.core.repository.LocationRepository;
 import com.plantcare.core.repository.PlantRepository;
 import com.plantcare.core.repository.UserRepository;
 import com.plantcare.core.service.TodayApiService.TodayTask;
+import com.plantcare.bot.support.FixedClockTestConfig;
 import com.plantcare.bot.support.IntegrationTestBase;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.TestConfiguration;
-import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
-import org.springframework.context.annotation.Primary;
 
-import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
 
@@ -39,32 +35,21 @@ import static org.assertj.core.api.SoftAssertions.assertSoftly;
  * {@code care_history} ↔ {@code care_schedules} проверяются на настоящих записях,
  * а не на моках репозитория.
  *
- * <p>{@link Clock}-бин подменён фиксированным {@link #FIXED_NOW}, чтобы границы окна
- * «сегодня» в TZ юзера были детерминированными.
+ * <p>{@link com.plantcare.bot.support.FixedClockTestConfig} подменяет {@code Clock}-бин
+ * фиксированным моментом {@link FixedClockTestConfig#FIXED_NOW}, чтобы границы окна
+ * «сегодня» в TZ юзера были детерминированными. Общий конфиг обеспечивает совместное
+ * использование {@code ApplicationContext} между тестами (issue #239).
  *
  * <p>Покрывает AC #184: pending; done-сегодня (с уехавшим вперёд nextDueAt);
  * дедуп pending+done; ретро-отметка (вчера) не считается сегодня; cancelled не
  * считается; пустой день; не-UTC TZ на границе суток.
  */
 @DisplayName("TodayApiService — done-фид /today (issue #184)")
-@Import(TodayApiServiceTest.FixedClockConfig.class)
+@Import(FixedClockTestConfig.class)
 class TodayApiServiceTest extends IntegrationTestBase {
 
-    /**
-     * Фиксированный «сейчас» 00:30 UTC: для восточных TZ (Almaty UTC+5) локальная
-     * дата уже «сегодня», а UTC-полночь окна и локальная-полночь расходятся на день —
-     * это проверяет TZ-кейс на границе суток.
-     */
-    static final Instant FIXED_NOW = Instant.parse("2026-05-25T00:30:00Z");
-
-    @TestConfiguration
-    static class FixedClockConfig {
-        @Bean
-        @Primary
-        Clock fixedClock() {
-            return Clock.fixed(FIXED_NOW, ZoneOffset.UTC);
-        }
-    }
+    /** Фиксированный «сейчас» — делегируем к общей конфигурации. */
+    static final Instant FIXED_NOW = FixedClockTestConfig.FIXED_NOW;
 
     @Autowired private TodayApiService service;
 
@@ -201,6 +186,55 @@ class TodayApiServiceTest extends IntegrationTestBase {
             softly.assertThat(tasks).hasSize(1);
             softly.assertThat(tasks.get(0).doneAt()).isEqualTo(utc("2026-05-24T20:00:00"));
         });
+    }
+
+    @Test
+    @DisplayName("should_exclude_plants_from_paused_location_in_today_tasks")
+    void should_exclude_plants_from_paused_location_in_today_tasks() {
+        // arrange — два растения: одно в активной локации, другое в локации на паузе.
+        // Только растение из активной локации должно попасть в «сегодня».
+        User user = savedUser(9008L, "Europe/Moscow");
+
+        Location activeLocation = locationRepository.save(Location.builder()
+                .user(user)
+                .name("Гостиная")
+                .emoji("🌿")
+                .defaultLocation(true)
+                .build());
+
+        Location pausedLocation = locationRepository.save(Location.builder()
+                .user(user)
+                .name("Дача")
+                .emoji("🏡")
+                .defaultLocation(false)
+                // пауза ещё активна — 30 дней в будущем
+                .pausedUntil(Instant.now().plus(30, ChronoUnit.DAYS))
+                .build());
+
+        Plant activePlant = plantRepository.save(Plant.builder()
+                .user(user)
+                .location(activeLocation)
+                .name("Монстера")
+                .acquiredAt(LocalDate.of(2024, 1, 1))
+                .build());
+
+        Plant pausedPlant = plantRepository.save(Plant.builder()
+                .user(user)
+                .location(pausedLocation)
+                .name("Дачный кактус")
+                .acquiredAt(LocalDate.of(2024, 1, 1))
+                .build());
+
+        // оба расписания просрочены — без паузы оба попали бы в сегодня
+        savedSchedule(activePlant, TaskType.WATERING, utc("2026-05-20T10:00:00"));
+        savedSchedule(pausedPlant, TaskType.WATERING, utc("2026-05-20T10:00:00"));
+
+        // act
+        List<TodayTask> tasks = service.getTodayTasks(user.getId(), "Europe/Moscow");
+
+        // assert — только активное растение в списке, растение из локации на паузе исключено
+        assertThat(tasks).hasSize(1);
+        assertThat(tasks.get(0).schedule().getPlant().getName()).isEqualTo("Монстера");
     }
 
     // ===================== helpers =====================

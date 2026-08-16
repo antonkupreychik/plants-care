@@ -8,6 +8,7 @@ import com.plantcare.core.domain.DigestTaskItem;
 import com.plantcare.core.domain.NotificationDigest;
 import com.plantcare.core.domain.Plant;
 import com.plantcare.core.domain.User;
+import com.plantcare.core.domain.UserDevice;
 import com.plantcare.core.domain.enums.TaskType;
 import com.plantcare.core.metrics.MetricsService;
 import com.plantcare.core.observability.SentryTags;
@@ -15,12 +16,14 @@ import com.plantcare.core.observability.SentryTags.Layer;
 import com.plantcare.core.repository.CareScheduleRepository;
 import com.plantcare.core.repository.NotificationDigestRepository;
 import com.plantcare.core.repository.NotificationLogRepository;
+import com.plantcare.core.repository.UserDeviceRepository;
 import com.plantcare.bot.telegram.RateLimitedTelegramSender;
 import com.plantcare.bot.telegram.SendCallbacks;
 import io.micrometer.core.instrument.Timer;
 import io.sentry.Sentry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -55,8 +58,21 @@ public class NotificationSchedulerService {
     private final MetricsService metricsService;
     private final RateLimitedTelegramSender telegramSender;
     private final NotificationDeliveryCallbacks deliveryCallbacks;
+    private final com.plantcare.core.service.LocationSharingService locationSharingService;
+    // Issue #175 / #177: репозиторий устройств читается внутри тика (формируем
+    // примитивные PushTarget'ы), а реальная push-раздача исполняется сервисом
+    // мультиканального fan-out ВНЕ транзакции тика (CLAUDE.md: внешние API не
+    // зовём из открытой транзакции к БД).
+    private final UserDeviceRepository userDeviceRepository;
+    private final PushFanOutService pushFanOutService;
 
+    // Issue #279: lockAtMostFor > fixedRate (2m > 1m) — если инстанс повис, лок
+    // освобождается через 2 мин, следующий тик уже через 1 мин возьмёт его.
+    // lockAtLeastFor = 55s — гарантирует, что на быстром инстансе тик не запускается
+    // дважды за одно окно (защита от <<мгновенного>> тика + рестарта).
     @Scheduled(fixedRate = 60_000)
+    @SchedulerLock(name = "NotificationSchedulerService_checkAndSendNotifications",
+            lockAtMostFor = "PT2M", lockAtLeastFor = "PT55S")
     @Transactional
     public void checkAndSendNotifications() {
         // Issue #114: весь тик выполняется в изолированном scope с тегом
@@ -277,6 +293,12 @@ public class NotificationSchedulerService {
             return false;
         }
 
+        // Issue #70: глобальная пауза пользователя имеет приоритет над паузой локации.
+        // Если локация на паузе — пропускаем уведомление по этому растению.
+        if (plant.getLocation() != null && plant.getLocation().isPaused()) {
+            return false;
+        }
+
         // Quiet-hours считаем по абсолютному Instant из clock'а, а не из
         // LocalDateTime-параметра `now` — иначе при не-UTC JVM TZ wall-clock
         // в `now` интерпретировался бы как UTC и quiet-hours съезжали бы на
@@ -310,28 +332,121 @@ public class NotificationSchedulerService {
         // Если Open-Meteo молчит или кеш пустой — push уходит без хинта.
         text = appendWeatherHintIfWatering(text, user, schedule);
 
-        SendMessage message = SendMessage.builder()
-                .chatId(user.getTelegramChatId().toString())
-                .text(text)
-                .replyMarkup(keyboard)
-                .build();
-
-        // Issue #29: отправка ушла в rate-limited очередь. Bookkeeping (дедуп-лог +
-        // метрики, пометка blocked на 403) выполняется в колбэках на воркер-потоке
-        // очереди вне этой транзакции. Захватываем только примитивные id, чтобы не
-        // тащить detached-entity между потоками. Дедуп-лог пишется по факту успешной
-        // отправки — как и в синхронной версии (очередь дренирует задолго до
-        // следующего 60с-тика, окно дедупа не нарушается).
         final long plantId = plant.getId();
         final TaskType taskType = schedule.getTaskType();
-        final long chatId = user.getTelegramChatId();
-        telegramSender.enqueue(message, new SendCallbacks(
-                () -> {
-                    deliveryCallbacks.onSent(plantId, taskType);
-                    log.info("Sent notification for plant id={} to chat {} (acclimation={})",
-                            plantId, chatId, inAcclimation);
-                },
-                e -> deliveryCallbacks.onFailed(chatId, e)));
+
+        // Telegram-канал: только если у юзера привязан Telegram-чат (issue #88:
+        // mobile-only юзеры могут не иметь telegramChatId).
+        if (user.getTelegramChatId() != null) {
+            SendMessage message = SendMessage.builder()
+                    .chatId(user.getTelegramChatId().toString())
+                    .text(text)
+                    .replyMarkup(keyboard)
+                    .build();
+
+            // Issue #29: отправка ушла в rate-limited очередь. Bookkeeping (дедуп-лог +
+            // метрики, пометка blocked на 403) выполняется в колбэках на воркер-потоке
+            // очереди вне этой транзакции. Захватываем только примитивные id, чтобы не
+            // тащить detached-entity между потоками. Дедуп-лог пишется по факту успешной
+            // отправки — как и в синхронной версии (очередь дренирует задолго до
+            // следующего 60с-тика, окно дедупа не нарушается).
+            final long chatId = user.getTelegramChatId();
+            telegramSender.enqueue(message, new SendCallbacks(
+                    () -> {
+                        deliveryCallbacks.onSent(plantId, taskType);
+                        log.info("Sent notification for plant id={} to chat {} (acclimation={})",
+                                plantId, chatId, inAcclimation);
+                    },
+                    e -> deliveryCallbacks.onFailed(chatId, e)));
+        }
+
+        // Issue #175 / #177: fan-out на мобильные устройства пользователя.
+        // Telegram-юзеры тоже могут иметь mobile-устройства (оба канала получат уведомление).
+        // Тихие часы / paused_until уже проверены в shouldSend() выше. Доставка push'а
+        // вынесена ВНЕ транзакции тика (см. fanOutToMobileDevices).
+        fanOutToMobileDevices(user, schedule.getTaskType(), text);
+
+        // Совместный уход (issue #77): тот же push веером уходит caretaker'ам с
+        // доступом к локации растения. Клавиатура завязана на scheduleId, а callback
+        // «Полил» не скоупится по юзеру — значит, кто угодно из них может закрыть
+        // задачу и она закроется у всех. Bookkeeping/дедуп ведём только по
+        // основной отправке владельцу (выше), чтобы не задвоить метрики.
+        fanOutToCaretakers(plant, text, keyboard);
+    }
+
+    /**
+     * Fan-out push-уведомления на все зарегистрированные мобильные устройства
+     * пользователя (issue #175 / #177). Quiet hours и paused_until уже проверены
+     * канал-нейтрально в {@code shouldSend()} выше — push и Telegram равноправны.
+     *
+     * <p>Внутри транзакции тика мы только читаем устройства и формируем
+     * примитивные {@link PushFanOutService.PushTarget} (никаких detached-entity
+     * между потоками), а реальную доставку отдаём {@link PushFanOutService},
+     * который исполняет её ВНЕ транзакции тика (CLAUDE.md: внешние API не зовём
+     * из открытой транзакции). Ошибки отдельного устройства и bookkeeping
+     * (метрика доставки, удаление протухшего токена) разруливаются там же.
+     */
+    private void fanOutToMobileDevices(User user, TaskType taskType, String text) {
+        List<UserDevice> devices = userDeviceRepository.findByUserId(user.getId());
+        if (devices.isEmpty()) {
+            return;
+        }
+        List<PushFanOutService.PushTarget> targets = devices.stream()
+                .map(device -> new PushFanOutService.PushTarget(
+                        device.getId(), device.getPushToken(), text, taskType))
+                .toList();
+        pushFanOutService.enqueue(targets);
+    }
+
+    /**
+     * Fan-out push-дайджеста на все мобильные устройства пользователя
+     * (issue #175 / #177). Зеркалит {@link #fanOutToMobileDevices}, но шлёт
+     * один push на устройство с готовым текстом дайджеста (а не по push на задачу),
+     * так как дайджест — это одно сгруппированное уведомление. Для среза метрики
+     * доставки берём тип первой задачи дайджеста (push — коарс-счётчик доставки;
+     * дедуп-лог по каждой задаче ведётся только на Telegram-канале через onDigestSent).
+     *
+     * <p>Как и в {@link #fanOutToMobileDevices}, внутри транзакции тика только читаем
+     * устройства и формируем примитивные {@link PushFanOutService.PushTarget};
+     * доставка исполняется ВНЕ транзакции в {@link PushFanOutService}.
+     */
+    private void fanOutDigestToMobileDevices(User user, List<CareSchedule> schedules, String digestText) {
+        List<UserDevice> devices = userDeviceRepository.findByUserId(user.getId());
+        if (devices.isEmpty()) {
+            return;
+        }
+        TaskType metricTaskType = schedules.get(0).getTaskType();
+        List<PushFanOutService.PushTarget> targets = devices.stream()
+                .map(device -> new PushFanOutService.PushTarget(
+                        device.getId(), device.getPushToken(), digestText, metricTaskType))
+                .toList();
+        pushFanOutService.enqueue(targets);
+    }
+
+    /**
+     * Веерная рассылка готового push'а всем caretaker'ам локации растения
+     * (issue #77). Никакого нового bookkeeping — это копия уведомления владельца.
+     */
+    private void fanOutToCaretakers(Plant plant, String text, InlineKeyboardMarkup keyboard) {
+        Long locationId = plant.getLocation() != null ? plant.getLocation().getId() : null;
+        if (locationId == null) {
+            return;
+        }
+
+        List<Long> caretakerChatIds = locationSharingService.caretakerChatIdsForLocation(locationId);
+        for (Long caretakerChatId : caretakerChatIds) {
+            SendMessage copy = SendMessage.builder()
+                    .chatId(caretakerChatId.toString())
+                    .text(text)
+                    .replyMarkup(keyboard)
+                    .build();
+            final long targetChatId = caretakerChatId;
+            telegramSender.enqueue(copy, new SendCallbacks(
+                    () -> log.info("Fanned out notification for plant id={} to caretaker chat {}",
+                            plant.getId(), targetChatId),
+                    e -> log.warn("Failed to fan out notification to caretaker chat {}: {}",
+                            targetChatId, e.getMessage())));
+        }
     }
 
     private String buildAcclimationWateringText(Plant plant) {
@@ -375,29 +490,69 @@ public class NotificationSchedulerService {
 
         NotificationDigest savedDigest = notificationDigestRepository.save(digest);
 
-        SendMessage message = SendMessage.builder()
-                .chatId(user.getTelegramChatId().toString())
-                .text(buildDigestText(items))
-                .replyMarkup(buildDigestKeyboard(savedDigest.getId()))
-                .build();
-
-        // Issue #29: см. комментарий в sendNotification. Каждый сгруппированный пуш
-        // считаем за отправленное уведомление по каждой задаче (срезы по task_type) +
-        // отдельный счётчик дайджестов. Bookkeeping — в колбэке на воркер-потоке.
-        final List<NotificationDeliveryCallbacks.DigestLogItem> logItems = schedules.stream()
-                .map(s -> new NotificationDeliveryCallbacks.DigestLogItem(
-                        s.getPlant().getId(), s.getTaskType()))
-                .toList();
-        final long chatId = user.getTelegramChatId();
+        String digestBody = buildDigestText(items);
         final long digestId = savedDigest.getId();
-        final int taskCount = schedules.size();
-        telegramSender.enqueue(message, new SendCallbacks(
-                () -> {
-                    deliveryCallbacks.onDigestSent(logItems);
-                    log.info("Sent digest id={} with {} tasks to chat {}",
-                            digestId, taskCount, chatId);
-                },
-                e -> deliveryCallbacks.onFailed(chatId, e)));
+
+        // Telegram-канал: только если у юзера привязан Telegram-чат (issue #88:
+        // mobile-only юзеры могут не иметь telegramChatId). Зеркалит гард из
+        // sendNotification — без него вызов getTelegramChatId().toString() ронял
+        // шедулер NPE на mobile-only юзере с 2+ due-задачами.
+        if (user.getTelegramChatId() != null) {
+            SendMessage message = SendMessage.builder()
+                    .chatId(user.getTelegramChatId().toString())
+                    .text(digestBody)
+                    .replyMarkup(buildDigestKeyboard(digestId))
+                    .build();
+
+            // Issue #29: см. комментарий в sendNotification. Каждый сгруппированный пуш
+            // считаем за отправленное уведомление по каждой задаче (срезы по task_type) +
+            // отдельный счётчик дайджестов. Bookkeeping — в колбэке на воркер-потоке.
+            final List<NotificationDeliveryCallbacks.DigestLogItem> logItems = schedules.stream()
+                    .map(s -> new NotificationDeliveryCallbacks.DigestLogItem(
+                            s.getPlant().getId(), s.getTaskType()))
+                    .toList();
+            final long chatId = user.getTelegramChatId();
+            final int taskCount = schedules.size();
+            telegramSender.enqueue(message, new SendCallbacks(
+                    () -> {
+                        deliveryCallbacks.onDigestSent(logItems);
+                        log.info("Sent digest id={} with {} tasks to chat {}",
+                                digestId, taskCount, chatId);
+                    },
+                    e -> deliveryCallbacks.onFailed(chatId, e)));
+        }
+
+        // Issue #175 / #177: fan-out дайджеста на мобильные устройства пользователя
+        // (зеркалит fanOutToMobileDevices в sendNotification). Telegram-юзеры с
+        // mobile-устройствами получат дайджест в оба канала; mobile-only — только push.
+        // Тихие часы / paused_until уже проверены канал-нейтрально в shouldSend() выше.
+        fanOutDigestToMobileDevices(user, schedules, digestBody);
+
+        // Совместный уход (issue #77): дайджест веером уходит caretaker'ам всех
+        // локаций, чьи растения попали в дайджест. Клавиатура завязана на digestId
+        // и закрывает задачи у всех участников. Дедуп по chatId — один caretaker
+        // может иметь доступ к нескольким локациям в одном дайджесте.
+        InlineKeyboardMarkup digestKeyboard = buildDigestKeyboard(digestId);
+        java.util.Set<Long> caretakerChatIds = new java.util.LinkedHashSet<>();
+        schedules.stream()
+                .map(s -> s.getPlant().getLocation() != null ? s.getPlant().getLocation().getId() : null)
+                .filter(java.util.Objects::nonNull)
+                .distinct()
+                .forEach(locationId ->
+                        caretakerChatIds.addAll(locationSharingService.caretakerChatIdsForLocation(locationId)));
+
+        for (Long caretakerChatId : caretakerChatIds) {
+            SendMessage copy = SendMessage.builder()
+                    .chatId(caretakerChatId.toString())
+                    .text(digestBody)
+                    .replyMarkup(digestKeyboard)
+                    .build();
+            final long targetChatId = caretakerChatId;
+            telegramSender.enqueue(copy, new SendCallbacks(
+                    () -> log.info("Fanned out digest id={} to caretaker chat {}", digestId, targetChatId),
+                    e -> log.warn("Failed to fan out digest to caretaker chat {}: {}",
+                            targetChatId, e.getMessage())));
+        }
     }
 
     private String buildDigestText(List<DigestTaskItem> items) {

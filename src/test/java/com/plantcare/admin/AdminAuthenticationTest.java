@@ -1,13 +1,12 @@
 package com.plantcare.admin;
 
+import com.plantcare.admin.ratelimit.LoginRateLimiter;
 import com.plantcare.bot.support.IntegrationTestBase;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
-import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
-import org.springframework.test.context.DynamicPropertyRegistry;
-import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 
 import static org.hamcrest.Matchers.containsString;
@@ -23,17 +22,30 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @DisplayName("Admin authentication — form login flow")
 class AdminAuthenticationTest extends IntegrationTestBase {
 
+    // Credentials match application-test.yml (admin.username / admin.password-bcrypt-hash).
+    // Using the same fixed values as all other admin tests ensures Spring reuses one cached
+    // ApplicationContext — and therefore one TimeZoneEngine — across AdminAuthenticationTest,
+    // AdminDashboardTest, AdminLayoutTest, AdminRateLimitTest, AdminUserDetailTest,
+    // AdminUserListTest (issue #239).
     private static final String USERNAME = "admin";
-    private static final String PASSWORD = "test-password-123";
-    private static final String BCRYPT_HASH = new BCryptPasswordEncoder(12).encode(PASSWORD);
-
-    @DynamicPropertySource
-    static void adminProps(DynamicPropertyRegistry registry) {
-        registry.add("admin.username", () -> USERNAME);
-        registry.add("admin.password-bcrypt-hash", () -> BCRYPT_HASH);
-    }
+    // Plain-text password whose bcrypt hash (cost 10) is stored in application-test.yml.
+    private static final String PASSWORD = "test-admin-password";
 
     @Autowired private MockMvc mockMvc;
+    @Autowired private LoginRateLimiter loginRateLimiter;
+
+    /**
+     * Сбрасываем login-rate-limiter перед каждым тестом. Раньше каждый admin-тест
+     * поднимал свой контекст (разные креды → разный ключ кэша), поэтому имел свой
+     * чистый лимитер. После консолидации контекстов (issue #239) лимитер общий с
+     * {@code AdminRateLimitTest}, который специально исчерпывает 5 попыток с того же
+     * IP (127.0.0.1, дефолтный remoteAddr MockMvc) — без сброса логин-флоу-тесты
+     * ловили бы 429 вместо ожидаемых 401/302.
+     */
+    @BeforeEach
+    void resetRateLimiter() {
+        loginRateLimiter.reset("127.0.0.1");
+    }
 
     @Test
     @DisplayName("GET /admin без авторизации → 302 на /admin/login")

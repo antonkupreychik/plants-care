@@ -26,3 +26,9 @@ replay_pid*
 /target/
 .DS_Store
 /mvnw
+
+# Claude Code worktrees (локальные, создаются агентами)
+/.claude/worktrees/
+
+# ML-песочница (venv + эксперименты, не часть сборки)
+/ml/

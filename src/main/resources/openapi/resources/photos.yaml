@@ -1,0 +1,120 @@
+# Хранилище фото в S3-совместимом бакете (issue #90, Slice A). Требует bearer-токен.
+
+paths:
+  Collection:
+    post:
+      tags: [Photos]
+      operationId: uploadPhoto
+      summary: Загрузить фото
+      description: |
+        Загружает фото текущего пользователя (из bearer-токена) в S3-совместимый
+        бакет и возвращает его `id` и presigned `url` на скачивание.
+
+        Принимается только `image/*`. Размер ограничен сервером (~5 МБ);
+        превышение → 413. Невалидный тип / пустой файл → 400.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: Файл изображения (image/*).
+      responses:
+        '201':
+          description: Фото загружено.
+          content:
+            application/json:
+              schema:
+                $ref: '#/schemas/PhotoUploadResponse'
+        '400':
+          $ref: '../_common/responses.yaml#/BadRequest'
+        '401':
+          $ref: '../_common/responses.yaml#/Unauthorized'
+        '413':
+          description: Файл превышает допустимый размер.
+          content:
+            application/json:
+              schema:
+                $ref: '../_common/errors.yaml#/schemas/ApiErrorResponse'
+
+  Item:
+    get:
+      tags: [Photos]
+      operationId: getPhoto
+      summary: Получить фото (redirect на presigned URL)
+      description: |
+        Возвращает `302 Found` с заголовком `Location`, указывающим на свежий
+        presigned URL объекта в бакете. 404, если фото нет, оно чужое или удалено.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Идентификатор фото.
+          schema:
+            type: integer
+            format: int64
+            example: 42
+      responses:
+        '302':
+          description: Redirect на presigned URL объекта.
+          headers:
+            Location:
+              description: Presigned URL для скачивания фото.
+              schema:
+                type: string
+                format: uri
+        '401':
+          $ref: '../_common/responses.yaml#/Unauthorized'
+        '404':
+          $ref: '../_common/responses.yaml#/NotFound'
+    delete:
+      tags: [Photos]
+      operationId: deletePhoto
+      summary: Удалить фото (soft-delete)
+      description: |
+        Помечает фото удалённым (soft-delete). Объект в бакете в этом срезе не
+        чистится. Чужое, несуществующее или уже удалённое фото → 404.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Идентификатор фото.
+          schema:
+            type: integer
+            format: int64
+            example: 42
+      responses:
+        '204':
+          description: Фото помечено удалённым.
+        '401':
+          $ref: '../_common/responses.yaml#/Unauthorized'
+        '404':
+          $ref: '../_common/responses.yaml#/NotFound'
+
+schemas:
+  PhotoUploadResponse:
+    type: object
+    description: Результат загрузки фото.
+    required: [id, url]
+    properties:
+      id:
+        type: integer
+        format: int64
+        description: Идентификатор созданной записи фото.
+        example: 42
+      url:
+        type: string
+        format: uri
+        description: Presigned URL для скачивания загруженного фото.
+        example: https://bucket.example.com/photos/3f2a...?X-Amz-Signature=...

@@ -5,6 +5,7 @@ import com.plantcare.api.CurrentUserProvider;
 import com.plantcare.api.auth.exception.AuthTokenException;
 import com.plantcare.core.domain.User;
 import com.plantcare.core.domain.enums.SeasonalMode;
+import com.plantcare.core.service.AccountDeletionService;
 import com.plantcare.core.service.UserProfileService;
 import com.plantcare.core.service.UserProfileService.Profile;
 import com.plantcare.core.service.UserProfileService.ProfileUpdate;
@@ -26,10 +27,13 @@ import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -64,13 +68,20 @@ class MeControllerTest {
     private UserProfileService userProfileService;
 
     @MockitoBean
+    private AccountDeletionService accountDeletionService;
+
+    @MockitoBean
     private CurrentUserProvider currentUserProvider;
+
+    @MockitoBean
+    private com.plantcare.core.seasonal.service.SeasonalSettingsService seasonalSettingsService;
 
     @BeforeEach
     void stubCurrentUser() {
         User user = mock(User.class);
         when(user.getId()).thenReturn(7L);
         when(currentUserProvider.currentUser()).thenReturn(user);
+        when(currentUserProvider.currentUserId()).thenReturn(7L);
     }
 
     // ------------------------------------------------------------------ GET happy
@@ -81,12 +92,14 @@ class MeControllerTest {
         // seasonalMode-строка, featureFlags-map и linkage booleans
         Profile profile = new Profile(
                 42L, "user@example.com", true, CREATED_AT,
-                "Антон", null, 12, 3, 0,
+                "Антон", null, 12, 3, 348L, 0,
                 LocalTime.of(22, 0), LocalTime.of(8, 0),
                 "Europe/Moscow", "ru",
                 true, SeasonalMode.FIXED, true,
                 Map.of("sharing", "true"),
-                true, false, true, true);
+                true, false, true, true,
+                false,
+                "https://plants-care.example.com/calendar/abc123.ics");
         when(userProfileService.getProfile(any(User.class))).thenReturn(profile);
 
         // act + assert
@@ -100,6 +113,7 @@ class MeControllerTest {
                 .andExpect(jsonPath("$.avatar").value(org.hamcrest.Matchers.nullValue()))
                 .andExpect(jsonPath("$.plantsTotal").value(12))
                 .andExpect(jsonPath("$.tasksToday").value(3))
+                .andExpect(jsonPath("$.totalCareEvents").value(348))
                 .andExpect(jsonPath("$.notificationsUnread").value(0))
                 .andExpect(jsonPath("$.quietHoursStart").value("22:00"))
                 .andExpect(jsonPath("$.quietHoursEnd").value("08:00"))
@@ -112,7 +126,30 @@ class MeControllerTest {
                 .andExpect(jsonPath("$.appleLinked").value(true))
                 .andExpect(jsonPath("$.googleLinked").value(false))
                 .andExpect(jsonPath("$.emailLinked").value(true))
-                .andExpect(jsonPath("$.telegramLinked").value(true));
+                .andExpect(jsonPath("$.telegramLinked").value(true))
+                .andExpect(jsonPath("$.calendarSubscriptionUrl")
+                        .value("https://plants-care.example.com/calendar/abc123.ics"));
+    }
+
+    @Test
+    void should_return_null_calendar_subscription_url_when_token_not_yet_generated() throws Exception {
+        // arrange — edge (issue #208): calendarSubscriptionUrl null, если токен ещё не создан
+        Profile profile = new Profile(
+                42L, "user@example.com", true, CREATED_AT,
+                "Антон", null, 0, 0, 0L, 0,
+                LocalTime.of(22, 0), LocalTime.of(8, 0),
+                "Europe/Moscow", "ru",
+                false, SeasonalMode.MULTIPLIER, false,
+                Map.of(),
+                false, false, true, true,
+                false,
+                null);
+        when(userProfileService.getProfile(any(User.class))).thenReturn(profile);
+
+        // act + assert
+        mockMvc.perform(get("/api/v1/me"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.calendarSubscriptionUrl").value(org.hamcrest.Matchers.nullValue()));
     }
 
     @Test
@@ -123,12 +160,14 @@ class MeControllerTest {
         // assert на отсутствие JSON-путей ловит регрессию, если кто-то добавит их в MeResponse.
         Profile profile = new Profile(
                 42L, "user@example.com", true, CREATED_AT,
-                "Антон", null, 1, 0, 0,
+                "Антон", null, 1, 0, 0L, 0,
                 LocalTime.of(22, 0), LocalTime.of(8, 0),
                 "Europe/Moscow", "ru",
                 false, SeasonalMode.MULTIPLIER, false,
                 Map.of(),
-                true, false, true, true);
+                true, false, true, true,
+                false,
+                null);
         when(userProfileService.getProfile(any(User.class))).thenReturn(profile);
 
         // act + assert
@@ -151,12 +190,14 @@ class MeControllerTest {
         // arrange — edge: чисто Telegram-юзер, email == null, emailLinked == false
         Profile profile = new Profile(
                 42L, null, false, CREATED_AT,
-                "Аноним", null, 0, 0, 0,
+                "Аноним", null, 0, 0, 0L, 0,
                 LocalTime.of(22, 0), LocalTime.of(9, 0),
                 "UTC", "ru",
                 false, SeasonalMode.MULTIPLIER, false,
                 Map.of(),
-                false, false, false, true);
+                false, false, false, true,
+                false,
+                null);
         when(userProfileService.getProfile(any(User.class))).thenReturn(profile);
 
         // act + assert
@@ -238,12 +279,14 @@ class MeControllerTest {
         // остальные поля апдейта остаются null (partial semantics)
         Profile updated = new Profile(
                 42L, "user@example.com", true, CREATED_AT,
-                "Антон", null, 1, 0, 0,
+                "Антон", null, 1, 0, 0L, 0,
                 LocalTime.of(22, 0), LocalTime.of(8, 0),
                 "Europe/Moscow", "ru",
                 true, SeasonalMode.FIXED, true,
                 Map.of(),
-                false, false, true, true);
+                false, false, true, true,
+                false,
+                null);
         when(userProfileService.updateProfile(any(User.class), any(ProfileUpdate.class)))
                 .thenReturn(updated);
 
@@ -300,12 +343,14 @@ class MeControllerTest {
         // arrange — AC: валидный IANA tz прокидывается в сервис и возвращается в ответе
         Profile updated = new Profile(
                 42L, "user@example.com", true, CREATED_AT,
-                "Антон", null, 1, 0, 0,
+                "Антон", null, 1, 0, 0L, 0,
                 LocalTime.of(22, 0), LocalTime.of(9, 0),
                 "Asia/Almaty", "ru",
                 false, SeasonalMode.MULTIPLIER, false,
                 Map.of(),
-                false, false, true, true);
+                false, false, true, true,
+                false,
+                null);
         when(userProfileService.updateProfile(any(User.class), any(ProfileUpdate.class)))
                 .thenReturn(updated);
 
@@ -447,6 +492,49 @@ class MeControllerTest {
                 .andExpect(jsonPath("$.error.code").value("TOKEN_INVALID"));
     }
 
+    // ------------------------------------------------------------------ DELETE
+
+    @Test
+    void should_return_204_and_call_deletion_service_when_deleting_account() throws Exception {
+        // arrange
+        doNothing().when(accountDeletionService).deleteAccount(anyLong());
+
+        // act + assert
+        mockMvc.perform(delete("/api/v1/me"))
+                .andExpect(status().isNoContent());
+
+        ArgumentCaptor<Long> captor = ArgumentCaptor.forClass(Long.class);
+        verify(accountDeletionService).deleteAccount(captor.capture());
+        assertThat(captor.getValue()).isEqualTo(7L);
+    }
+
+    @Test
+    void should_return_204_and_use_user_id_not_full_user_when_deleting_account() throws Exception {
+        // arrange — deleteMe использует currentUserId(), а не currentUser() (идемпотентность:
+        // пользователь может уже не существовать → currentUser() бросил бы 404)
+        doNothing().when(accountDeletionService).deleteAccount(anyLong());
+
+        // act + assert
+        mockMvc.perform(delete("/api/v1/me"))
+                .andExpect(status().isNoContent());
+
+        // currentUser() НЕ вызывается при DELETE (только currentUserId())
+        verify(currentUserProvider, never()).currentUser();
+        verify(currentUserProvider).currentUserId();
+    }
+
+    @Test
+    void should_return_401_when_no_authenticated_user_on_delete() throws Exception {
+        // arrange — нет JWT в SecurityContext
+        when(currentUserProvider.currentUserId())
+                .thenThrow(AuthTokenException.invalid("No authenticated user in security context"));
+
+        // act + assert
+        mockMvc.perform(delete("/api/v1/me"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error.code").value("TOKEN_INVALID"));
+    }
+
     // ===================== helpers =====================
 
     /** Возвращает «как есть» собранный профиль, чтобы PATCH вернул 200 и не падал на null. */
@@ -458,12 +546,14 @@ class MeControllerTest {
     private static Profile sampleProfile() {
         return new Profile(
                 42L, "user@example.com", true, CREATED_AT,
-                "Антон", null, 0, 0, 0,
+                "Антон", null, 0, 0, 0L, 0,
                 LocalTime.of(22, 0), LocalTime.of(9, 0),
                 "Europe/Moscow", "ru",
                 false, SeasonalMode.MULTIPLIER, false,
                 Map.of(),
-                false, false, true, true);
+                false, false, true, true,
+                false,
+                null);
     }
 
     private ProfileUpdate captureUpdate() {

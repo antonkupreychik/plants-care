@@ -28,7 +28,7 @@ import java.nio.charset.StandardCharsets;
  * разбора refresh-токенов — единый источник истины по подписи.
  */
 @Configuration
-@org.springframework.boot.context.properties.EnableConfigurationProperties(AuthProperties.class)
+@org.springframework.boot.context.properties.EnableConfigurationProperties({AuthProperties.class, TelegramAuthProperties.class})
 @RequiredArgsConstructor
 public class AuthJwtConfig {
 

@@ -30,6 +30,15 @@ public class Room extends BaseEntity {
     @JoinColumn(name = "user_id", nullable = false)
     private User user;
 
+    /**
+     * Локация, к которой принадлежит комната (issue #283).
+     * NULL для старых записей Telegram-бота (до введения локаций).
+     * REST API комнат требует location_id при создании.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "location_id")
+    private Location location;
+
     @Column(nullable = false, length = 100)
     private String name;
 

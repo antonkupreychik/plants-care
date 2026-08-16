@@ -1,0 +1,16 @@
+meta {
+  name: Edge – 404 species not found (public)
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/api/v1/species/999999999
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 404
+  res.body.error: isDefined
+}

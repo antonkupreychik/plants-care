@@ -1,0 +1,61 @@
+name: Smoke Tests
+
+on:
+  workflow_run:
+    workflows: ["Java CI with Maven"]
+    types: [completed]
+    branches: [main, develop]
+
+jobs:
+  smoke:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Mint dev access token
+        id: mint
+        env:
+          AUTH_JWT_SECRET: ${{ secrets.AUTH_JWT_SECRET }}
+          AUTH_JWT_TEST_USER_ID: ${{ secrets.AUTH_JWT_TEST_USER_ID }}
+        run: |
+          ACCESS_TOKEN=$(bash scripts/dev-mint-tokens.sh | grep -oP '"accessToken"\s*:\s*"\K[^"]+')
+          echo "::add-mask::$ACCESS_TOKEN"
+          echo "ACCESS_TOKEN=$ACCESS_TOKEN" >> "$GITHUB_ENV"
+
+      - name: Wait for Railway deploy to be ready
+        env:
+          RAILWAY_URL: ${{ vars.RAILWAY_URL }}
+        run: |
+          echo "Waiting for $RAILWAY_URL/actuator/health..."
+          for i in $(seq 1 18); do
+            if curl -sf "$RAILWAY_URL/actuator/health" > /dev/null; then
+              echo "App is up after $i attempts"
+              exit 0
+            fi
+            echo "Attempt $i/18 – sleeping 10s"
+            sleep 10
+          done
+          echo "App did not become healthy in time" && exit 1
+
+      - name: Install Bruno CLI
+        run: npm install -g @usebruno/cli
+
+      - name: Run smoke tests
+        env:
+          RAILWAY_URL: ${{ vars.RAILWAY_URL }}
+        run: |
+          bru run tests/smoke \
+            --env ci \
+            --env-var "accessToken=$ACCESS_TOKEN" \
+            --env-var "baseUrl=$RAILWAY_URL" \
+            --reporter-json results/smoke.json \
+            --reporter-junit results/smoke.xml
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-results-${{ github.run_id }}
+          path: results/

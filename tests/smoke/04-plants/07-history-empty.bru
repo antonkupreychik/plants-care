@@ -1,0 +1,25 @@
+meta {
+  name: Plants – history empty for new plant
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/api/v1/plants/{{plantId}}/history
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{accessToken}}
+}
+
+params:query {
+  limit: 20
+  offset: 0
+}
+
+assert {
+  res.status: eq 200
+  res.body.items: isArray
+}

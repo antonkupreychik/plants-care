@@ -4,6 +4,39 @@
 # в таймзоне пользователя (users.timezone).
 
 paths:
+  WeatherLocation:
+    put:
+      tags: [Me]
+      operationId: updateWeatherLocation
+      summary: Установить координаты для погодного виджета
+      description: |
+        Сохраняет широту и долготу пользователя (`weather_lat` / `weather_lon`),
+        необходимые для получения данных о влажности через
+        `GET /api/v1/weather/snapshot`.
+
+        Без координат `weatherEnabled=true` в `PATCH /me` бесполезен — погодные
+        эвристики не запустятся. После успешного вызова этого эндпоинта
+        `WeatherService.isWeatherUsable()` начнёт возвращать `true` при включённом
+        `weatherEnabled`.
+
+        Ответ `204 No Content` — нет тела, обновление применено.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/schemas/WeatherLocationRequest'
+            example:
+              lat: 55.7558
+              lon: 37.6176
+      responses:
+        '204':
+          description: Координаты сохранены.
+        '400':
+          $ref: '../_common/responses.yaml#/BadRequest'
+
   Me:
     get:
       tags: [Me]
@@ -26,6 +59,30 @@ paths:
             application/json:
               schema:
                 $ref: '#/schemas/MeResponse'
+    delete:
+      tags: [Me]
+      operationId: deleteMe
+      summary: Удаление аккаунта (GDPR / App Store)
+      description: |
+        Необратимо удаляет аккаунт текущего пользователя и все связанные данные
+        (растения, расписания, история ухода, локации, список покупок и т.д.) через
+        FK `ON DELETE CASCADE` на уровне БД.
+
+        **Поведение Telegram-связки**: поле `telegram_chat_id` удаляется вместе
+        со строкой пользователя. При следующем `/start` в боте для того же
+        chat\_id создаётся **новый** пользователь с нуля — история не восстанавливается.
+
+        **Идемпотентность**: повторный вызов с токеном удалённого пользователя
+        вернёт `204` (tolerant-delete), а не `500` или `404`.
+
+        Операция необратима. Требует действующего Bearer-токена.
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Аккаунт удалён. Тело ответа отсутствует.
+        '401':
+          $ref: '../_common/responses.yaml#/Unauthorized'
     patch:
       tags: [Me]
       operationId: updateMe
@@ -62,7 +119,127 @@ paths:
         '400':
           $ref: '../_common/responses.yaml#/BadRequest'
 
+  Seasonal:
+    get:
+      tags: [Me]
+      operationId: getSeasonalSettings
+      summary: Per-season настройки сезонности
+      description: |
+        Возвращает тонкие per-season настройки сезонности текущего пользователя:
+        множитель (`multiplier`) и фиксированный интервал (`intervalDays`) для
+        каждого сезона (`SUMMER`, `WINTER`), а также глобальный флаг `enabled`
+        и `mode`.
+
+        Какое поле реально применяется к расчёту — зависит от `mode`:
+        в режиме `MULTIPLIER` используется `multiplier`, в режиме `FIXED` —
+        `intervalDays` (а если он `null`, fallback на базовый интервал растения).
+
+        Глобальный флаг включения (`seasonalEnabled`) и режим (`seasonalMode`)
+        меняются через `PATCH /api/v1/me`; здесь они отдаются только для контекста.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Per-season настройки сезонности.
+          content:
+            application/json:
+              schema:
+                $ref: '#/schemas/SeasonalSettingsResponse'
+        '401':
+          $ref: '../_common/responses.yaml#/Unauthorized'
+    patch:
+      tags: [Me]
+      operationId: updateSeasonalSettings
+      summary: Задать множитель/интервал для сезона
+      description: |
+        Устанавливает множитель и/или фиксированный интервал для одного сезона.
+        `season` обязателен. Переданные поля (`multiplier`, `intervalDays`)
+        применяются, отсутствующие (`null`) остаются без изменений.
+
+        - `multiplier` — коэффициент к базовому интервалу (диапазон `0.50..1.50`,
+          округляется до сотых). Используется в режиме `MULTIPLIER`.
+        - `intervalDays` — фиксированный интервал в днях (`1..60`). Используется
+          в режиме `FIXED`. Чтобы вернуть сезон к дефолту (использовать базовый
+          интервал растения), используйте `DELETE /api/v1/me/seasonal/{season}`.
+
+        Изменение влияет на ленивый пересчёт `next_due_at` так же, как в боте.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/schemas/SeasonalSettingsUpdateRequest'
+            example:
+              season: SUMMER
+              multiplier: 0.7
+      responses:
+        '200':
+          description: Настройки сезона обновлены.
+          content:
+            application/json:
+              schema:
+                $ref: '#/schemas/SeasonalSettingsResponse'
+        '400':
+          $ref: '../_common/responses.yaml#/BadRequest'
+        '401':
+          $ref: '../_common/responses.yaml#/Unauthorized'
+
+  SeasonalItem:
+    delete:
+      tags: [Me]
+      operationId: clearSeasonalInterval
+      summary: Очистить фиксированный интервал сезона
+      description: |
+        Сбрасывает фиксированный интервал (`intervalDays`) указанного сезона в
+        `null` — сезон возвращается к дефолтному поведению (в режиме `FIXED`
+        используется базовый интервал растения). Множитель сезона не затрагивается.
+
+        Идемпотентно: повторный вызов для уже очищенного сезона тоже вернёт `200`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: season
+          in: path
+          required: true
+          description: Сезон, чей фиксированный интервал нужно очистить.
+          schema:
+            $ref: '#/schemas/Season'
+      responses:
+        '200':
+          description: Интервал сезона очищен; возвращены актуальные настройки.
+          content:
+            application/json:
+              schema:
+                $ref: '#/schemas/SeasonalSettingsResponse'
+        '400':
+          $ref: '../_common/responses.yaml#/BadRequest'
+        '401':
+          $ref: '../_common/responses.yaml#/Unauthorized'
+
 schemas:
+  WeatherLocationRequest:
+    type: object
+    description: |
+      Тело `PUT /api/v1/me/weather-location`. Оба поля обязательны.
+    required: [lat, lon]
+    properties:
+      lat:
+        type: number
+        format: double
+        minimum: -90
+        maximum: 90
+        description: Широта в градусах (WGS-84).
+        example: 55.7558
+      lon:
+        type: number
+        format: double
+        minimum: -180
+        maximum: 180
+        description: Долгота в градусах (WGS-84).
+        example: 37.6176
+
   MeResponse:
     type: object
     description: Профиль и настройки текущего пользователя (`GET /api/v1/me`).
@@ -73,6 +250,7 @@ schemas:
       - name
       - plantsTotal
       - tasksToday
+      - totalCareEvents
       - notificationsUnread
       - quietHoursStart
       - quietHoursEnd
@@ -86,6 +264,7 @@ schemas:
       - googleLinked
       - emailLinked
       - telegramLinked
+      - isGuest
     properties:
       id:
         type: integer
@@ -132,6 +311,14 @@ schemas:
           пользователя: дедлайн до конца сегодняшнего дня, отметка «сделано»
           ещё не проставлена. Это pending-подмножество `GET /api/v1/today`.
         example: 3
+      totalCareEvents:
+        type: integer
+        format: int64
+        minimum: 0
+        description: |
+          Суммарное число уходов за всё время пользователя (включая архивированные
+          растения). Компенсирующие (отменённые) записи не учитываются.
+        example: 348
       notificationsUnread:
         type: integer
         format: int32
@@ -196,6 +383,20 @@ schemas:
         type: boolean
         description: Привязан ли Telegram-аккаунт.
         example: true
+      isGuest:
+        type: boolean
+        description: |
+          `true` для гостевых аккаунтов (зарегистрированных через `POST /auth/guest`).
+          Мобилка использует это поле для показа баннера «Сохраните данные» (issue #227).
+        example: false
+      calendarSubscriptionUrl:
+        type: string
+        nullable: true
+        description: |
+          Готовый URL подписки на .ics-календарь вида `https://.../calendar/{token}.ics`.
+          `null`, если токен ещё не создан — он генерируется лениво при первом запросе
+          к эндпоинту `GET /calendar/{token}.ics` (issue #79, #208).
+        example: 'https://plants-care.up.railway.app/calendar/abc123.ics'
 
   MeUpdateRequest:
     type: object
@@ -242,3 +443,94 @@ schemas:
         nullable: true
         description: Учитывать погоду в рекомендациях.
         example: true
+
+  Season:
+    type: string
+    enum: [SUMMER, WINTER]
+    description: |
+      Сезон. Первая итерация сезонности оперирует только летом и зимой
+      (всё, что не лето — зима); границы настраиваются отдельно.
+
+  SeasonSettings:
+    type: object
+    description: Настройки одного сезона (множитель и фиксированный интервал).
+    required:
+      - season
+      - multiplier
+    properties:
+      season:
+        $ref: '#/schemas/Season'
+      multiplier:
+        type: number
+        format: double
+        minimum: 0.5
+        maximum: 1.5
+        description: |
+          Коэффициент к базовому интервалу растения. Применяется в режиме
+          `MULTIPLIER`. Например, базовый 10 дней × 0.8 = полив каждые 8 дней.
+        example: 0.8
+      intervalDays:
+        type: integer
+        format: int32
+        minimum: 1
+        maximum: 60
+        nullable: true
+        description: |
+          Фиксированный интервал в днях для этого сезона. Применяется в режиме
+          `FIXED`. `null` — интервал не задан, используется базовый интервал
+          растения.
+        example: 5
+
+  SeasonalSettingsResponse:
+    type: object
+    description: |
+      Per-season настройки сезонности пользователя (`GET /api/v1/me/seasonal`).
+      `enabled`/`mode` отдаются для контекста; меняются через `PATCH /api/v1/me`.
+    required:
+      - enabled
+      - mode
+      - seasons
+    properties:
+      enabled:
+        type: boolean
+        description: Глобальный флаг учёта сезонов (зеркало `seasonalEnabled`).
+        example: true
+      mode:
+        type: string
+        enum: [MULTIPLIER, FIXED]
+        description: Активный режим сезонности (зеркало `seasonalMode`).
+        example: MULTIPLIER
+      seasons:
+        type: array
+        description: Настройки по каждому сезону (`SUMMER`, `WINTER`).
+        items:
+          $ref: '#/schemas/SeasonSettings'
+
+  SeasonalSettingsUpdateRequest:
+    type: object
+    description: |
+      Задать множитель и/или фиксированный интервал одного сезона. `season`
+      обязателен; `multiplier`/`intervalDays` опциональны (отсутствующие не меняются).
+    required:
+      - season
+    properties:
+      season:
+        $ref: '#/schemas/Season'
+      multiplier:
+        type: number
+        format: double
+        minimum: 0.5
+        maximum: 1.5
+        nullable: true
+        description: Коэффициент к базовому интервалу (`0.50..1.50`).
+        example: 0.7
+      intervalDays:
+        type: integer
+        format: int32
+        minimum: 1
+        maximum: 60
+        nullable: true
+        description: |
+          Фиксированный интервал в днях (`1..60`). Для сброса в дефолт используйте
+          `DELETE /api/v1/me/seasonal/{season}`.
+        example: 5

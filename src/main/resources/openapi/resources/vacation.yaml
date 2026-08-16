@@ -1,0 +1,127 @@
+# Vacation mode API (issue #189, mobile G21, screen 25).
+# Allows authenticated users to enable/disable vacation mode (pause reminders).
+# Dates are accepted as YYYY-MM-DD strings. The backend converts them to
+# the end of the 'to' day in the user's timezone, stored as paused_until (UTC).
+# Behaviour during vacation: push reminders are silenced; deadlines are NOT
+# moved — overdue tasks accumulate and are shown in the welcome-back message.
+
+paths:
+  Vacation:
+    get:
+      tags: [Vacation]
+      operationId: getVacation
+      summary: Текущее состояние режима отпуска
+      description: |
+        Возвращает активный период отпуска или объект с `active = false`,
+        если отпуск не включён. «Активен» — `paused_until IS NOT NULL
+        AND paused_until > now()`.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Статус режима отпуска.
+          content:
+            application/json:
+              schema:
+                $ref: '#/schemas/VacationResponse'
+        '401':
+          $ref: '../_common/responses.yaml#/Unauthorized'
+
+    post:
+      tags: [Vacation]
+      operationId: startVacation
+      summary: Включить режим отпуска
+      description: |
+        Включает режим отпуска: напоминания приостанавливаются с текущего
+        момента до конца дня `to` в таймзоне пользователя.
+
+        **Поведение дедлайнов:** дедлайны расписаний **не переносятся**.
+        Пока отпуск активен, задачи накапливаются как просроченные и
+        отображаются в сводке «С возвращением!» сразу после окончания отпуска.
+        Это предсказуемо и понятно пользователю.
+
+        **Идемпотентность:** повторный POST перезаписывает `paused_until`
+        (продление текущего отпуска). Если `to` < `from` или длительность
+        > 60 дней → `400`.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/schemas/VacationRequest'
+            example:
+              from: '2026-06-01'
+              to: '2026-06-14'
+      responses:
+        '200':
+          description: Режим отпуска включён.
+          content:
+            application/json:
+              schema:
+                $ref: '#/schemas/VacationResponse'
+        '400':
+          $ref: '../_common/responses.yaml#/BadRequest'
+        '401':
+          $ref: '../_common/responses.yaml#/Unauthorized'
+
+    delete:
+      tags: [Vacation]
+      operationId: endVacation
+      summary: Выключить режим отпуска досрочно
+      description: |
+        Досрочно завершает режим отпуска — `paused_until` сбрасывается в `null`,
+        напоминания возобновляются немедленно. Идемпотентен: если отпуск уже
+        неактивен, возвращает `204` без ошибки.
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Режим отпуска выключен (или уже был выключен).
+        '401':
+          $ref: '../_common/responses.yaml#/Unauthorized'
+
+schemas:
+  VacationRequest:
+    type: object
+    description: Запрос на включение режима отпуска.
+    required:
+      - from
+      - to
+    properties:
+      from:
+        type: string
+        format: date
+        description: |
+          Начало отпуска (включительно). Формат `YYYY-MM-DD`. Как правило,
+          сегодняшняя дата или ближайшая в будущем.
+        example: '2026-06-01'
+      to:
+        type: string
+        format: date
+        description: |
+          Конец отпуска (включительно). Формат `YYYY-MM-DD`. Должно быть
+          ≥ `from` и не более 60 дней от `from`.
+        example: '2026-06-14'
+
+  VacationResponse:
+    type: object
+    description: |
+      Статус режима отпуска. Если отпуск не активен — `active = false`
+      и `pausedUntil = null`.
+    required:
+      - active
+    properties:
+      active:
+        type: boolean
+        description: '`true` — режим отпуска сейчас включён.'
+        example: true
+      pausedUntil:
+        type: string
+        format: date-time
+        nullable: true
+        description: |
+          Момент до которого паузированы напоминания (UTC). `null` если отпуск
+          неактивен.
+        example: '2026-06-14T20:59:59Z'

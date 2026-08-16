@@ -7,6 +7,9 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
+import jakarta.persistence.FetchType;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -112,6 +115,17 @@ public class User extends BaseEntity {
     @Builder.Default
     private Map<String, Object> featureFlags = new HashMap<>();
 
+    // ===== Guest auth (issue #227) =====
+
+    /** TRUE для гостевых аккаунтов без email/social. */
+    @Column(name = "is_guest", nullable = false)
+    @Builder.Default
+    private boolean guest = false;
+
+    /** UUID устройства для идентификации гостя. NULL для обычных юзеров. */
+    @Column(name = "device_id", length = 64, unique = true)
+    private String deviceId;
+
     @Column(name = "is_blocked", nullable = false)
     @Builder.Default
     private boolean blocked = false;
@@ -127,6 +141,17 @@ public class User extends BaseEntity {
     // ===== Weather integration (issue #69) =====
 
     /** Учитывать погоду в рекомендациях; default false — opt-in через настройки. */
+    // ===== Мультидомность (issue #70) =====
+
+    /**
+     * «Текущая» локация пользователя в Telegram-боте. Задачи «сегодня» и
+     * навигация работают в контексте именно этой локации. NULL означает, что
+     * активная локация ещё не выбрана — в этом случае показываем все локации.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "active_location_id")
+    private Location activeLocation;
+
     @Column(name = "weather_enabled", nullable = false)
     @Builder.Default
     private boolean weatherEnabled = false;

@@ -54,6 +54,14 @@ public interface CareHistoryRepository extends JpaRepository<CareHistory, Long> 
                                          @Param("after") LocalDateTime after);
 
     /**
+     * Суммарное число активных (не-cancelled) записей ухода по всем растениям пользователя
+     * за всё время, включая архивированные растения (issue #226).
+     */
+    @Query("SELECT COUNT(h) FROM CareHistory h " +
+            "WHERE h.plant.user.id = :userId AND h.cancelledBy IS NULL")
+    long countAllByUserId(@Param("userId") Long userId);
+
+    /**
      * Все done_at для всех растений юзера (для расчёта user-streak по дням).
      * Активные записи (не-cancelled). Сортировка по убыванию.
      */
@@ -153,6 +161,65 @@ public interface CareHistoryRepository extends JpaRepository<CareHistory, Long> 
             @Param("limit") int limit,
             @Param("offset") int offset
     );
+
+    /**
+     * Постраничный листинг истории с реальным offset и фильтром по типу ухода.
+     *
+     * <p>Используется REST API GET /api/v1/plants/{id}/history?type=WATERING&limit=N&offset=M.
+     * Нативный запрос аналогичен {@link #findActiveByPlantIdWithRealOffset}, но добавляет
+     * опциональный фильтр по типу: если {@code taskType} передан как {@code null} —
+     * условие игнорируется и возвращаются все типы.
+     *
+     * @param plantId  id растения
+     * @param limit    количество записей
+     * @param offset   смещение от начала (0-based)
+     * @param taskType {@code TaskType.name()} для фильтра, или {@code null} — все типы
+     * @return срез истории
+     */
+    @Query(value = "SELECT * FROM care_history h " +
+            "WHERE h.plant_id = :plantId AND h.cancelled_by IS NULL " +
+            "AND (:taskType IS NULL OR h.task_type = :taskType) " +
+            "ORDER BY h.done_at DESC " +
+            "LIMIT :limit OFFSET :offset", nativeQuery = true)
+    List<CareHistory> findActiveByPlantIdWithRealOffsetAndType(
+            @Param("plantId") Long plantId,
+            @Param("limit") int limit,
+            @Param("offset") int offset,
+            @Param("taskType") String taskType
+    );
+
+    /**
+     * Кол-во активных (не-cancelled) записей с опциональным фильтром по типу ухода.
+     *
+     * <p>Если {@code taskType} передан как {@code null} — возвращает общее число,
+     * аналогично {@link #countActiveByPlantId}.
+     */
+    @Query(value = "SELECT COUNT(*) FROM care_history h " +
+            "WHERE h.plant_id = :plantId AND h.cancelled_by IS NULL " +
+            "AND (:taskType IS NULL OR h.task_type = :taskType)", nativeQuery = true)
+    long countActiveByPlantIdAndType(
+            @Param("plantId") Long plantId,
+            @Param("taskType") String taskType
+    );
+
+    /**
+     * Кол-во активных (не-cancelled) on-time записей по растению за всё время.
+     * Числитель для {@code onTimePercent} в сводке истории (issue #206).
+     */
+    @Query("SELECT COUNT(h) FROM CareHistory h " +
+            "WHERE h.plant.id = :plantId AND h.cancelledBy IS NULL " +
+            "AND h.onTime = true")
+    long countActiveOnTimeByPlantId(@Param("plantId") Long plantId);
+
+    /**
+     * Разбивка активных (не-cancelled) записей по типам ухода за всё время.
+     * Только типы с count ≥ 1 попадают в результат (GROUP BY без HAVING — фильтрация в сервисе).
+     * Используется для {@code byType} в сводке истории (issue #206).
+     */
+    @Query("SELECT h.taskType AS taskType, COUNT(h) AS count FROM CareHistory h " +
+            "WHERE h.plant.id = :plantId AND h.cancelledBy IS NULL " +
+            "GROUP BY h.taskType")
+    List<TaskTypeCount> countActiveByPlantIdGroupedByType(@Param("plantId") Long plantId);
 
     // ===== Месячный отчёт (issue #137) =====
 
@@ -309,4 +376,24 @@ public interface CareHistoryRepository extends JpaRepository<CareHistory, Long> 
         String getPlantName();
         long getCount();
     }
+
+    // ===== Офлайн-синк (issue #91) =====
+
+    /**
+     * Активные (не-cancelled) записи ухода по всем растениям юзера,
+     * изменённые после {@code since}. Используется в {@code GET /api/v1/sync}.
+     * {@code plant} подтягивается JOIN FETCH для маппинга в DTO вне транзакции.
+     */
+    @Query("""
+            SELECT h FROM CareHistory h
+            JOIN FETCH h.plant p
+            WHERE p.user.id = :userId
+              AND h.cancelledBy IS NULL
+              AND h.updatedAt > :since
+            ORDER BY h.updatedAt ASC
+            """)
+    List<CareHistory> findChangedSince(
+            @Param("userId") Long userId,
+            @Param("since") LocalDateTime since
+    );
 }

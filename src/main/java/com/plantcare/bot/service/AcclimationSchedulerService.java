@@ -11,6 +11,7 @@ import com.plantcare.bot.telegram.SendCallbacks;
 import io.sentry.Sentry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -44,7 +45,11 @@ public class AcclimationSchedulerService {
     private final PlantAcclimationService plantAcclimationService;
     private final RateLimitedTelegramSender telegramSender;
 
+    // Issue #279: hourly-задача — lockAtMostFor 90 мин (инстанс повис → лок освободится),
+    // lockAtLeastFor 55 мин (быстрый тик не запустится снова в ту же минуту).
     @Scheduled(fixedRate = 3_600_000L)  // раз в час
+    @SchedulerLock(name = "AcclimationSchedulerService_tick",
+            lockAtMostFor = "PT90M", lockAtLeastFor = "PT55M")
     @Transactional
     public void tick() {
         // Issue #114: изолированный scope на тик — captureException внутри получит

@@ -2,6 +2,7 @@ package com.plantcare.core.repository;
 
 import com.plantcare.core.domain.User;
 import jakarta.persistence.LockModeType;
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
@@ -16,6 +17,16 @@ public interface UserRepository extends JpaRepository<User, Long> {
 
     boolean existsByTelegramChatId(Long telegramChatId);
 
+    /**
+     * Общий загрузчик юзера по chat_id для бот-путей (/menu, переключение/пауза
+     * локаций). {@code activeLocation} — ленивый {@code @ManyToOne}, а меню
+     * читается уже вне транзакции, поэтому без графа ленивый прокси даёт
+     * {@code LazyInitializationException: no Session}. {@code @EntityGraph} даёт
+     * дешёвый LEFT JOIN по nullable-FK и инициализирует связь в транзакции
+     * загрузки. Срабатывало только при заполненном active_location_id (для NULL
+     * ленивый ManyToOne и так отдаёт null без обращения к БД).
+     */
+    @EntityGraph(attributePaths = "activeLocation")
     Optional<User> findByTelegramChatId(Long telegramChatId);
 
     /** Issue #79: lookup for public {@code GET /calendar/{token}.ics}. */
@@ -28,6 +39,11 @@ public interface UserRepository extends JpaRepository<User, Long> {
     Optional<User> findByAppleSubject(String appleSubject);
 
     Optional<User> findByGoogleSubject(String googleSubject);
+
+    // ===== Guest auth (issue #227) =====
+
+    /** Поиск гостевого пользователя по deviceId устройства. */
+    Optional<User> findByDeviceId(String deviceId);
 
     /**
      * Issue #79: pessimistic SELECT FOR UPDATE used during lazy calendar-token

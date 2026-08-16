@@ -1,0 +1,21 @@
+meta {
+  name: Edge – 400 limit=0 on species
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/api/v1/species
+  body: none
+  auth: none
+}
+
+params:query {
+  limit: 0
+  offset: 0
+}
+
+assert {
+  res.status: eq 400
+  res.body.error: isDefined
+}

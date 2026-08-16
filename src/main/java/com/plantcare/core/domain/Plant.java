@@ -16,6 +16,7 @@ import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import org.hibernate.annotations.UpdateTimestamp;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -75,6 +76,20 @@ public class Plant extends BaseEntity {
 
     @Column(name = "archived_at")
     private LocalDateTime archivedAt;
+
+    /**
+     * Причина выбытия (issue #219): {@code true} — растение подарили,
+     * {@code false} — погибло. {@code null} пока растение активно.
+     */
+    @Column(name = "archive_gifted")
+    private Boolean archiveGifted;
+
+    /**
+     * Свободная заметка о выбытии растения (issue #219), напр. «Залила соседка».
+     * {@code null} — не задана. Сбрасывается при восстановлении из архива.
+     */
+    @Column(name = "archive_note", columnDefinition = "text")
+    private String archiveNote;
 
     /**
      * Дата, когда юзер «завёл» растение (issue #117). NULL = юзер не указал,
@@ -137,12 +152,62 @@ public class Plant extends BaseEntity {
     @Builder.Default
     private List<CareSchedule> schedules = new ArrayList<>();
 
+    /**
+     * Когда запись была изменена. Обновляется автоматически Hibernate при каждом UPDATE.
+     * Используется в офлайн-синке (issue #91): клиент передаёт `since`, сервер возвращает
+     * всё, что изменилось позднее.
+     */
+    @UpdateTimestamp
+    @Column(name = "updated_at", nullable = false)
+    private LocalDateTime updatedAt;
+
+    /**
+     * Момент физического удаления для синк-протокола (issue #91).
+     * NULL означает «не удалено». Отличается от {@code archivedAt}: архивация —
+     * пользовательский soft-delete внутри приложения, а deletedAt проставляется
+     * когда запись совсем исчезает из пользовательского контекста.
+     * В фазе MVP используется только в {@code GET /api/v1/sync} для списка deletions.
+     */
+    @Column(name = "deleted_at")
+    private LocalDateTime deletedAt;
+
+    /**
+     * UUID от мобильного клиента для идемпотентности (issue #91).
+     * NULL для записей из Telegram-бота. Partial unique index на стороне БД.
+     */
+    @Column(name = "client_id", length = 64)
+    private String clientId;
+
     public boolean isArchived() {
         return archivedAt != null;
     }
 
     public void archive() {
         this.archivedAt = LocalDateTime.now();
+    }
+
+    /**
+     * Архивация с метаданными выбытия (issue #219). Момент архивации задаётся
+     * вызывающим (сервис с инжектируемым {@link java.time.Clock}).
+     *
+     * @param at     момент архивации (UTC)
+     * @param gifted true — подарили, false — погибло, null — не указано
+     * @param note   свободная заметка, может быть null
+     */
+    public void archive(LocalDateTime at, Boolean gifted, String note) {
+        this.archivedAt = at;
+        this.archiveGifted = gifted;
+        this.archiveNote = note;
+    }
+
+    /**
+     * Восстановление из архива (issue #219): сбрасывает дату архивации и
+     * метаданные выбытия. Расписания при этом не трогаются.
+     */
+    public void restore() {
+        this.archivedAt = null;
+        this.archiveGifted = null;
+        this.archiveNote = null;
     }
 
     /** issue #75: true, если сейчас активен режим акклиматизации. */

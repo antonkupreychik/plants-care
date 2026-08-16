@@ -1,0 +1,26 @@
+meta {
+  name: Shopping – mark as checked
+  type: http
+  seq: 3
+}
+
+patch {
+  url: {{baseUrl}}/api/v1/shopping/{{shoppingItemId}}
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{accessToken}}
+}
+
+body:json {
+  {
+    "checked": true
+  }
+}
+
+assert {
+  res.status: eq 200
+  res.body.checked: eq true
+}

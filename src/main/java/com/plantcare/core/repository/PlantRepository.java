@@ -18,15 +18,16 @@ public interface PlantRepository extends JpaRepository<Plant, Long> {
     List<Plant> findAllByUserIdAndArchivedAtIsNullOrderByNameAsc(Long userId);
 
     /**
-     * Пагинированный список для REST API (issue #85). {@code location} и
-     * {@code species} подтягиваются через {@link EntityGraph}, потому что
-     * {@code PlantController.toDto} читает их вне транзакции (OSIV=false) —
-     * без графа был бы {@code LazyInitializationException: no Session}.
+     * Пагинированный список для REST API (issue #85). {@code location},
+     * {@code species} и {@code user} подтягиваются через {@link EntityGraph}:
+     * {@code location}/{@code species} нужны для {@code PlantController.toDto}
+     * вне транзакции (OSIV=false); {@code user} нужен для health-score (issue #207) —
+     * {@code HealthScoreService.computeForPlant} читает {@code user.timezone}.
      */
-    @EntityGraph(attributePaths = {"location", "species"})
+    @EntityGraph(attributePaths = {"location", "species", "user"})
     List<Plant> findAllByUserIdAndArchivedAtIsNullOrderByNameAsc(Long userId, Pageable pageable);
 
-    @EntityGraph(attributePaths = {"location", "species"})
+    @EntityGraph(attributePaths = {"location", "species", "user"})
     List<Plant> findAllByUserIdAndLocationIdAndArchivedAtIsNullOrderByNameAsc(
             Long userId,
             Long locationId,
@@ -36,14 +37,25 @@ public interface PlantRepository extends JpaRepository<Plant, Long> {
     Optional<Plant> findByUserIdAndIdAndArchivedAtIsNull(Long userId, Long plantId);
 
     /**
-     * Растение по id с подтянутыми {@code location} и {@code species}.
+     * Сколько из переданных {@code ids} — активные (не архивированные) растения
+     * данного пользователя. Используется для проверки, что весь набор растений
+     * принадлежит владельцу перед выдачей доступа (issue #191): если число
+     * меньше размера набора — какой-то id чужой/архивный/несуществующий.
+     */
+    long countByUserIdAndArchivedAtIsNullAndIdIn(Long userId, Collection<Long> ids);
+
+    /**
+     * Растение по id с подтянутыми {@code location}, {@code species} и {@code user}.
      * Используется в {@code PlantService.getPlantOrThrow}, результат которого
      * мапится в DTO вне транзакции (REST API, issue #85) — иначе ленивые
      * связи дают {@code no Session}. {@code LEFT JOIN}, т.к. {@code species}
-     * nullable.
+     * nullable. {@code user} INNER JOIN нужен для сезонных настроек (issue #188) —
+     * без eager-загрузки каждый вызов {@code getSchedules}/{@code updateSchedule}
+     * делал бы отдельный SELECT.
      */
     @Query("""
             SELECT p FROM Plant p
+            JOIN FETCH p.user
             LEFT JOIN FETCH p.location
             LEFT JOIN FETCH p.species
             WHERE p.id = :id
@@ -74,6 +86,9 @@ public interface PlantRepository extends JpaRepository<Plant, Long> {
 
     long countByUserIdAndLocationIdAndArchivedAtIsNull(Long userId, Long locationId);
 
+    /** Сколько активных растений привязано к данной комнате (issue #283). */
+    long countByRoomIdAndArchivedAtIsNull(Long roomId);
+
     // ===== Архив (issue #117) =====
 
     /** Количество архивированных растений юзера — счётчик у кнопки «📦 Архив (N)». */
@@ -85,6 +100,15 @@ public interface PlantRepository extends JpaRepository<Plant, Long> {
      * которую только что отправили в архив.
      */
     List<Plant> findAllByUserIdAndArchivedAtIsNotNullOrderByArchivedAtDesc(Long userId);
+
+    /**
+     * Архивные растения юзера для REST-экрана «Архив» (issue #219).
+     * {@code location}/{@code species} подтягиваются через {@link EntityGraph}:
+     * DTO собирается в контроллере вне транзакции (OSIV=false), иначе ленивые
+     * связи дадут {@code no Session}. Сортировка — свежие сверху.
+     */
+    @EntityGraph(attributePaths = {"location", "species"})
+    List<Plant> findByUserIdAndArchivedAtIsNotNullOrderByArchivedAtDesc(Long userId);
 
     /**
      * Архивное растение конкретного юзера по id.
@@ -208,4 +232,46 @@ public interface PlantRepository extends JpaRepository<Plant, Long> {
             Long userId,
             Long parentId
     );
+
+    // ===== Офлайн-синк (issue #91) =====
+
+    /**
+     * Активные (не архивированные и не удалённые) растения юзера, изменённые после {@code since}.
+     * {@code location} и {@code species} подтягиваются JOIN FETCH: нужны в DTO вне транзакции.
+     */
+    @Query("""
+            SELECT p FROM Plant p
+            LEFT JOIN FETCH p.location
+            LEFT JOIN FETCH p.species
+            WHERE p.user.id = :userId
+              AND p.archivedAt IS NULL
+              AND p.deletedAt IS NULL
+              AND p.updatedAt > :since
+            ORDER BY p.updatedAt ASC
+            """)
+    List<Plant> findChangedSince(
+            @Param("userId") Long userId,
+            @Param("since") java.time.LocalDateTime since
+    );
+
+    /**
+     * Удалённые растения юзера (deletedAt IS NOT NULL), удалённые после {@code since}.
+     */
+    @Query("""
+            SELECT p.id AS id, p.deletedAt AS deletedAt
+            FROM Plant p
+            WHERE p.user.id = :userId
+              AND p.deletedAt IS NOT NULL
+              AND p.deletedAt > :since
+            """)
+    List<DeletedRecord> findDeletedSince(
+            @Param("userId") Long userId,
+            @Param("since") java.time.LocalDateTime since
+    );
+
+    /** Проекция для списка deletions в sync-ответе (issue #91). */
+    interface DeletedRecord {
+        Long getId();
+        java.time.LocalDateTime getDeletedAt();
+    }
 }

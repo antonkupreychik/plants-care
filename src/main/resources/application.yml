@@ -34,6 +34,15 @@ spring:
           time_zone: UTC
         format_sql: false
 
+  # Issue #90 (Slice A): загрузка фото (multipart). Дефолт Spring — 1 МБ, мал для фото.
+  # Ставим чуть выше прикладного лимита (~5 МБ из app.storage.s3.max-upload-bytes),
+  # чтобы файлы около лимита доходили до контроллера и отдавали чистый 413
+  # (PhotoTooLargeException), а не обрезались резолвером multipart.
+  servlet:
+    multipart:
+      max-file-size: ${PHOTO_MULTIPART_MAX_FILE_SIZE:6MB}
+      max-request-size: ${PHOTO_MULTIPART_MAX_REQUEST_SIZE:8MB}
+
   # Issue #88: SMTP для magic-link писем. Реальные креды только из env.
   mail:
     host: ${MAIL_HOST:localhost}
@@ -48,9 +57,65 @@ spring:
           starttls:
             enable: ${MAIL_SMTP_STARTTLS:false}
 
+  # Issue #278, эпик #277 фаза 0: Redis (Lettuce).
+  # Базовый/dev/test-профиль использует host/port (по умолчанию localhost:6379).
+  # ВАЖНО: НЕ задавать здесь spring.data.redis.url с пустым дефолтом —
+  # пустая строка url ломает парсер Lettuce (RedisUrlSyntaxException: Invalid Redis URL '')
+  # и роняет загрузку ApplicationContext во всех тестах. На проде URL приходит из
+  # REDIS_URL (Railway reference variable) — см. application-prod.yml.
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+
 app:
   species:
     search-limit: 5
+
+  # Issue #90 (Slice A): S3-совместимое object storage фото (Railway).
+  # Креды (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY) читает DefaultCredentialsProvider
+  # из окружения — здесь их НЕТ. endpoint пустой = не переопределять (дефолтный AWS-резолвинг).
+  # На S3-совместимых провайдерах endpoint обязателен (AWS_ENDPOINT_URL) + path-style на клиенте.
+  storage:
+    s3:
+      bucket: ${AWS_S3_BUCKET_NAME:}
+      endpoint: ${AWS_ENDPOINT_URL:}
+      region: ${AWS_DEFAULT_REGION:us-east-1}
+      max-upload-bytes: ${PHOTO_MAX_UPLOAD_BYTES:5242880}   # ~5 МБ
+      presign-ttl: ${PHOTO_PRESIGN_TTL:PT15M}
+      key-prefix: ${PHOTO_KEY_PREFIX:photos/}
+
+  # Issue #278, эпик #277 фаза 0: параметры Lettuce-клиента и namespacing ключей.
+  redis:
+    connect-timeout: ${REDIS_CONNECT_TIMEOUT:PT2S}
+    command-timeout: ${REDIS_COMMAND_TIMEOUT:PT1S}
+    key-prefix: ${REDIS_KEY_PREFIX:pc:}
+
+  # Issue #280, эпик #277 фаза 2: распределённый rate-limit на Redis (Lua на Lettuce).
+  # redis-enabled=false → счётчик считается только локально (Caffeine L1, per-instance,
+  # поведение до #280). При недоступном Redis — fail-open + деградация на L1 (см. RedisRateLimiter).
+  # Конкретные лимиты (окно/количество) — у точек вызова: plantcare.auth.magic-link.rate-limit,
+  # plantcare.auth.guest.rate-limit, admin.rate-limit.
+  rate-limit:
+    redis-enabled: ${RATE_LIMIT_REDIS_ENABLED:true}
+    l1-max-keys: ${RATE_LIMIT_L1_MAX_KEYS:100000}
+
+  # Issue #281, эпик #277 фаза 3: двухуровневый кеш справочников (Caffeine L1 + Redis L2).
+  # enabled=false → фоллбэк на чистый локальный Caffeine (поведение до #281), Redis не задействован.
+  # Кросс-инстансная инвалидация L1 — через Redis Pub/Sub-канал invalidation-channel.
+  # Любая ошибка Redis → промах L2 → деградация на L1 + БД (fail-open), корректность сохраняется.
+  cache:
+    two-level:
+      enabled: ${CACHE_TWO_LEVEL_ENABLED:true}
+      l1-ttl: ${CACHE_L1_TTL:PT5M}
+      l1-max-size: ${CACHE_L1_MAX_SIZE:10000}
+      l2-ttl: ${CACHE_L2_TTL:PT1H}
+      invalidation-channel: ${CACHE_INVALIDATION_CHANNEL:pc:cache:invalidate}
+      # Переподписка listener-контейнера при разрыве уже установленного соединения с Redis.
+      recovery-interval: ${CACHE_LISTENER_RECOVERY_INTERVAL:PT5S}
+      # Ретрай запуска listener-контейнера, когда Redis был недоступен на старте (fail-open):
+      # листенер поднимется сам, как только Redis вернётся, не роняя ApplicationContext.
+      listener-retry-interval: ${CACHE_LISTENER_RETRY_INTERVAL:PT30S}
 
   # Issue #79: публичная подписка на .ics календарь.
   calendar:
@@ -107,6 +172,60 @@ plantcare:
         max-attempts: 5
         window-seconds: 300
 
+    # Issue #318: вход существующих Telegram-юзеров через бот-код.
+    # bot-username — для построения deep link https://t.me/<bot>?start=auth_<sessionId>
+    # (тот же источник, что telegram.bot.username; на безопасность не влияет).
+    telegram:
+      bot-username: ${TELEGRAM_BOT_USERNAME:}
+      code-length: 6
+      session-ttl: ${TELEGRAM_AUTH_SESSION_TTL:PT5M}
+      resend-after-sec: ${TELEGRAM_AUTH_RESEND_AFTER_SEC:60}
+      max-attempts: ${TELEGRAM_AUTH_MAX_ATTEMPTS:5}
+      rate-limit:
+        max-attempts: 10
+        window-seconds: 300
+
+    # Issue #92: Bucket4j per-IP/per-user rate limits for the REST API.
+    # All values configurable via env vars on Railway.
+    api:
+      rate-limit:
+        unauthenticated-per-minute: ${API_RL_UNAUTH_PER_MIN:100}
+        authenticated-per-minute: ${API_RL_AUTH_PER_MIN:1000}
+        auth-endpoint-per-minute: ${API_RL_AUTH_EP_PER_MIN:10}
+        magic-link-per-minute: ${API_RL_MAGIC_LINK_PER_MIN:3}
+        magic-link-per-hour: ${API_RL_MAGIC_LINK_PER_HOUR:5}
+        max-buckets: ${API_RL_MAX_BUCKETS:100000}
+
+  # Issue #215: Universal Links (iOS) / App Links (Android) для magic-link диплинков.
+  # Значения зависят от мобильного приложения и различаются на dev/prod.
+  # Требуются реальные данные от app-команды (Team ID, bundle id, SHA-256 fingerprints).
+  deep-link:
+    ios:
+      # appID в формате <TeamID>.<BundleId>. Может быть несколько (dev/prod разные bundle id).
+      # Пример: TEAMID1234.com.example.plantcare
+      app-ids: ${DEEP_LINK_IOS_APP_IDS:PLACEHOLDER_TEAM_ID.com.example.plantcare}
+      # Пути, которые AASA разрешает открывать в приложении.
+      paths: ${DEEP_LINK_IOS_PATHS:/auth/verify*}
+    android:
+      # Package name Android-приложения. Пример: com.example.plantcare
+      package-name: ${DEEP_LINK_ANDROID_PACKAGE_NAME:com.example.plantcare}
+      # SHA-256 отпечатки подписи приложения (debug и release).
+      # Формат: AA:BB:CC:... (hex через двоеточие). Может быть несколько.
+      sha256-cert-fingerprints: ${DEEP_LINK_ANDROID_SHA256_CERT_FINGERPRINTS:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99}
+
+# Issue #175 / #176 (ADR-016): push-уведомления на мобильные устройства через FCM HTTP v1.
+# Единый шлюз FCM для iOS+Android (без APNs и legacy server-key). Тумблер выключен по
+# умолчанию: реальная отправка и Firebase Admin SDK включаются только при PUSH_ENABLED=true.
+push:
+  enabled: ${PUSH_ENABLED:false}
+  fcm:
+    # Инлайн service-account JSON (приоритетный путь, удобно для Railway-секрета).
+    credentials-json: ${FCM_CREDENTIALS_JSON:}
+    # ИЛИ путь к JSON-файлу service-account (совместим с GOOGLE_APPLICATION_CREDENTIALS).
+    credentials-path: ${GOOGLE_APPLICATION_CREDENTIALS:}
+    # Опционально: project id, если не выводится из кредов.
+    project-id: ${FCM_PROJECT_ID:}
+
 admin:
   username: ${ADMIN_USERNAME:}
   password-bcrypt-hash: ${ADMIN_PASSWORD_BCRYPT_HASH:}
@@ -147,6 +266,13 @@ management:
     # Отправка magic-link писем не должна влиять на liveness/health приложения.
     mail:
       enabled: false
+    # Issue #278: Redis health-индикатор включён (появляется из starter-data-redis).
+    # readiness НЕ делаем жёстко зависимым от Redis — деградация по фазам.
+    # Spring Boot 3.x: redis HealthIndicator включается автоматически при наличии
+    # RedisConnectionFactory. Падение Redis = DOWN в /actuator/health, но приложение
+    # продолжает работать (планировщик на JDBC, Telegram — независимы от Redis).
+    redis:
+      enabled: true
   prometheus:
     metrics:
       export:

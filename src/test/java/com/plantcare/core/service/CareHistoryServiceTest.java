@@ -5,6 +5,7 @@ import com.plantcare.core.domain.CareSchedule;
 import com.plantcare.core.domain.enums.TaskType;
 import com.plantcare.core.repository.CareHistoryRepository;
 import com.plantcare.core.repository.CareScheduleRepository;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -14,6 +15,8 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.domain.Limit;
 
+import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -34,13 +37,27 @@ class CareHistoryServiceTest {
 
     @Mock private CareHistoryRepository historyRepository;
     @Mock private CareScheduleRepository scheduleRepository;
+    @Mock private Clock clock;
 
     @InjectMocks
     private CareHistoryService service;
 
+    @BeforeEach
+    void stubClock() {
+        Instant now = Instant.now();
+        lenient().when(clock.instant()).thenReturn(now);
+        lenient().when(clock.getZone()).thenReturn(ZoneOffset.UTC);
+        lenient().when(clock.withZone(any(ZoneId.class))).thenAnswer(inv -> {
+            ZoneId zone = inv.getArgument(0);
+            return Clock.fixed(now, zone);
+        });
+    }
+
     @Nested
     @DisplayName("computePlantStreak")
     class PlantStreakTests {
+
+        private final ZoneId UTC = ZoneOffset.UTC;
 
         @Test
         @DisplayName("Пустая история → 0")
@@ -49,7 +66,7 @@ class CareHistoryServiceTest {
             when(historyRepository.findAllByPlantIdOrderByDoneAtDesc(eq(1L), any(Limit.class)))
                     .thenReturn(List.of());
 
-            assertThat(service.computePlantStreak(1L)).isZero();
+            assertThat(service.computePlantStreak(1L, "UTC")).isZero();
         }
 
         @Test
@@ -59,39 +76,41 @@ class CareHistoryServiceTest {
             when(historyRepository.findAllByPlantIdOrderByDoneAtDesc(eq(1L), any(Limit.class)))
                     .thenReturn(List.of(historyEntry(true, false)));
 
-            assertThat(service.computePlantStreak(1L)).isEqualTo(1);
+            assertThat(service.computePlantStreak(1L, "UTC")).isEqualTo(1);
         }
 
         @Test
-        @DisplayName("Идеальная серия из 5 on-time → 5")
+        @DisplayName("Серия из 5 on-time в РАЗНЫЕ дни → 5")
         void perfectStreakOfFive() {
+            LocalDate today = LocalDate.now(UTC);
             when(scheduleRepository.findAllByPlantId(1L)).thenReturn(List.of());
             when(historyRepository.findAllByPlantIdOrderByDoneAtDesc(eq(1L), any(Limit.class)))
                     .thenReturn(List.of(
-                            historyEntry(true, false),
-                            historyEntry(true, false),
-                            historyEntry(true, false),
-                            historyEntry(true, false),
-                            historyEntry(true, false)
+                            historyEntry(true, false, atUtc(today, 12)),
+                            historyEntry(true, false, atUtc(today.minusDays(1), 12)),
+                            historyEntry(true, false, atUtc(today.minusDays(2), 12)),
+                            historyEntry(true, false, atUtc(today.minusDays(3), 12)),
+                            historyEntry(true, false, atUtc(today.minusDays(4), 12))
                     ));
 
-            assertThat(service.computePlantStreak(1L)).isEqualTo(5);
+            assertThat(service.computePlantStreak(1L, "UTC")).isEqualTo(5);
         }
 
         @Test
-        @DisplayName("Серия 3 on-time + потом late → 3 (стрик ломается на late)")
+        @DisplayName("Серия 3 on-time-дня + потом late → 3 (стрик ломается на late)")
         void streakBreaksAtFirstLateEntry() {
+            LocalDate today = LocalDate.now(UTC);
             when(scheduleRepository.findAllByPlantId(1L)).thenReturn(List.of());
             when(historyRepository.findAllByPlantIdOrderByDoneAtDesc(eq(1L), any(Limit.class)))
                     .thenReturn(List.of(
-                            historyEntry(true, false),
-                            historyEntry(true, false),
-                            historyEntry(true, false),
-                            historyEntry(false, false), // late — стоп
-                            historyEntry(true, false)   // дальше неважно
+                            historyEntry(true, false, atUtc(today, 12)),
+                            historyEntry(true, false, atUtc(today.minusDays(1), 12)),
+                            historyEntry(true, false, atUtc(today.minusDays(2), 12)),
+                            historyEntry(false, false, atUtc(today.minusDays(3), 12)), // late — стоп
+                            historyEntry(true, false, atUtc(today.minusDays(4), 12))   // дальше неважно
                     ));
 
-            assertThat(service.computePlantStreak(1L)).isEqualTo(3);
+            assertThat(service.computePlantStreak(1L, "UTC")).isEqualTo(3);
         }
 
         @Test
@@ -101,7 +120,7 @@ class CareHistoryServiceTest {
             when(historyRepository.findAllByPlantIdOrderByDoneAtDesc(eq(1L), any(Limit.class)))
                     .thenReturn(List.of(historyEntry(false, false)));
 
-            assertThat(service.computePlantStreak(1L)).isZero();
+            assertThat(service.computePlantStreak(1L, "UTC")).isZero();
         }
 
         @Test
@@ -121,7 +140,7 @@ class CareHistoryServiceTest {
                             historyEntry(true, false)
                     ));
 
-            assertThat(service.computePlantStreak(1L)).isZero();
+            assertThat(service.computePlantStreak(1L, "UTC")).isZero();
         }
 
         @Test
@@ -136,12 +155,13 @@ class CareHistoryServiceTest {
             when(historyRepository.findAllByPlantIdOrderByDoneAtDesc(eq(1L), any(Limit.class)))
                     .thenReturn(List.of(historyEntry(true, false)));
 
-            assertThat(service.computePlantStreak(1L)).isEqualTo(1);
+            assertThat(service.computePlantStreak(1L, "UTC")).isEqualTo(1);
         }
 
         @Test
         @DisplayName("Неактивное расписание (active=false) не влияет, даже если просрочено")
         void inactiveScheduleIgnored() {
+            LocalDate today = LocalDate.now(UTC);
             CareSchedule offSchedule = CareSchedule.builder()
                     .taskType(TaskType.FERTILIZING)
                     .active(false)
@@ -150,26 +170,95 @@ class CareHistoryServiceTest {
             when(scheduleRepository.findAllByPlantId(1L)).thenReturn(List.of(offSchedule));
             when(historyRepository.findAllByPlantIdOrderByDoneAtDesc(eq(1L), any(Limit.class)))
                     .thenReturn(List.of(
-                            historyEntry(true, false),
-                            historyEntry(true, false)
+                            historyEntry(true, false, atUtc(today, 12)),
+                            historyEntry(true, false, atUtc(today.minusDays(1), 12))
                     ));
 
-            assertThat(service.computePlantStreak(1L)).isEqualTo(2);
+            assertThat(service.computePlantStreak(1L, "UTC")).isEqualTo(2);
         }
 
         @Test
         @DisplayName("Compensating (cancelled) записи пропускаются при подсчёте")
         void cancelledEntriesAreSkipped() {
+            LocalDate today = LocalDate.now(UTC);
             when(scheduleRepository.findAllByPlantId(1L)).thenReturn(List.of());
-            // Две on-time, между ними одна cancelled — должно дать 2 (пропустили cancelled).
+            // Две on-time в разные дни, между ними одна cancelled — должно дать 2.
             when(historyRepository.findAllByPlantIdOrderByDoneAtDesc(eq(1L), any(Limit.class)))
                     .thenReturn(List.of(
-                            historyEntry(true, false),
-                            historyEntry(false, true),  // cancelled — пропускаем, не ломает стрик
-                            historyEntry(true, false)
+                            historyEntry(true, false, atUtc(today, 12)),
+                            historyEntry(false, true, atUtc(today, 13)),  // cancelled — пропускаем
+                            historyEntry(true, false, atUtc(today.minusDays(1), 12))
                     ));
 
-            assertThat(service.computePlantStreak(1L)).isEqualTo(2);
+            assertThat(service.computePlantStreak(1L, "UTC")).isEqualTo(2);
+        }
+
+        @Test
+        @DisplayName("should_count_same_day_repeats_as_one_when_multiple_on_time_cares")
+        void should_count_same_day_repeats_as_one_when_multiple_on_time_cares() {
+            LocalDate today = LocalDate.now(UTC);
+            when(scheduleRepository.findAllByPlantId(1L)).thenReturn(List.of());
+            // 5 on-time уходов в ОДИН день (в TZ юзера) → стрик 1, а не 5.
+            when(historyRepository.findAllByPlantIdOrderByDoneAtDesc(eq(1L), any(Limit.class)))
+                    .thenReturn(List.of(
+                            historyEntry(true, false, atUtc(today, 8)),
+                            historyEntry(true, false, atUtc(today, 10)),
+                            historyEntry(true, false, atUtc(today, 12)),
+                            historyEntry(true, false, atUtc(today, 14)),
+                            historyEntry(true, false, atUtc(today, 16))
+                    ));
+
+            assertThat(service.computePlantStreak(1L, "UTC")).isEqualTo(1);
+        }
+
+        @Test
+        @DisplayName("should_count_distinct_days_when_on_time_cares_on_separate_days")
+        void should_count_distinct_days_when_on_time_cares_on_separate_days() {
+            LocalDate today = LocalDate.now(UTC);
+            when(scheduleRepository.findAllByPlantId(1L)).thenReturn(List.of());
+            // On-time уходы в 3 разных дня подряд по расписанию → стрик 3.
+            when(historyRepository.findAllByPlantIdOrderByDoneAtDesc(eq(1L), any(Limit.class)))
+                    .thenReturn(List.of(
+                            historyEntry(true, false, atUtc(today, 9)),
+                            historyEntry(true, false, atUtc(today.minusDays(1), 9)),
+                            historyEntry(true, false, atUtc(today.minusDays(2), 9))
+                    ));
+
+            assertThat(service.computePlantStreak(1L, "UTC")).isEqualTo(3);
+        }
+
+        @Test
+        @DisplayName("should_dedup_by_user_timezone_when_cares_straddle_utc_midnight")
+        void should_dedup_by_user_timezone_when_cares_straddle_utc_midnight() {
+            // Europe/Moscow = UTC+3. Два ухода по разные стороны UTC-полуночи,
+            // но в один локальный день юзера → стрик 1 (дедуп по TZ юзера, не по UTC).
+            // 2026-06-07 22:00 UTC → 2026-06-08 01:00 MSK
+            // 2026-06-08 02:00 UTC → 2026-06-08 05:00 MSK  (тот же локальный день)
+            LocalDateTime beforeUtcMidnight = LocalDateTime.of(2026, 6, 7, 22, 0);
+            LocalDateTime afterUtcMidnight = LocalDateTime.of(2026, 6, 8, 2, 0);
+            when(scheduleRepository.findAllByPlantId(1L)).thenReturn(List.of());
+            when(historyRepository.findAllByPlantIdOrderByDoneAtDesc(eq(1L), any(Limit.class)))
+                    .thenReturn(List.of(
+                            historyEntry(true, false, afterUtcMidnight),
+                            historyEntry(true, false, beforeUtcMidnight)
+                    ));
+
+            assertThat(service.computePlantStreak(1L, "Europe/Moscow")).isEqualTo(1);
+        }
+
+        @Test
+        @DisplayName("Те же два ухода по UTC дают 2 дня — контроль, что дедуп идёт по TZ")
+        void sameTwoCares_underUtc_countAsTwoDistinctDays() {
+            LocalDateTime beforeUtcMidnight = LocalDateTime.of(2026, 6, 7, 22, 0);
+            LocalDateTime afterUtcMidnight = LocalDateTime.of(2026, 6, 8, 2, 0);
+            when(scheduleRepository.findAllByPlantId(1L)).thenReturn(List.of());
+            when(historyRepository.findAllByPlantIdOrderByDoneAtDesc(eq(1L), any(Limit.class)))
+                    .thenReturn(List.of(
+                            historyEntry(true, false, afterUtcMidnight),
+                            historyEntry(true, false, beforeUtcMidnight)
+                    ));
+
+            assertThat(service.computePlantStreak(1L, "UTC")).isEqualTo(2);
         }
     }
 
@@ -286,7 +375,7 @@ class CareHistoryServiceTest {
         void noHistory() {
             when(historyRepository.countActiveByPlantId(1L)).thenReturn(0L);
 
-            CareHistoryService.PlantStats stats = service.getPlantStats(1L);
+            CareHistoryService.PlantStats stats = service.getPlantStats(1L, "UTC");
 
             assertThat(stats.total()).isZero();
             assertThat(stats.streak()).isZero();
@@ -304,7 +393,7 @@ class CareHistoryServiceTest {
             when(historyRepository.findAllByPlantIdOrderByDoneAtDesc(eq(1L), any(Limit.class)))
                     .thenReturn(List.of(historyEntry(true, false)));
 
-            CareHistoryService.PlantStats stats = service.getPlantStats(1L);
+            CareHistoryService.PlantStats stats = service.getPlantStats(1L, "UTC");
 
             assertThat(stats.total()).isEqualTo(4L);
             assertThat(stats.onTimePct()).isEqualTo(75);
@@ -322,7 +411,7 @@ class CareHistoryServiceTest {
             when(historyRepository.findAllByPlantIdOrderByDoneAtDesc(eq(1L), any(Limit.class)))
                     .thenReturn(List.of());
 
-            CareHistoryService.PlantStats stats = service.getPlantStats(1L);
+            CareHistoryService.PlantStats stats = service.getPlantStats(1L, "UTC");
 
             assertThat(stats.onTimePct()).isZero();
             assertThat(stats.total()).isEqualTo(5L);
@@ -339,18 +428,47 @@ class CareHistoryServiceTest {
             when(historyRepository.findAllByPlantIdOrderByDoneAtDesc(eq(1L), any(Limit.class)))
                     .thenReturn(List.of(historyEntry(true, false), historyEntry(true, false)));
 
-            CareHistoryService.PlantStats stats = service.getPlantStats(1L);
+            CareHistoryService.PlantStats stats = service.getPlantStats(1L, "UTC");
             assertThat(stats.hasEnoughData()).isFalse();
+        }
+    }
+
+    @Nested
+    @DisplayName("countAllByUser")
+    class CountAllByUserTests {
+
+        @Test
+        @DisplayName("should_return_zero_when_user_has_no_care_history")
+        void should_return_zero_when_user_has_no_care_history() {
+            when(historyRepository.countAllByUserId(42L)).thenReturn(0L);
+
+            assertThat(service.countAllByUser(42L)).isZero();
+        }
+
+        @Test
+        @DisplayName("should_return_correct_count_when_user_has_care_events")
+        void should_return_correct_count_when_user_has_care_events() {
+            when(historyRepository.countAllByUserId(42L)).thenReturn(348L);
+
+            assertThat(service.countAllByUser(42L)).isEqualTo(348L);
         }
     }
 
     // ===== helpers =====
 
-    /** Создаёт мок-CareHistory с указанными флагами on_time / cancelled. */
+    /** Создаёт мок-CareHistory с флагами on_time / cancelled и doneAt = now. */
     private CareHistory historyEntry(boolean onTime, boolean cancelled) {
+        return historyEntry(onTime, cancelled, LocalDateTime.now());
+    }
+
+    /**
+     * Создаёт мок-CareHistory с явным {@code doneAt} (хранится как LocalDateTime
+     * в UTC) — нужно для проверки дедупа стрика по уникальным дням в TZ юзера.
+     */
+    private CareHistory historyEntry(boolean onTime, boolean cancelled, LocalDateTime doneAt) {
         CareHistory h = new CareHistory();
         h.setTaskType(TaskType.WATERING);
-        h.setDoneAt(LocalDateTime.now());
+        h.setDoneAt(doneAt);
         h.setOnTime(onTime);
         if (cancelled) {
             // Лёгкий хак: для проверки isCancelled() достаточно non-null cancelledBy.
