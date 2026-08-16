@@ -3,6 +3,7 @@ package com.plantcare.bot.telegram;
 import com.plantcare.bot.client.TelegramClientProvider;
 import com.plantcare.bot.config.TelegramRateLimitProperties;
 import com.plantcare.core.metrics.MetricsService;
+import com.plantcare.core.service.NotificationDeliveryRecorder;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -63,6 +64,9 @@ class RateLimitedTelegramSenderWorkerTest {
     @Mock
     private MetricsService metricsService;
 
+    @Mock
+    private NotificationDeliveryRecorder deliveryRecorder;
+
     private RateLimitedTelegramSender sender;
 
     @AfterEach
@@ -80,7 +84,7 @@ class RateLimitedTelegramSenderWorkerTest {
         TelegramRateLimitProperties properties = new TelegramRateLimitProperties(
                 1000, queueCapacity, 3, 2L, 60L);
         sender = new RateLimitedTelegramSender(
-                telegramClientProvider, rateLimiter, sleeper, properties, metricsService);
+                telegramClientProvider, rateLimiter, sleeper, properties, metricsService, deliveryRecorder);
         when(telegramClientProvider.getTelegramClient()).thenReturn(telegramClient);
         when(rateLimiter.reserveNextPermitMillis()).thenReturn(reservedMillis);
         sender.start();

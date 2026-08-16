@@ -1,6 +1,7 @@
 package com.plantcare.bot.service;
 
 import com.plantcare.core.domain.enums.TaskType;
+import com.plantcare.core.service.NotificationDeliveryRecorder;
 import com.plantcare.core.service.PushSender;
 import com.plantcare.core.service.PushSender.PushResult;
 import jakarta.annotation.PreDestroy;
@@ -38,6 +39,7 @@ public class PushFanOutService {
 
     private final PushSender pushSender;
     private final NotificationDeliveryCallbacks deliveryCallbacks;
+    private final NotificationDeliveryRecorder deliveryRecorder;
 
     /**
      * Однопоточный daemon-исполнитель: гарантирует, что доставка идёт ВНЕ
@@ -73,8 +75,12 @@ public class PushFanOutService {
      * Любая ошибка отдельного устройства не прерывает остальные (вызывающий цикл).
      */
     void deliver(PushTarget target) {
+        long startNanos = System.nanoTime();
         try {
             PushResult result = pushSender.send(target.pushToken(), PUSH_TITLE, target.body());
+            // Issue #95: журнал доставки пишем ДО колбэков — на STALE_TOKEN колбэк
+            // сносит запись устройства, а событие должно остаться с user_id.
+            deliveryRecorder.recordPush(target.userId(), result, elapsedMillis(startNanos));
             switch (result) {
                 case SENT -> deliveryCallbacks.onPushSent(target.taskType());
                 case STALE_TOKEN -> deliveryCallbacks.onPushStaleToken(target.deviceId());
@@ -84,8 +90,13 @@ public class PushFanOutService {
             // Порт по контракту не должен бросать, но защищаемся: падение одного
             // устройства не должно ронять воркер и остальные устройства.
             log.warn("Push delivery threw for device id={}: {}", target.deviceId(), e.getMessage());
+            deliveryRecorder.recordPush(target.userId(), PushResult.FAILED, elapsedMillis(startNanos));
             deliveryCallbacks.onPushFailed();
         }
+    }
+
+    private static long elapsedMillis(long startNanos) {
+        return TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNanos);
     }
 
     @PreDestroy
@@ -107,10 +118,11 @@ public class PushFanOutService {
      * для передачи между потоками (никаких detached-entity).
      *
      * @param deviceId  id записи устройства в {@code user_devices} (для удаления на STALE_TOKEN)
+     * @param userId    владелец устройства (issue #95 — per-user срез журнала доставок)
      * @param pushToken push-токен устройства
      * @param body      готовый канал-нейтральный текст уведомления
      * @param taskType  тип задачи (для среза метрики доставки)
      */
-    public record PushTarget(long deviceId, String pushToken, String body, TaskType taskType) {
+    public record PushTarget(long deviceId, Long userId, String pushToken, String body, TaskType taskType) {
     }
 }

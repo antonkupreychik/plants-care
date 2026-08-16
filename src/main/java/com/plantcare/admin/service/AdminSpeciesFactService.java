@@ -1,5 +1,8 @@
 package com.plantcare.admin.service;
 
+import com.plantcare.admin.audit.AdminAuditAction;
+import com.plantcare.admin.audit.AdminAuditTarget;
+import com.plantcare.admin.audit.service.AdminAuditService;
 import com.plantcare.admin.dto.SpeciesFactFormDto;
 import com.plantcare.admin.exception.SpeciesFactNotFoundException;
 import com.plantcare.core.domain.Species;
@@ -36,6 +39,7 @@ public class AdminSpeciesFactService {
 
     private final SpeciesFactRepository speciesFactRepository;
     private final SpeciesRepository speciesRepository;
+    private final AdminAuditService auditService;
 
     /**
      * Факты вида, сгруппированные по категории в порядке показа
@@ -79,6 +83,11 @@ public class AdminSpeciesFactService {
 
         log.info("Admin [{}] created fact id={} for species id={} category={}",
                 adminUsername, saved.getId(), speciesId, saved.getCategory());
+        auditService.log(AdminAuditAction.SPECIES_FACT_CREATE, adminUsername,
+                AdminAuditTarget.SPECIES_FACT, saved.getId(),
+                AdminAuditService.details("speciesId", speciesId,
+                        "category", String.valueOf(saved.getCategory()),
+                        "title", saved.getTitle()));
         return saved;
     }
 
@@ -90,11 +99,16 @@ public class AdminSpeciesFactService {
     @Transactional
     public SpeciesFact updateFact(Long speciesId, Long factId, SpeciesFactFormDto dto, String adminUsername) {
         SpeciesFact fact = requireOwnedFact(speciesId, factId);
+        String titleBefore = fact.getTitle();
         applyDto(fact, dto);
         SpeciesFact saved = speciesFactRepository.save(fact);
 
         log.info("Admin [{}] updated fact id={} for species id={} category={}",
                 adminUsername, factId, speciesId, saved.getCategory());
+        auditService.log(AdminAuditAction.SPECIES_FACT_UPDATE, adminUsername,
+                AdminAuditTarget.SPECIES_FACT, factId,
+                AdminAuditService.details("speciesId", speciesId,
+                        "titleBefore", titleBefore, "titleAfter", saved.getTitle()));
         return saved;
     }
 
@@ -106,9 +120,15 @@ public class AdminSpeciesFactService {
     @Transactional
     public void deleteFact(Long speciesId, Long factId, String adminUsername) {
         SpeciesFact fact = requireOwnedFact(speciesId, factId);
+        String title = fact.getTitle();
+        String category = String.valueOf(fact.getCategory());
         speciesFactRepository.delete(fact);
 
         log.info("Admin [{}] deleted fact id={} for species id={}", adminUsername, factId, speciesId);
+        auditService.log(AdminAuditAction.SPECIES_FACT_DELETE, adminUsername,
+                AdminAuditTarget.SPECIES_FACT, factId,
+                AdminAuditService.details("speciesId", speciesId,
+                        "category", category, "title", title));
     }
 
     // ------------------------------------------------------------------ helpers

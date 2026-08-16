@@ -15,6 +15,8 @@ import org.springframework.test.context.TestPropertySource;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import com.plantcare.admin.audit.service.AdminAuditService;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -52,6 +54,10 @@ class AdminSpeciesToxicityTest {
         registry.add("spring.datasource.username", postgres::getUsername);
         registry.add("spring.datasource.password", postgres::getPassword);
     }
+
+    /** Аудит (issue #98) вне слайса — проверяется в {@code AdminAuditWiringTest}. */
+    @MockitoBean
+    private AdminAuditService auditService;
 
     @Autowired
     private AdminSpeciesService service;

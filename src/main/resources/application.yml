@@ -298,6 +298,16 @@ plants:
       # Для более агрессивного мониторинга можно поставить PT3M (3 пропуска).
       max-tick-age: ${PLANTS_SCHEDULER_MAX_TICK_AGE:PT15M}
 
+  # Issue #97: журнал ошибок для /admin/errors. Logback-аппендер снимает WARN/ERROR,
+  # кладёт в НЕблокирующую очередь, фоновый поток пишет батчем. Переполненная очередь
+  # отбрасывает события — API тормозить нельзя.
+  error-log:
+    enabled: ${PLANTS_ERROR_LOG_ENABLED:true}
+    queue-capacity: ${PLANTS_ERROR_LOG_QUEUE_CAPACITY:2000}
+    batch-size: ${PLANTS_ERROR_LOG_BATCH_SIZE:200}
+    flush-interval: ${PLANTS_ERROR_LOG_FLUSH_INTERVAL:PT1S}
+    retention-days: ${PLANTS_ERROR_LOG_RETENTION_DAYS:30}
+
   # Issue #141: подсказка расходников перед предстоящей пересадкой.
   # «Предстоящая пересадка» = дата последней TRANSPLANT из журнала (#76) + interval-months.
   # Если она в окне ближайших horizon-days (в TZ юзера) — бот шлёт мягкую нотификацию
