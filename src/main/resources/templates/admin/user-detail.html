@@ -312,6 +312,49 @@
             </div>
         </div>
     </div>
+
+    <!-- История админских действий с этим юзером (issue #98) -->
+    <div class="card bg-base-100 shadow mt-6">
+        <div class="card-body">
+            <div class="flex items-center justify-between mb-2">
+                <h2 class="card-title text-lg">История админских действий</h2>
+                <a class="link text-sm"
+                   th:href="@{/admin/audit(targetType='USER')}">весь аудит →</a>
+            </div>
+
+            <div th:if="${#lists.isEmpty(auditHistory)}" class="text-sm text-base-content/60">
+                Админы этого юзера ещё не трогали
+            </div>
+
+            <div th:unless="${#lists.isEmpty(auditHistory)}" class="overflow-x-auto">
+                <table class="table table-sm">
+                    <thead>
+                    <tr>
+                        <th>когда (UTC)</th>
+                        <th>админ</th>
+                        <th>действие</th>
+                        <th>details</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    <tr th:each="e : ${auditHistory}">
+                        <td class="text-xs whitespace-nowrap" th:text="${e.occurredAtDisplay()}">—</td>
+                        <td th:text="${e.adminUsername}">admin</td>
+                        <td class="text-xs" th:text="${e.actionLabel()}">действие</td>
+                        <td>
+                            <details th:if="${e.hasDetails()}">
+                                <summary class="cursor-pointer text-xs link">показать</summary>
+                                <pre class="text-xs bg-base-200 p-2 rounded mt-1 overflow-x-auto"
+                                     th:text="${e.details}">{}</pre>
+                            </details>
+                            <span th:unless="${e.hasDetails()}" class="text-base-content/40">—</span>
+                        </td>
+                    </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
 </section>
 </body>
 </html>

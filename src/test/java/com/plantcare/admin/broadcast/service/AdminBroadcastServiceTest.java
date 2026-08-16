@@ -1,5 +1,6 @@
 package com.plantcare.admin.broadcast.service;
 
+import com.plantcare.admin.audit.service.AdminAuditService;
 import com.plantcare.admin.broadcast.repository.AdminBroadcastRepository;
 import com.plantcare.bot.client.TelegramClientProvider;
 import com.plantcare.core.domain.AdminBroadcast;
@@ -47,6 +48,7 @@ class AdminBroadcastServiceTest {
     @Mock private TelegramClientProvider telegramClientProvider;
     @Mock private UserRepository userRepository;
     @Mock private TelegramClient telegramClient;
+    @Mock private AdminAuditService auditService;
 
     private ExecutorService executor;
     private AdminBroadcastService service;
@@ -69,7 +71,7 @@ class AdminBroadcastServiceTest {
                 };
         service = new AdminBroadcastService(
                 broadcastRepository, audienceResolver, telegramClientProvider,
-                userRepository, executor, noopTm
+                userRepository, executor, noopTm, auditService
         );
 
         when(telegramClientProvider.getTelegramClient()).thenReturn(telegramClient);
@@ -246,7 +248,7 @@ class AdminBroadcastServiceTest {
                     eq(BroadcastStatus.RUNNING), eq(BroadcastStatus.STOPPED)))
                     .thenReturn(1);
 
-            assertThat(service.requestStop(42L)).isTrue();
+            assertThat(service.requestStop(42L, "admin")).isTrue();
         }
 
         @Test
@@ -255,7 +257,7 @@ class AdminBroadcastServiceTest {
             when(broadcastRepository.requestStop(anyLong(), any(), any()))
                     .thenReturn(0);
 
-            assertThat(service.requestStop(42L)).isFalse();
+            assertThat(service.requestStop(42L, "admin")).isFalse();
         }
     }
 

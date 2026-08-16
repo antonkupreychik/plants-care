@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      xmlns:layout="http://www.ultraq.net.nz/thymeleaf/layout"
+      layout:decorate="~{admin/_layout}"
+      lang="ru">
+<head>
+    <title>Audit</title>
+</head>
+<body>
+<section layout:fragment="content">
+    <div class="flex items-center justify-between mb-4">
+        <h1 class="text-2xl font-bold">Аудит админских действий</h1>
+        <a class="btn btn-sm btn-outline"
+           th:href="@{/admin/audit/export.csv(admin=${selectedAdmin}, action=${selectedAction},
+                      targetType=${selectedTargetType}, from=${selectedFrom}, to=${selectedTo})}">
+            Экспорт CSV
+        </a>
+    </div>
+
+    <!-- Фильтры -->
+    <form method="get" th:action="@{/admin/audit}"
+          class="card bg-base-100 shadow mb-6">
+        <div class="card-body grid gap-3 md:grid-cols-5 items-end">
+            <label class="form-control">
+                <span class="label-text">Админ</span>
+                <select name="admin" class="select select-bordered select-sm">
+                    <option value="">все</option>
+                    <option th:each="a : ${admins}" th:value="${a}" th:text="${a}"
+                            th:selected="${a == selectedAdmin}">admin</option>
+                </select>
+            </label>
+
+            <label class="form-control">
+                <span class="label-text">Действие</span>
+                <select name="action" class="select select-bordered select-sm">
+                    <option value="">все</option>
+                    <option th:each="a : ${actions}" th:value="${a.name()}" th:text="${a.label}"
+                            th:selected="${a.name() == selectedAction}">действие</option>
+                </select>
+            </label>
+
+            <label class="form-control">
+                <span class="label-text">Тип объекта</span>
+                <select name="targetType" class="select select-bordered select-sm">
+                    <option value="">все</option>
+                    <option th:each="t : ${targetTypes}" th:value="${t}" th:text="${t}"
+                            th:selected="${t == selectedTargetType}">USER</option>
+                </select>
+            </label>
+
+            <label class="form-control">
+                <span class="label-text">С даты (UTC)</span>
+                <input type="date" name="from" class="input input-bordered input-sm"
+                       th:value="${selectedFrom}"/>
+            </label>
+
+            <label class="form-control">
+                <span class="label-text">По дату (UTC)</span>
+                <input type="date" name="to" class="input input-bordered input-sm"
+                       th:value="${selectedTo}"/>
+            </label>
+
+            <div class="md:col-span-5 flex gap-2">
+                <button type="submit" class="btn btn-sm btn-primary">Применить</button>
+                <a th:href="@{/admin/audit}" class="btn btn-sm btn-ghost">Сбросить</a>
+            </div>
+        </div>
+    </form>
+
+    <!-- Лента -->
+    <div class="card bg-base-100 shadow">
+        <div class="card-body">
+            <div th:if="${#lists.isEmpty(page.items)}"
+                 class="text-base-content/60 text-sm py-4">
+                Записей нет
+            </div>
+
+            <div th:unless="${#lists.isEmpty(page.items)}" class="overflow-x-auto">
+                <table class="table table-sm">
+                    <thead>
+                    <tr>
+                        <th>когда (UTC)</th>
+                        <th>админ</th>
+                        <th>действие</th>
+                        <th>объект</th>
+                        <th>IP</th>
+                        <th>details</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    <tr th:each="e : ${page.items}">
+                        <td class="text-xs whitespace-nowrap" th:text="${e.occurredAtDisplay()}">—</td>
+                        <td th:text="${e.adminUsername}">admin</td>
+                        <td>
+                            <span class="badge badge-ghost badge-sm" th:text="${e.action}">ACTION</span>
+                            <div class="text-xs text-base-content/60" th:text="${e.actionLabel()}">действие</div>
+                        </td>
+                        <td class="text-xs">
+                            <span th:if="${e.targetType != null}" th:text="${e.targetType}">USER</span>
+                            <a th:if="${e.targetType == 'USER' and e.targetId != null}"
+                               class="link" th:href="@{'/admin/users/' + ${e.targetId}}"
+                               th:text="'#' + ${e.targetId}">#1</a>
+                            <span th:if="${e.targetType != 'USER' and e.targetId != null}"
+                                  th:text="'#' + ${e.targetId}">#1</span>
+                            <span th:if="${e.targetType == null}" class="text-base-content/40">—</span>
+                        </td>
+                        <td class="font-mono text-xs"
+                            th:text="${e.requestIp != null} ? ${e.requestIp} : '—'">—</td>
+                        <td>
+                            <details th:if="${e.hasDetails()}">
+                                <summary class="cursor-pointer text-xs link">показать</summary>
+                                <pre class="text-xs bg-base-200 p-2 rounded mt-1 max-w-md overflow-x-auto"
+                                     th:text="${e.details}">{}</pre>
+                            </details>
+                            <span th:unless="${e.hasDetails()}" class="text-base-content/40">—</span>
+                        </td>
+                    </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Пагинация -->
+            <div class="flex items-center justify-between mt-4 text-sm" th:if="${page.totalPages > 1}">
+                <div class="text-base-content/60">
+                    Стр <span th:text="${page.currentPage}">1</span> из <span th:text="${page.totalPages}">1</span>
+                    <span class="ml-2">(<span th:text="${page.totalItems}">0</span> записей)</span>
+                </div>
+                <div class="join">
+                    <a class="join-item btn btn-sm"
+                       th:classappend="${not page.hasPrev()} ? 'btn-disabled' : ''"
+                       th:href="@{/admin/audit(admin=${selectedAdmin}, action=${selectedAction},
+                                  targetType=${selectedTargetType}, from=${selectedFrom},
+                                  to=${selectedTo}, page=${page.prevPage()})}">«</a>
+                    <button type="button" class="join-item btn btn-sm" th:text="${page.currentPage}">1</button>
+                    <a class="join-item btn btn-sm"
+                       th:classappend="${not page.hasNext()} ? 'btn-disabled' : ''"
+                       th:href="@{/admin/audit(admin=${selectedAdmin}, action=${selectedAction},
+                                  targetType=${selectedTargetType}, from=${selectedFrom},
+                                  to=${selectedTo}, page=${page.nextPage()})}">»</a>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+</body>
+</html>
