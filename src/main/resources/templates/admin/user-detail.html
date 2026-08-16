@@ -302,6 +302,98 @@
         </div>
     </div>
 
+    <!-- Фото в хранилище (issue #101) -->
+    <div class="card bg-base-100 shadow mb-6">
+        <div class="card-body">
+            <h2 class="card-title">
+                📷 Фото
+                <span class="text-xs font-normal text-base-content/60">
+                    (issue #101 · S3-совместимый бакет)
+                </span>
+            </h2>
+
+            <div th:if="${#lists.isEmpty(photos)}" class="text-sm text-base-content/60 py-2">
+                У юзера нет фото в хранилище.
+            </div>
+
+            <div th:unless="${#lists.isEmpty(photos)}">
+                <div class="flex flex-wrap items-center gap-3 mb-3">
+                    <span class="text-sm text-base-content/70">
+                        Всего: <span class="font-bold" th:text="${#lists.size(photos)}">0</span>
+                    </span>
+                    <span class="flex-1"></span>
+                    <!-- GDPR-запрос «удалить всё моё» -->
+                    <form method="post"
+                          th:action="@{|/admin/users/${user.id}/photos/delete-all|}"
+                          onsubmit="return confirm('Удалить ВСЕ фото этого юзера? Это soft-delete: физически объекты будут вычищены из бакета по истечении retention.');">
+                        <button type="submit" class="btn btn-sm btn-error btn-outline">
+                            🗑 Удалить все фото (GDPR)
+                        </button>
+                    </form>
+                </div>
+
+                <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
+                    <div th:each="p : ${photos}"
+                         class="rounded overflow-hidden bg-base-200"
+                         th:classappend="${p.purged} ? 'opacity-50' : (${p.deleted} ? 'ring-1 ring-warning' : '')">
+
+                        <!-- Клик по превью — открыть оригинал во весь экран (новая вкладка) -->
+                        <a th:if="${p.previewUrl != null}"
+                           th:href="${p.previewUrl}" target="_blank" rel="noopener"
+                           th:title="'Открыть оригинал · ' + ${p.sizeHuman}">
+                            <img class="w-full aspect-square object-cover"
+                                 th:src="${p.previewUrl}" alt="фото" loading="lazy"/>
+                        </a>
+                        <div th:if="${p.previewUrl == null}"
+                             class="w-full aspect-square flex items-center justify-center text-xs text-base-content/40 text-center px-2"
+                             th:text="${p.purged} ? 'вычищено из бакета' : 'превью недоступно'">
+                            превью недоступно
+                        </div>
+
+                        <div class="p-2 text-xs space-y-1">
+                            <div class="text-base-content/60" th:text="${p.sizeHuman}">0 B</div>
+                            <div class="text-base-content/50" th:text="${p.createdAt}">2026-01-01</div>
+                            <div th:if="${p.plantId != null}" class="truncate"
+                                 th:text="${p.plantName}">Фикус</div>
+
+                            <span th:if="${p.status == 'deleted'}"
+                                  class="badge badge-warning badge-xs">удалено</span>
+                            <span th:if="${p.status == 'purged'}"
+                                  class="badge badge-ghost badge-xs">вычищено</span>
+
+                            <div class="pt-1">
+                                <form th:if="${p.status == 'active'}" method="post"
+                                      th:action="@{'/admin/photos/' + ${p.photoId} + '/delete'}"
+                                      onsubmit="return confirm('Удалить это фото?');">
+                                    <input type="hidden" name="returnTo"
+                                           th:value="'/admin/users/' + ${user.id}"/>
+                                    <button type="submit" class="btn btn-xs btn-error btn-outline w-full">
+                                        🗑 Удалить
+                                    </button>
+                                </form>
+                                <form th:if="${p.status == 'deleted'}" method="post"
+                                      th:action="@{'/admin/photos/' + ${p.photoId} + '/restore'}">
+                                    <input type="hidden" name="returnTo"
+                                           th:value="'/admin/users/' + ${user.id}"/>
+                                    <button type="submit" class="btn btn-xs btn-ghost w-full">
+                                        ♻️ Вернуть
+                                    </button>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <p class="text-xs text-base-content/60 mt-3">
+                    Удаление — soft-delete: фото сразу перестаёт быть доступным юзеру,
+                    а объект физически удаляется из бакета отложенно, по истечении retention
+                    (см. <a class="link" th:href="@{/admin/storage}">Storage</a>).
+                    До этого момента удаление обратимо.
+                </p>
+            </div>
+        </div>
+    </div>
+
     <!-- Feature flags (issue #78) -->
     <div class="card bg-base-100 shadow mt-4">
         <div class="card-body">

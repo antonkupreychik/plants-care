@@ -4,6 +4,7 @@ import com.plantcare.admin.audit.AdminAuditTarget;
 import com.plantcare.admin.audit.service.AdminAuditService;
 import com.plantcare.admin.config.AdminSecurityConfig;
 import com.plantcare.admin.users.service.AdminUserAuthService;
+import com.plantcare.admin.storage.service.AdminStorageService;
 import com.plantcare.admin.users.service.AdminUserDetailService;
 import com.plantcare.core.domain.featureflag.FeatureFlag;
 import lombok.RequiredArgsConstructor;
@@ -23,6 +24,7 @@ public class AdminUserDetailController {
     private final AdminUserDetailService service;
     private final AdminUserAuthService authService;
     private final AdminAuditService auditService;
+    private final AdminStorageService storageService;
 
     @GetMapping("/admin/users/{id}")
     public String detail(@PathVariable long id, Model model) {
@@ -39,6 +41,10 @@ public class AdminUserDetailController {
         model.addAttribute("linkedProviderCount", authService.countLinked(id));
         model.addAttribute("linkHistory",
                 authService.loadLinkHistory(id, null, null, 1));
+        // Issue #101: грид фото юзера — просмотр и точечное удаление по запросу
+        // (в том числе GDPR). Пресайн-ссылки собираются в сервисе; если бакет не
+        // сконфигурирован, previewUrl == null и шаблон рисует плейсхолдер.
+        model.addAttribute("photos", storageService.loadUserPhotos(id));
         // Каталог известных флагов — рендерим их toggle'ами; ad-hoc флаги
         // (которые в каталог не входят, но включены у юзера) — отдельной секцией.
         model.addAttribute("flagCatalog", FeatureFlag.CATALOG);

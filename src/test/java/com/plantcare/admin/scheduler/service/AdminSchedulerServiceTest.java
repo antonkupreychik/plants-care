@@ -43,12 +43,15 @@ class AdminSchedulerServiceTest {
     @BeforeEach
     void setUp() {
         // Реальный AdminProperties вместо мока — у него final-fields через
-        // @RequiredArgsConstructor, конструктор с пятью аргументами.
+        // @RequiredArgsConstructor, конструктор со всеми секциями.
         com.plantcare.admin.config.AdminProperties props =
                 new com.plantcare.admin.config.AdminProperties(
                         "admin", "$2a$10$hash", 8,
                         new com.plantcare.admin.config.AdminProperties.RateLimit(5, 60),
-                        new com.plantcare.admin.config.AdminProperties.Dashboard("UTC", 4)
+                        new com.plantcare.admin.config.AdminProperties.Dashboard("UTC", 4),
+                        // issue #101: секция storage этому тесту безразлична, но
+                        // конструктор её требует
+                        new com.plantcare.admin.config.AdminProperties.Storage(30, 0.015, 500, 20)
                 );
         service = new AdminSchedulerService(
                 repository, healthProvider, schedulerService, careScheduleRepository, props
