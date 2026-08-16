@@ -14,6 +14,23 @@
               th:text="'Загружено за ' + ${dashboard.renderTimeMillis} + ' мс'">Loaded</span>
     </div>
 
+    <!--
+      Issue #95: канал уведомлений с error rate > 5% за сутки. Плашка сверху —
+      чтобы про сломанный транспорт узнавали раньше, чем из жалоб юзеров.
+    -->
+    <div th:if="${not #lists.isEmpty(dashboard.alertingChannels)}"
+         class="alert alert-error mb-4" role="alert">
+        <div>
+            <h2 class="font-bold">⚠️ Канал доставки уведомлений деградирует</h2>
+            <p class="text-sm" th:each="c : ${dashboard.alertingChannels}"
+               th:text="${c.channel} + ': error rate ' + ${c.errorRateLabel()} + '% за 24 ч ('
+                        + ${c.errors()} + ' из ' + ${c.total()} + ' попыток)'">
+                PUSH: error rate 42.0% за 24 ч
+            </p>
+            <a class="link text-sm" th:href="@{/admin/notifications/health}">Открыть health-дашборд каналов →</a>
+        </div>
+    </div>
+
     <!-- Метрики-карточки -->
     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
         <div class="stats shadow bg-base-100">
