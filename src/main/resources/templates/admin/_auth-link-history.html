@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="ru">
+<body>
+<!--
+  История привязок (issue #93). Источник — magic_link_tokens: единственный лог
+  привязок, который сейчас существует. Колонок source/target_provider и IP из
+  issue здесь нет — их нечем заполнить до issue #89.
+  Фрагмент перерисовывается HTMX'ом целиком (hx-swap="outerHTML" по #link-history-wrap).
+-->
+<div id="link-history-wrap" th:fragment="linkHistoryFragment">
+
+    <!-- Фильтр по дате -->
+    <div class="flex flex-wrap items-end gap-2 mb-3">
+        <label class="form-control">
+            <span class="label-text text-xs">с</span>
+            <input type="date" name="from" class="input input-bordered input-sm"
+                   th:value="${linkHistory.from}"
+                   th:attr="hx-get=@{|/admin/users/${userId}/auth/link-history|}"
+                   hx-include="closest .flex"
+                   hx-trigger="change"
+                   hx-target="#link-history-wrap"
+                   hx-swap="outerHTML"/>
+        </label>
+        <label class="form-control">
+            <span class="label-text text-xs">по</span>
+            <input type="date" name="to" class="input input-bordered input-sm"
+                   th:value="${linkHistory.to}"
+                   th:attr="hx-get=@{|/admin/users/${userId}/auth/link-history|}"
+                   hx-include="closest .flex"
+                   hx-trigger="change"
+                   hx-target="#link-history-wrap"
+                   hx-swap="outerHTML"/>
+        </label>
+        <button type="button" class="btn btn-sm btn-ghost"
+                th:attr="hx-get=@{|/admin/users/${userId}/auth/link-history|}"
+                hx-target="#link-history-wrap"
+                hx-swap="outerHTML">Сбросить фильтр</button>
+    </div>
+
+    <div th:unless="${linkHistory.available}" class="text-base-content/60 text-sm py-4">
+        У юзера не привязан email — magic-link'ов для него не выпускалось.
+    </div>
+
+    <div th:if="${linkHistory.available}">
+        <div th:if="${#lists.isEmpty(linkHistory.items)}" class="text-base-content/60 text-sm py-4">
+            За выбранный период привязок не было
+        </div>
+
+        <div th:unless="${#lists.isEmpty(linkHistory.items)}" class="overflow-x-auto">
+            <table class="table table-sm">
+                <thead>
+                <tr>
+                    <th>Когда</th>
+                    <th>Действие</th>
+                    <th>Истекает</th>
+                    <th>Использован</th>
+                </tr>
+                </thead>
+                <tbody>
+                <tr th:each="h : ${linkHistory.items}">
+                    <td class="text-xs"
+                        th:text="${#temporals.format(h.at, 'dd.MM.yyyy HH:mm')}">01.01 00:00</td>
+                    <td>
+                        <span class="badge badge-sm"
+                              th:classappend="${h.action == 'CLAIMED'} ? 'badge-success'
+                                              : (${h.action == 'EXPIRED'} ? 'badge-ghost' : 'badge-info')"
+                              th:text="${h.action}">GENERATED</span>
+                    </td>
+                    <td class="text-xs"
+                        th:text="${#temporals.format(h.expiresAt, 'dd.MM.yyyy HH:mm')}">—</td>
+                    <td class="text-xs"
+                        th:text="${h.consumedAt != null} ? ${#temporals.format(h.consumedAt, 'dd.MM.yyyy HH:mm')} : '—'">—</td>
+                </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Пагинация -->
+        <div class="flex items-center justify-between mt-3 text-sm"
+             th:if="${linkHistory.hasNext() or linkHistory.hasPrev()}">
+            <div class="text-base-content/60">
+                Стр <span th:text="${linkHistory.currentPage}">1</span>
+            </div>
+            <div class="join">
+                <button type="button" class="join-item btn btn-sm"
+                        th:classappend="${not linkHistory.hasPrev()} ? 'btn-disabled' : ''"
+                        th:attr="hx-get=@{|/admin/users/${userId}/auth/link-history|(page=${linkHistory.prevPage()}, from=${linkHistory.from}, to=${linkHistory.to})}"
+                        hx-target="#link-history-wrap"
+                        hx-swap="outerHTML">«</button>
+                <button type="button" class="join-item btn btn-sm"
+                        th:text="${linkHistory.currentPage}">1</button>
+                <button type="button" class="join-item btn btn-sm"
+                        th:classappend="${not linkHistory.hasNext()} ? 'btn-disabled' : ''"
+                        th:attr="hx-get=@{|/admin/users/${userId}/auth/link-history|(page=${linkHistory.nextPage()}, from=${linkHistory.from}, to=${linkHistory.to})}"
+                        hx-target="#link-history-wrap"
+                        hx-swap="outerHTML">»</button>
+            </div>
+        </div>
+    </div>
+</div>
+</body>
+</html>
