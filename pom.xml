@@ -8,7 +8,7 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>3.5.14</version>
+        <version>4.1.0</version>
         <relativePath/>
     </parent>
 
@@ -21,19 +21,19 @@
     <properties>
         <java.version>21</java.version>
 
-        <hypersistence-utils.version>3.8.3</hypersistence-utils.version>
-        <springdoc.version>2.8.13</springdoc.version>
+        <hypersistence-utils.version>3.15.3</hypersistence-utils.version>
+        <springdoc.version>3.1.0</springdoc.version>
         <lombok.version>1.18.46</lombok.version>
         <jacoco.version>0.8.14</jacoco.version>
         <openapi-generator.version>7.10.0</openapi-generator.version>
         <swagger-annotations.version>2.2.25</swagger-annotations.version>
         <!-- Issue #127: ArchUnit — проверка границ модульного монолита (core ∌ bot/admin/api). -->
         <archunit.version>1.5.0</archunit.version>
-        <!-- Issue #114: Sentry 7.x. -jakarta-вариант таргетит jakarta.* и совместим
-             со Spring Boot 3.5.x (текущая 3.5.14). 7.22.5 — последняя стабильная в линии 7.x. -->
-        <sentry.version>7.22.5</sentry.version>
-        <!-- Эпик #277 (фаза 1, #279): ShedLock 5.x совместим со Spring 6 / Boot 3.5.x. -->
-        <shedlock.version>5.16.0</shedlock.version>
+        <!-- Issue #114: Sentry 8.x. Артефакт sentry-spring-boot-4-starter собран против
+             Boot 4.1.0; прежний -jakarta-вариант даже в 8.53.0 таргетит Boot 3.5.x. -->
+        <sentry.version>8.53.0</sentry.version>
+        <!-- Эпик #277 (фаза 1, #279): ShedLock 7.x — линия под Spring 7 / Boot 4.x. -->
+        <shedlock.version>7.8.0</shedlock.version>
         <!-- Issue #90 (Slice A): AWS SDK v2 для S3-совместимого object storage (Railway).
              Лёгкий sync-клиент url-connection-client вместо netty-async (см. зависимости ниже). -->
         <awssdk.version>2.30.18</awssdk.version>
@@ -83,7 +83,7 @@
              на проде после запуска REST API (#84) и mobile (#88+). Обоснование в issue. -->
         <dependency>
             <groupId>io.sentry</groupId>
-            <artifactId>sentry-spring-boot-starter-jakarta</artifactId>
+            <artifactId>sentry-spring-boot-4-starter</artifactId>
             <version>${sentry.version}</version>
         </dependency>
 
@@ -178,7 +178,7 @@
         <!-- JSONB support -->
         <dependency>
             <groupId>io.hypersistence</groupId>
-            <artifactId>hypersistence-utils-hibernate-63</artifactId>
+            <artifactId>hypersistence-utils-hibernate-70</artifactId>
             <version>${hypersistence-utils.version}</version>
         </dependency>
 
@@ -266,24 +266,39 @@
             <scope>test</scope>
         </dependency>
 
+        <!-- Boot 4 разнёс тестовые срезы по отдельным модулям: @WebMvcTest/@AutoConfigureMockMvc
+             уехали из spring-boot-test-autoconfigure в spring-boot-webmvc-test,
+             @DataJpaTest — в spring-boot-data-jpa-test. Без этих стартеров срезы не компилируются. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-webmvc-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-jpa-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+
         <dependency>
             <groupId>org.springframework.security</groupId>
             <artifactId>spring-security-test</artifactId>
             <scope>test</scope>
         </dependency>
 
-        <!-- Версия Testcontainers намеренно не пинуется: её задаёт BOM spring-boot-dependencies.
-             Пин 1.20.3 отставал от BOM (1.21.4) и при переходе на Boot 4 пришлось бы
-             разруливать его вручную. -->
+        <!-- Версия Testcontainers намеренно не пинуется: её задаёт BOM spring-boot-dependencies
+             (импортирует testcontainers-bom). В Testcontainers 2.0 артефакты переименованы:
+             postgresql -> testcontainers-postgresql, junit-jupiter -> testcontainers-junit-jupiter. -->
         <dependency>
             <groupId>org.testcontainers</groupId>
-            <artifactId>postgresql</artifactId>
+            <artifactId>testcontainers-postgresql</artifactId>
             <scope>test</scope>
         </dependency>
 
         <dependency>
             <groupId>org.testcontainers</groupId>
-            <artifactId>junit-jupiter</artifactId>
+            <artifactId>testcontainers-junit-jupiter</artifactId>
             <scope>test</scope>
         </dependency>
 

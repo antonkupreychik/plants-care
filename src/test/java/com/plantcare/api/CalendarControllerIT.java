@@ -14,9 +14,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.web.client.TestRestTemplate;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
+import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.test.web.servlet.client.RestTestClient;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -60,7 +59,8 @@ class CalendarControllerIT {
         registry.add("spring.datasource.password", POSTGRES::getPassword);
     }
 
-    @Autowired private TestRestTemplate restTemplate;
+    // Boot 4 удалил TestRestTemplate; замена — RestTestClient на @LocalServerPort.
+    @LocalServerPort private int port;
     @Autowired private UserRepository userRepository;
     @Autowired private LocationRepository locationRepository;
     @Autowired private PlantRepository plantRepository;
@@ -103,17 +103,20 @@ class CalendarControllerIT {
                 .active(true)
                 .build());
 
-        ResponseEntity<String> response = restTemplate.getForEntity(
-                "/calendar/e2e-token-happy.ics", String.class);
+        var result = RestTestClient.bindToServer().baseUrl("http://localhost:" + port).build()
+                .get().uri("/calendar/e2e-token-happy.ics")
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody(String.class)
+                .returnResult();
 
-        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-        assertThat(response.getHeaders().getContentType())
+        assertThat(result.getResponseHeaders().getContentType())
                 .as("Content-Type должен быть text/calendar")
                 .isNotNull();
-        assertThat(response.getHeaders().getContentType().toString())
+        assertThat(result.getResponseHeaders().getContentType().toString())
                 .startsWith("text/calendar");
 
-        String body = response.getBody();
+        String body = result.getResponseBody();
         assertThat(body)
                 .isNotNull()
                 .contains("BEGIN:VCALENDAR")
