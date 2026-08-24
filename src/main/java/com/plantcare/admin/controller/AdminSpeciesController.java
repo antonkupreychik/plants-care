@@ -130,7 +130,7 @@ public class AdminSpeciesController {
             Authentication auth) {
 
         if (bindingResult.hasErrors()) {
-            prepareFormModel(model, dto, "/admin/species/" + id, "Редактирование вида", id);
+            prepareEditFormModel(model, dto, id);
             return "admin/species/form";
         }
 
@@ -139,11 +139,27 @@ public class AdminSpeciesController {
             ra.addFlashAttribute("flashSuccess", "Вид обновлён");
         } catch (DuplicateSpeciesNameException e) {
             bindingResult.rejectValue("name", "duplicate", e.getMessage());
-            prepareFormModel(model, dto, "/admin/species/" + id, "Редактирование вида", id);
+            prepareEditFormModel(model, dto, id);
             return "admin/species/form";
         }
 
         return "redirect:/admin/species";
+    }
+
+    /**
+     * Модель страницы редактирования вида.
+     *
+     * <p>Шаблон {@code admin/species/form} на странице редактирования подключает секцию фактов
+     * (issue #131), а она разыменовывает {@code factsGrouped}. Поэтому КАЖДЫЙ возврат
+     * {@code admin/species/form} с непустым {@code id} обязан положить в модель и секцию фактов,
+     * а не только {@link #prepareFormModel}. Раньше это делал лишь GET-обработчик формы, из-за чего
+     * POST с ошибкой валидации (пустое или дублирующееся имя) падал на NPE в SpringEL и отдавал 500
+     * вместо перерисованной формы с ошибкой.
+     */
+    private void prepareEditFormModel(Model model, SpeciesFormDto dto, Long id) {
+        prepareFormModel(model, dto, "/admin/species/" + id, "Редактирование вида", id);
+        AdminSpeciesFactController.populateFactsSection(
+                id, adminSpeciesFactService.getFactsGrouped(id), model);
     }
 
     // ============================================================ delete
